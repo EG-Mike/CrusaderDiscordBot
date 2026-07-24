@@ -1060,9 +1060,17 @@ class ApplyCog(commands.Cog):
 
         try:
             message = await channel.send(embed=embed, view=self.start_view)
+        except Exception:
+            log.exception("Failed to POST the explainer in gear-check channel")
+            return
+
+        try:
             await message.pin()
-        except discord.Forbidden:
-            log.warning("Missing permission to post/pin the explainer in gear-check channel")
+        except Exception:
+            log.exception(
+                "Posted the explainer but failed to PIN it in gear-check channel "
+                "(the message itself is up - only pinning failed)"
+            )
 
     # --- moderator approve/deny/reset --------------------------------------
 
