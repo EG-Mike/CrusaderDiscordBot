@@ -1044,7 +1044,6 @@ class ApplyCog(commands.Cog):
             title="How to Gear-check and get the permissions to sign up for raids",
             description=(
                 "Click the blue button below this message to start your gear-check process.\n\n"
-                "---"
                 ":one:. You'll be asked for your character's exact in-game name,\n"
                 ":two:. The bot will ask for your exact in-game name and fetch some data \n"
                 ":three:. You will receive a DM, the bot makes a suggestion on what your main spec is (this can be changed)\n"
