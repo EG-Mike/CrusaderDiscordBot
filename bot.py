@@ -28,6 +28,7 @@ DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
 EXTENSIONS = [
     "cogs.apply",
     "cogs.announcements",
+    "cogs.emoji_admin",
 ]
 
 intents = discord.Intents.default()

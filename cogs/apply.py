@@ -1036,14 +1036,15 @@ class ApplyCog(commands.Cog):
             title="How to Gear-check and get the permissions to sign up for raids",
             description=(
                 "Click the blue button below this message to start your gear-check process.\n\n"
+                "---"
+                ":one:. You'll be asked for your character's exact in-game name,\n"
+                ":two:. The bot will ask for your exact in-game name and fetch some data \n"
+                ":three:. You will receive a DM, the bot makes a suggestion on what your main spec is (this can be changed)\n"
+                ":four:. You are (optionally) given the ability to provide a note and/or screenshots - or skip this step\n"
+                ":five:. When you do not provide a note/screenshot and you do not press the 'skip' button - your application will be posted automatically after 3 minutes.\n"
+                ":six:. You have the option to provide more information at any time by typing `/update-application` to the bot's DM. \n"
+                ":seven:Your character will be reviewed by our recruitment-team and will be notified of the outcome\n\n"
 
-                "1. You'll be asked for your character's exact in-game name,\n"
-                "2. The bot will ask for your exact in-game name and fetch some data \n"
-                "3. You will receive a DM, the bot makes a suggestion on what your main spec is (this can be changed)\n"
-                "4. You are (optionally) given the ability to provide a note and/or screenshots\n"
-                "5. You have the option to provide more information at any time by just replying to the bot\n"
-                "\n\n"
-                "Your character will be reviewed by our recruitment-team and will be notified of the outcome\n"
                 "When approved, you will be granted the correct roles and further instructions on how to sign for the raid(s)"
             ),
             color=discord.Color.blurple(),
