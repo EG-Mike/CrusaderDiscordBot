@@ -579,19 +579,46 @@ class ApplyCog(commands.Cog):
             container.add_item(gallery)
             container.add_item(discord.ui.Separator())
 
-        footer_text = application.get("decision_footer") or (
-            f"React {APPROVE_EMOJI} to approve or {DENY_EMOJI} to deny"
-        )
+        footer_text = application.get("decision_footer") or "Use the buttons below to decide"
         container.add_item(discord.ui.TextDisplay(footer_text))
 
         view.add_item(container)
 
+        status = application.get("status", "pending")
+        is_pending = status == "pending"
+
         action_row = discord.ui.ActionRow()
+
+        approve_button = discord.ui.Button(
+            label="Approve",
+            emoji=APPROVE_EMOJI,
+            style=discord.ButtonStyle.success,
+            custom_id="wow_apply_approve",
+            disabled=not is_pending,
+        )
+        approve_button.callback = self._on_approve_click
+        action_row.add_item(approve_button)
+
+        deny_button = discord.ui.Button(
+            label="Deny",
+            emoji=DENY_EMOJI,
+            style=discord.ButtonStyle.danger,
+            custom_id="wow_apply_deny",
+            disabled=not is_pending,
+        )
+        deny_button.callback = self._on_deny_click
+        action_row.add_item(deny_button)
+
         reset_button = discord.ui.Button(
-            label="🔄 Reset", style=discord.ButtonStyle.danger, custom_id="wow_apply_reset"
+            label="Reset",
+            emoji="🔄",
+            style=discord.ButtonStyle.primary,
+            custom_id="wow_apply_reset",
+            disabled=is_pending,
         )
         reset_button.callback = self._on_reset_click
         action_row.add_item(reset_button)
+
         view.add_item(action_row)
 
         return view
@@ -631,8 +658,6 @@ class ApplyCog(commands.Cog):
         review_channel = self.bot.get_channel(self.review_channel_id)
         view = self._render_application_view(application)
         message = await review_channel.send(view=view)
-        await message.add_reaction(APPROVE_EMOJI)
-        await message.add_reaction(DENY_EMOJI)
 
         self.bot.store.add(
             message.id,
@@ -1074,7 +1099,7 @@ class ApplyCog(commands.Cog):
 
     # --- moderator approve/deny/reset --------------------------------------
 
-    async def _reactor_is_mod(self, guild, user_id) -> bool:
+    async def _is_mod(self, guild, user_id) -> bool:
         member = guild.get_member(user_id) or await guild.fetch_member(user_id)
         if member is None:
             return False
@@ -1089,7 +1114,7 @@ class ApplyCog(commands.Cog):
                 "Couldn't find this application's record.", ephemeral=True
             )
             return
-        if not await self._reactor_is_mod(interaction.guild, interaction.user.id):
+        if not await self._is_mod(interaction.guild, interaction.user.id):
             await interaction.response.send_message(
                 "Only moderators can reset an application.", ephemeral=True
             )
@@ -1104,44 +1129,51 @@ class ApplyCog(commands.Cog):
             interaction.message.id,
             status="pending",
             last_decision=application["status"],
-            decision_footer=f"Reset by {interaction.user} - react to re-decide",
+            decision_footer=f"Reset by {interaction.user} - use the buttons to re-decide",
         )
-
-        await interaction.message.clear_reactions()
-        await interaction.message.add_reaction(APPROVE_EMOJI)
-        await interaction.message.add_reaction(DENY_EMOJI)
 
         updated = self.bot.store.get(interaction.message.id)
         await interaction.message.edit(view=self._render_application_view(updated))
 
         await interaction.response.send_message(
-            "Application reset - react with ✅ or ❌ to re-decide.", ephemeral=True
+            "Application reset - the Approve/Deny buttons are active again.", ephemeral=True
         )
 
-    @commands.Cog.listener()
-    async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
-        if payload.user_id == self.bot.user.id:
+    async def _on_approve_click(self, interaction: discord.Interaction):
+        await self._handle_decision(interaction, "approved")
+
+    async def _on_deny_click(self, interaction: discord.Interaction):
+        await self._handle_decision(interaction, "denied")
+
+    async def _handle_decision(self, interaction: discord.Interaction, decision: str):
+        application = self.bot.store.get(interaction.message.id)
+        if application is None:
+            await interaction.response.send_message(
+                "Couldn't find this application's record.", ephemeral=True
+            )
             return
-        if payload.channel_id != self.review_channel_id:
+        if application["status"] != "pending":
+            await interaction.response.send_message(
+                "This application has already been decided - use Reset first if you need "
+                "to change it.",
+                ephemeral=True,
+            )
             return
-        if str(payload.emoji) not in (APPROVE_EMOJI, DENY_EMOJI):
+        if not await self._is_mod(interaction.guild, interaction.user.id):
+            await interaction.response.send_message(
+                "Only moderators can approve or deny applications.", ephemeral=True
+            )
             return
 
-        application = self.bot.store.get(payload.message_id)
-        if application is None or application["status"] != "pending":
-            return
+        # Defers as a silent "deferred message update" for component
+        # interactions - no visible loading state, just acknowledges so we
+        # have time for role/DM work before editing the message ourselves.
+        await interaction.response.defer()
 
-        guild = self.bot.get_guild(payload.guild_id)
-        if guild is None:
-            return
-
-        if not await self._reactor_is_mod(guild, payload.user_id):
-            return
-
+        guild = interaction.guild
+        channel = interaction.channel
         applicant = guild.get_member(application["applicant_id"])
-        channel = self.bot.get_channel(payload.channel_id)
-        message = await channel.fetch_message(payload.message_id)
-        reviewer = guild.get_member(payload.user_id)
+        reviewer = interaction.user
         character_name = application["character_name"]
 
         # None on a fresh application; "approved"/"denied" if this decision
@@ -1151,7 +1183,7 @@ class ApplyCog(commands.Cog):
         now = discord.utils.utcnow()
         timestamp_str = now.strftime("%Y-%m-%d %H:%M %z UTC-2")
 
-        if str(payload.emoji) == APPROVE_EMOJI:
+        if decision == "approved":
             assigned_roles = []
             if applicant is not None:
                 role = guild.get_role(self.fresh_role_id)
@@ -1180,9 +1212,8 @@ class ApplyCog(commands.Cog):
                         "You have been granted access to the raid-signup channel(s).\n" 
                         "Make sure to sign-up and confirm your spot when you are placed on the roster!\n\n"
 
-                        "One more step: register your character for raid sign-ups with "
-                        f"</register:{config.OXM_REGISTER_COMMAND_ID}> (click it, then press Enter) "
-                        "- or just type `/register` yourself if the click doesn't pre-fill it.\n\n"
+                        "One more step: When you sign up for a raid, you will need to register your character for raid sign-ups"
+                        " - this is a one time process!"
 
                         "Please note: your (server-specific) Discord nickname has been changed to your characters name."
                         )
@@ -1194,7 +1225,7 @@ class ApplyCog(commands.Cog):
 
             roles_str = ", ".join(assigned_roles) if assigned_roles else "None"
             self.bot.store.update(
-                payload.message_id,
+                interaction.message.id,
                 status="approved",
                 last_decision="approved",
                 decision_footer=(
@@ -1202,7 +1233,7 @@ class ApplyCog(commands.Cog):
                 ),
             )
 
-        else:  # DENY_EMOJI
+        else:  # denied
             if applicant is not None:
                 role = guild.get_role(self.fresh_role_id)
                 if role is not None and role in applicant.roles:
@@ -1230,14 +1261,14 @@ class ApplyCog(commands.Cog):
                         )
 
             self.bot.store.update(
-                payload.message_id,
+                interaction.message.id,
                 status="denied",
                 last_decision="denied",
                 decision_footer=f"❌ Denied by {reviewer} • {timestamp_str}\nRoles assigned: None",
             )
 
-        updated = self.bot.store.get(payload.message_id)
-        await self._refresh_review_message(message, updated)
+        updated = self.bot.store.get(interaction.message.id)
+        await self._refresh_review_message(interaction.message, updated)
 
 
 async def setup(bot: commands.Bot):
