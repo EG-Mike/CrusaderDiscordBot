@@ -151,7 +151,7 @@ class RemoveLogModal(discord.ui.Modal, title="Remove Main Raid Log"):
 
 class ExcludeModal(discord.ui.Modal, title="Exclude Player"):
     name = discord.ui.TextInput(label="Character name (exact)", required=True, max_length=32)
-    reason = discord.ui.TextInput(label="Reason (e.g. vacation, injury)", required=True, max_length=200)
+    reason = discord.ui.TextInput(label="Reason (e.g. vacation, parental leave, etc.)", required=True, max_length=200)
 
     def __init__(self, cog: "AttendanceCog"):
         super().__init__()
@@ -441,9 +441,10 @@ class AttendanceCog(commands.Cog):
         embed = discord.Embed(
             title="📋 Main Raid Log List",
             description=(
-                f"Add/remove with the buttons below, or `/checkattendance addlog` / "
-                f"`removelog id:<N>`.\nThe most recent **{config.ATTENDANCE_WINDOW}** "
-                f"entries (marked 🔸) are what the overview currently uses."
+                f"This is an overview of the latest (mainraid) logs."
+                f"Add/remove logs with the buttons below to make sure they are used in the attendance calculation. \n\n"
+                f"Alternatively, use the manual commands `/checkattendance addlog` / or `removelog id:<N>`.\n\n"
+                f"The most recent **{config.ATTENDANCE_WINDOW}** entries (marked 🔸) are what the attendance-overview currently uses."
             ),
             color=discord.Color.blurple(),
         )
