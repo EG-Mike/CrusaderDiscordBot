@@ -235,7 +235,7 @@ ATTENDANCE_INCLUDE_BASELINE = 4   # assumed attended count (out of
                                    # /checkattendance run after re-including
                                    # someone who was excused
 
-ROSTER_FRESH_ACTIVITY_WINDOW = 10  # the Raider Roster message only lists
+ROSTER_FRESH_ACTIVITY_WINDOW = 5  # the Raider Roster message only lists
                                     # Fresh members active in at least one of
                                     # this many recent logs (Regular members
                                     # are always shown regardless) - keeps

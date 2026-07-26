@@ -47,12 +47,10 @@ EXCLUDED_KEY = "attendance_excluded"
 BASELINE_KEY = "attendance_baseline_overrides"
 OVERVIEW_MESSAGE_KEY = "attendance_overview_message"
 ROSTER_MESSAGE_KEY = "attendance_roster_message"
-EXCLUDED_MESSAGE_KEY = "attendance_excluded_message"
 EXPLAINER_MESSAGE_KEY = "attendance_explainer_message"
 
 LOG_LIST_MARKER = "attendance-log-list"
 ROSTER_MARKER = "attendance-roster"
-EXCLUDED_MARKER = "attendance-excluded"
 EXPLAINER_MARKER = "attendance-explainer"
 
 REPORT_LINK_RE = re.compile(r"(?:reports/|^)([A-Za-z0-9]{8,20})(?:[/#].*)?$")
@@ -93,6 +91,17 @@ def _chunk_lines_for_embed_fields(lines: list, max_field_len: int = 1024, max_to
         chunks.append("\n".join(current))
 
     return chunks, truncated
+
+
+_NAME_TAG_RE = re.compile(r"^<[^>]+>\s*")
+
+
+def _strip_name_tag(name: str) -> str:
+    """Strips a leading <TAG> prefix (e.g. "<R> Moffel" -> "Moffel") - some
+    guilds prefix Regular nicknames this way, which otherwise breaks name
+    matching against WCL rosters (real character names never contain
+    literal < or > characters, so this is always safe to strip)."""
+    return _NAME_TAG_RE.sub("", name).strip()
 
 
 def _extract_report_code(link: str) -> str:
@@ -139,44 +148,37 @@ class RemoveLogModal(discord.ui.Modal, title="Remove Main Raid Log"):
         await interaction.followup.send(confirmation, ephemeral=True)
 
 
-class ExcludeReasonModal(discord.ui.Modal, title="Reason for Exclusion"):
-    reason = discord.ui.TextInput(
-        label="Reason (e.g. vacation, injury)", required=True, max_length=200
-    )
+class ExcludeModal(discord.ui.Modal, title="Exclude Player"):
+    name = discord.ui.TextInput(label="Character name (exact)", required=True, max_length=32)
+    reason = discord.ui.TextInput(label="Reason (e.g. vacation, injury)", required=True, max_length=200)
 
-    def __init__(self, cog: "AttendanceCog", name: str):
+    def __init__(self, cog: "AttendanceCog"):
         super().__init__()
         self.cog = cog
-        self.name = name
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True, thinking=True)
-        confirmation = await self.cog._do_exclude(interaction.guild, self.name, str(self.reason).strip())
+        typed_name = str(self.name).strip()
+
+        # No autocomplete is possible in a modal (hard Discord platform
+        # limit, not something buildable around) - so this validates
+        # against the live roster after the fact instead, and offers close
+        # matches if it's not exact.
+        candidates = self.cog._get_roster_candidate_names(interaction.guild)
+        exact = next((c for c in candidates if c.lower() == typed_name.lower()), None)
+        if exact is None:
+            close = [c for c in candidates if typed_name.lower() in c.lower()][:5]
+            hint = f" Did you mean: {', '.join(close)}?" if close else ""
+            await interaction.followup.send(
+                f"Couldn't find **{typed_name}** on the current roster.{hint} Please try "
+                "again with the exact name - or use `/checkattendance exclude` for live "
+                "suggestions as you type.",
+                ephemeral=True,
+            )
+            return
+
+        confirmation = await self.cog._do_exclude(interaction.guild, exact, str(self.reason).strip())
         await interaction.followup.send(confirmation, ephemeral=True)
-
-
-class AddExcludedNameSelectView(discord.ui.View):
-    """Short-lived (not persistent) - built fresh each time the Add button
-    is clicked, populated with current roster members not already excused.
-    A dropdown instead of typing rules out name typos entirely - the
-    closest thing to "autocomplete" a button (as opposed to a slash
-    command) can offer, since modals have no live-suggestion support."""
-
-    def __init__(self, cog: "AttendanceCog", candidate_names: list):
-        super().__init__(timeout=120)
-        self.cog = cog
-
-        select = discord.ui.Select(
-            placeholder="Who needs to be excused?",
-            options=[discord.SelectOption(label=name) for name in candidate_names[:25]],
-        )
-        select.callback = self._on_select
-        self.add_item(select)
-        self._select = select
-
-    async def _on_select(self, interaction: discord.Interaction):
-        name = self._select.values[0]
-        await interaction.response.send_modal(ExcludeReasonModal(self.cog, name))
 
 
 class RemoveExcludedModal(discord.ui.Modal, title="Remove Excused Player"):
@@ -233,35 +235,15 @@ class RosterView(discord.ui.View):
         await self.cog._refresh_roster_message(interaction.guild)
         await interaction.followup.send("Roster refreshed.", ephemeral=True)
 
-
-class ExcludedView(discord.ui.View):
-    def __init__(self, cog: "AttendanceCog"):
-        super().__init__(timeout=None)
-        self.cog = cog
-
     @discord.ui.button(label="+ Add player", style=discord.ButtonStyle.success, custom_id="attendance_exclude_btn")
-    async def add_player(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def add_excluded(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await self.cog._is_mod(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can exclude players.", ephemeral=True)
             return
-        candidates = self.cog._get_roster_candidate_names(interaction.guild)
-        if not candidates:
-            await interaction.response.send_message(
-                "No eligible roster members found to exclude.", ephemeral=True
-            )
-            return
-        note = (
-            "" if len(candidates) <= 25
-            else f" (showing 25 of {len(candidates)} - use `/checkattendance exclude` to type a name instead)"
-        )
-        await interaction.response.send_message(
-            f"Who needs to be excused?{note}",
-            view=AddExcludedNameSelectView(self.cog, candidates),
-            ephemeral=True,
-        )
+        await interaction.response.send_modal(ExcludeModal(self.cog))
 
     @discord.ui.button(label="- Remove player", style=discord.ButtonStyle.danger, custom_id="attendance_include_btn")
-    async def remove_player(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def remove_excluded(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await self.cog._is_mod(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can remove excused players.", ephemeral=True)
             return
@@ -317,7 +299,6 @@ class AttendanceCog(commands.Cog):
 
         self.log_list_view = LogListView(self)
         self.roster_view = RosterView(self)
-        self.excluded_view = ExcludedView(self)
         self.overview_view = OverviewView(self)
 
         # discord.py's own Cooldown machinery, reused here for a button
@@ -330,7 +311,6 @@ class AttendanceCog(commands.Cog):
     async def cog_load(self):
         self.bot.add_view(self.log_list_view)
         self.bot.add_view(self.roster_view)
-        self.bot.add_view(self.excluded_view)
         self.bot.add_view(self.overview_view)
 
     # --- permission check (self-contained, same as other cogs) -----------
@@ -370,7 +350,8 @@ class AttendanceCog(commands.Cog):
 
     def _resolve_main_name(self, member: discord.Member) -> str:
         overrides = self._get_main_overrides()
-        return overrides.get(str(member.id)) or member.display_name
+        raw = overrides.get(str(member.id)) or member.display_name
+        return _strip_name_tag(raw)
 
     def _get_excluded_entries(self) -> list:
         record = self.bot.store.get(EXCLUDED_KEY)
@@ -571,23 +552,37 @@ class AttendanceCog(commands.Cog):
             color=discord.Color.blurple(),
         )
 
+        # Conservative budgets here, not the chunker's own defaults - this
+        # embed has TWO sections (raiders + excused) sharing Discord's one
+        # 25-field / ~6000-char total budget, so each needs headroom left
+        # for the other rather than each independently maxing out.
         if not lines:
             embed.add_field(name="Raiders", value="No active Fresh/Regular members found.", inline=False)
         else:
-            chunks, truncated = _chunk_lines_for_embed_fields(lines)
-            # Discord allows up to 25 fields per embed - cap well under that
-            # for headroom (title/description/footer also count toward the
-            # 6000-char total budget the chunker already respects).
-            for i, chunk in enumerate(chunks[:24]):
-                field_name = "Raiders" if i == 0 else "\u200b"  # zero-width name for continuation fields
+            chunks, truncated = _chunk_lines_for_embed_fields(lines, max_total_len=4000)
+            for i, chunk in enumerate(chunks[:18]):
+                field_name = "Raiders" if i == 0 else "\u200b"
                 embed.add_field(name=field_name, value=chunk, inline=False)
-            if truncated or len(chunks) > 24:
+            if truncated or len(chunks) > 18:
                 embed.add_field(
                     name="\u200b",
-                    value="… list truncated - too many raiders to fit in one message. "
+                    value="… raider list truncated - too many to fit in one message. "
                           "Consider lowering ROSTER_FRESH_ACTIVITY_WINDOW in config.py.",
                     inline=False,
                 )
+
+        excluded_entries = self._get_excluded_entries()
+        if not excluded_entries:
+            embed.add_field(name="🚫 Excused", value="None", inline=False)
+        else:
+            excluded_lines = [f"**#{e['id']}** — {e['name']} ({e['reason']})" for e in excluded_entries]
+            excl_chunks, excl_truncated = _chunk_lines_for_embed_fields(excluded_lines, max_total_len=900)
+            for i, chunk in enumerate(excl_chunks[:4]):
+                field_name = "🚫 Excused" if i == 0 else "\u200b"
+                embed.add_field(name=field_name, value=chunk, inline=False)
+            if excl_truncated or len(excl_chunks) > 4:
+                embed.add_field(name="\u200b", value="… excused list truncated.", inline=False)
+
         embed.set_footer(text=ROSTER_MARKER)
         return embed
 
@@ -612,55 +607,6 @@ class AttendanceCog(commands.Cog):
             self.bot.store.set(ROSTER_MESSAGE_KEY, message_id=message.id)
         except Exception:
             log.exception("Failed to post/pin the attendance roster message")
-
-    # --- excluded-players message ---------------------------------------
-
-    def _render_excluded_embed(self) -> discord.Embed:
-        entries = self._get_excluded_entries()
-        embed = discord.Embed(
-            title="🚫 Excused Players",
-            description=(
-                "Excused players are skipped entirely by the attendance overview. "
-                "Remove by #ID, via the button or `/checkattendance removeexcluded id:<N>`."
-            ),
-            color=discord.Color.orange(),
-        )
-
-        if not entries:
-            embed.add_field(name="Currently excused", value="None", inline=False)
-        else:
-            lines = [f"**#{e['id']}** — {e['name']} ({e['reason']})" for e in entries]
-            chunks, truncated = _chunk_lines_for_embed_fields(lines)
-            for i, chunk in enumerate(chunks[:24]):
-                field_name = "Currently excused" if i == 0 else "\u200b"
-                embed.add_field(name=field_name, value=chunk, inline=False)
-            if truncated or len(chunks) > 24:
-                embed.add_field(name="\u200b", value="… list truncated.", inline=False)
-
-        embed.set_footer(text=EXCLUDED_MARKER)
-        return embed
-
-    async def _refresh_excluded_message(self, guild):
-        channel = self.bot.get_channel(self.attendance_channel_id)
-        if channel is None:
-            return
-        embed = self._render_excluded_embed()
-
-        record = self.bot.store.get(EXCLUDED_MESSAGE_KEY)
-        if record and record.get("message_id"):
-            try:
-                message = await channel.fetch_message(record["message_id"])
-                await message.edit(embed=embed, view=self.excluded_view)
-                return
-            except (discord.NotFound, discord.Forbidden):
-                pass
-
-        try:
-            message = await channel.send(embed=embed, view=self.excluded_view)
-            await message.pin()
-            self.bot.store.set(EXCLUDED_MESSAGE_KEY, message_id=message.id)
-        except Exception:
-            log.exception("Failed to post/pin the attendance excluded-players message")
 
     # --- explainer -------------------------------------------------------
 
@@ -698,15 +644,14 @@ class AttendanceCog(commands.Cog):
                 "logs (keeps this readable even with a large Fresh population). Main character "
                 "and any alts shown with class icons. If someone's Discord nickname doesn't "
                 "match their character name, fix it with `/checkattendance setmain`. Alts are "
-                "added with `/checkattendance link`.\n\n"
-
-                "**🚫 Excused Players** - players sitting out attendance tracking temporarily "
-                "(injury, break, etc.) - they're skipped entirely rather than counted as "
-                "absent. **+ Add player** picks a name from the current roster (no typing, no "
-                "typos) then asks for a short reason; **- Remove player** asks for the #ID "
-                "shown next to their entry. The `/checkattendance exclude name: reason:` "
-                "command offers live name suggestions as you type, if you'd rather type than "
-                "click; removal by command is `/checkattendance removeexcluded id:`.\n\n"
+                "added with `/checkattendance link`. The 🚫 Excused section at the bottom lists "
+                "anyone sitting out attendance tracking (injury, break, etc.) - **+ Add player** "
+                "asks for a name and reason (typed, not a dropdown - a button can't offer live "
+                "suggestions the way a slash command can, so it validates what you typed against "
+                "the roster and suggests close matches if it's not exact); **- Remove player** "
+                "asks for the #ID next to their entry. `/checkattendance exclude name: reason:` "
+                "offers real live name suggestions as you type, if you'd rather use the command; "
+                "removal by command is `/checkattendance removeexcluded id:`.\n\n"
 
                 "**📊 Attendance Overview** - the actual promotion/demotion discussion "
                 "aid. Click Refresh (or run `/checkattendance run`, which has no cooldown) "
@@ -737,8 +682,6 @@ class AttendanceCog(commands.Cog):
         if guild is not None:
             if not (self.bot.store.get(ROSTER_MESSAGE_KEY) or {}).get("message_id"):
                 await self._refresh_roster_message(guild)
-            if not (self.bot.store.get(EXCLUDED_MESSAGE_KEY) or {}).get("message_id"):
-                await self._refresh_excluded_message(guild)
             if not (self.bot.store.get(OVERVIEW_MESSAGE_KEY) or {}).get("message_id"):
                 await self._refresh_overview_message(guild)
 
@@ -776,7 +719,7 @@ class AttendanceCog(commands.Cog):
         next_id = (max((e["id"] for e in entries), default=0)) + 1
         entries.append({"id": next_id, "name": name, "reason": reason})
         self._save_excluded_entries(entries)
-        await self._refresh_excluded_message(guild)
+        await self._refresh_roster_message(guild)
         return f"Excused **{name}** (#{next_id}) - reason: {reason}"
 
     async def _do_remove_excluded(self, guild, excluded_id: int) -> str:
@@ -792,7 +735,7 @@ class AttendanceCog(commands.Cog):
         overrides[match["name"].lower()] = config.ATTENDANCE_INCLUDE_BASELINE
         self._save_baseline_overrides(overrides)
 
-        await self._refresh_excluded_message(guild)
+        await self._refresh_roster_message(guild)
         return (
             f"**{match['name']}** (#{excluded_id}) is back on attendance tracking - assumed "
             f"{config.ATTENDANCE_INCLUDE_BASELINE}/{config.ATTENDANCE_WINDOW} for the next "
