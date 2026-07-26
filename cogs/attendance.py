@@ -60,6 +60,41 @@ REPORT_LINK_RE = re.compile(r"(?:reports/|^)([A-Za-z0-9]{8,20})(?:[/#].*)?$")
 REFRESH_COOLDOWN_SECONDS = 300  # 5 minutes - button only, /checkattendance run is never limited
 
 
+def _chunk_lines_for_embed_fields(lines: list, max_field_len: int = 1024, max_total_len: int = 5000):
+    """
+    Splits a list of text lines into embed-field-safe chunks. Discord caps a
+    single field's value at 1024 chars (hard limit - this is what was
+    actually being violated before, not the ~4000 char limit that used to
+    be checked here by mistake) AND caps the whole embed's combined content
+    at 6000 chars. Returns (chunks, truncated) - chunks is a list of
+    already-joined strings each under max_field_len, truncated is True if
+    some lines had to be dropped to stay under max_total_len.
+    """
+    chunks = []
+    current = []
+    current_len = 0
+    total_len = 0
+    truncated = False
+
+    for line in lines:
+        line_len = len(line) + 1  # +1 for the joining newline
+        if total_len + line_len > max_total_len:
+            truncated = True
+            break
+        if current and current_len + line_len > max_field_len:
+            chunks.append("\n".join(current))
+            current = []
+            current_len = 0
+        current.append(line)
+        current_len += line_len
+        total_len += line_len
+
+    if current:
+        chunks.append("\n".join(current))
+
+    return chunks, truncated
+
+
 def _extract_report_code(link: str) -> str:
     """Accepts a bare report code or a full WCL report URL."""
     link = link.strip().rstrip("/")
@@ -104,8 +139,48 @@ class RemoveLogModal(discord.ui.Modal, title="Remove Main Raid Log"):
         await interaction.followup.send(confirmation, ephemeral=True)
 
 
-class ExcludeModal(discord.ui.Modal, title="Exclude Player"):
-    name = discord.ui.TextInput(label="Character name", required=True, max_length=32)
+class ExcludeReasonModal(discord.ui.Modal, title="Reason for Exclusion"):
+    reason = discord.ui.TextInput(
+        label="Reason (e.g. vacation, injury)", required=True, max_length=200
+    )
+
+    def __init__(self, cog: "AttendanceCog", name: str):
+        super().__init__()
+        self.cog = cog
+        self.name = name
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        confirmation = await self.cog._do_exclude(interaction.guild, self.name, str(self.reason).strip())
+        await interaction.followup.send(confirmation, ephemeral=True)
+
+
+class AddExcludedNameSelectView(discord.ui.View):
+    """Short-lived (not persistent) - built fresh each time the Add button
+    is clicked, populated with current roster members not already excused.
+    A dropdown instead of typing rules out name typos entirely - the
+    closest thing to "autocomplete" a button (as opposed to a slash
+    command) can offer, since modals have no live-suggestion support."""
+
+    def __init__(self, cog: "AttendanceCog", candidate_names: list):
+        super().__init__(timeout=120)
+        self.cog = cog
+
+        select = discord.ui.Select(
+            placeholder="Who needs to be excused?",
+            options=[discord.SelectOption(label=name) for name in candidate_names[:25]],
+        )
+        select.callback = self._on_select
+        self.add_item(select)
+        self._select = select
+
+    async def _on_select(self, interaction: discord.Interaction):
+        name = self._select.values[0]
+        await interaction.response.send_modal(ExcludeReasonModal(self.cog, name))
+
+
+class RemoveExcludedModal(discord.ui.Modal, title="Remove Excused Player"):
+    excluded_id = discord.ui.TextInput(label="Excused-player #ID to remove", required=True, max_length=10)
 
     def __init__(self, cog: "AttendanceCog"):
         super().__init__()
@@ -113,30 +188,12 @@ class ExcludeModal(discord.ui.Modal, title="Exclude Player"):
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True, thinking=True)
-        confirmation = await self.cog._do_exclude(interaction.guild, str(self.name))
-        await interaction.followup.send(confirmation, ephemeral=True)
-
-
-class IncludeSelectView(discord.ui.View):
-    """Short-lived (not persistent) - built fresh each time the Include
-    button is clicked, populated with whoever is currently excluded."""
-
-    def __init__(self, cog: "AttendanceCog", excluded_names: list):
-        super().__init__(timeout=120)
-        self.cog = cog
-
-        select = discord.ui.Select(
-            placeholder="Who's coming back?",
-            options=[discord.SelectOption(label=name) for name in excluded_names[:25]],
-        )
-        select.callback = self._on_select
-        self.add_item(select)
-        self._select = select
-
-    async def _on_select(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        name = self._select.values[0]
-        confirmation = await self.cog._do_include(interaction.guild, name)
+        try:
+            excluded_id = int(str(self.excluded_id).strip())
+        except ValueError:
+            await interaction.followup.send("That's not a valid number.", ephemeral=True)
+            return
+        confirmation = await self.cog._do_remove_excluded(interaction.guild, excluded_id)
         await interaction.followup.send(confirmation, ephemeral=True)
 
 
@@ -182,25 +239,33 @@ class ExcludedView(discord.ui.View):
         super().__init__(timeout=None)
         self.cog = cog
 
-    @discord.ui.button(label="Exclude", emoji="🚫", style=discord.ButtonStyle.danger, custom_id="attendance_exclude_btn")
-    async def exclude(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(label="+ Add player", style=discord.ButtonStyle.success, custom_id="attendance_exclude_btn")
+    async def add_player(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await self.cog._is_mod(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can exclude players.", ephemeral=True)
             return
-        await interaction.response.send_modal(ExcludeModal(self.cog))
-
-    @discord.ui.button(label="Include", emoji="✅", style=discord.ButtonStyle.success, custom_id="attendance_include_btn")
-    async def include(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not await self.cog._is_mod(interaction.guild, interaction.user.id):
-            await interaction.response.send_message("Only moderators can re-include players.", ephemeral=True)
+        candidates = self.cog._get_roster_candidate_names(interaction.guild)
+        if not candidates:
+            await interaction.response.send_message(
+                "No eligible roster members found to exclude.", ephemeral=True
+            )
             return
-        excluded = self.cog._get_excluded()
-        if not excluded:
-            await interaction.response.send_message("Nobody is currently excluded.", ephemeral=True)
-            return
-        await interaction.response.send_message(
-            "Who's coming back?", view=IncludeSelectView(self.cog, excluded), ephemeral=True
+        note = (
+            "" if len(candidates) <= 25
+            else f" (showing 25 of {len(candidates)} - use `/checkattendance exclude` to type a name instead)"
         )
+        await interaction.response.send_message(
+            f"Who needs to be excused?{note}",
+            view=AddExcludedNameSelectView(self.cog, candidates),
+            ephemeral=True,
+        )
+
+    @discord.ui.button(label="- Remove player", style=discord.ButtonStyle.danger, custom_id="attendance_include_btn")
+    async def remove_player(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self.cog._is_mod(interaction.guild, interaction.user.id):
+            await interaction.response.send_message("Only moderators can remove excused players.", ephemeral=True)
+            return
+        await interaction.response.send_modal(RemoveExcludedModal(self.cog))
 
 
 class OverviewView(discord.ui.View):
@@ -307,12 +372,40 @@ class AttendanceCog(commands.Cog):
         overrides = self._get_main_overrides()
         return overrides.get(str(member.id)) or member.display_name
 
-    def _get_excluded(self) -> list:
+    def _get_excluded_entries(self) -> list:
         record = self.bot.store.get(EXCLUDED_KEY)
-        return (record or {}).get("names", [])
+        return (record or {}).get("entries", [])
 
-    def _save_excluded(self, names: list):
-        self.bot.store.set(EXCLUDED_KEY, names=names)
+    def _save_excluded_entries(self, entries: list):
+        self.bot.store.set(EXCLUDED_KEY, entries=entries)
+
+    def _get_excluded_names(self) -> set:
+        return {e["name"].lower() for e in self._get_excluded_entries()}
+
+    def _get_roster_candidate_names(self, guild: discord.Guild) -> list:
+        """Current Fresh/Regular (non-mod) members not already excused -
+        used both for the Add-player dropdown and the exclude command's
+        autocomplete. Pure local lookups, no I/O, so it's fast enough for
+        autocomplete's tight response window."""
+        fresh_role = guild.get_role(self.fresh_role_id)
+        regular_role = guild.get_role(config.REGULAR_ROLE_ID)
+        excluded_names = self._get_excluded_names()
+
+        names = []
+        for member in guild.members:
+            if member.bot:
+                continue
+            if any(r.id == self.mod_role_id for r in member.roles):
+                continue
+            has_fresh = fresh_role in member.roles if fresh_role else False
+            has_regular = regular_role in member.roles if regular_role else False
+            if not has_fresh and not has_regular:
+                continue
+            main_name = self._resolve_main_name(member)
+            if main_name.lower() not in excluded_names:
+                names.append(main_name)
+
+        return sorted(set(names), key=str.lower)
 
     def _get_baseline_overrides(self) -> dict:
         record = self.bot.store.get(BASELINE_KEY)
@@ -383,10 +476,16 @@ class AttendanceCog(commands.Cog):
                     f"{marker} **#{entry['id']}** — {entry['date']} · {entry['tier']} · "
                     f"[Log](https://fresh.warcraftlogs.com/reports/{entry['report_code']})"
                 )
-            value = "\n".join(lines)
-            if len(value) > 4000:
-                value = value[:4000] + "\n… (older entries truncated - still counted, just not shown)"
-            embed.add_field(name="Entries", value=value, inline=False)
+            chunks, truncated = _chunk_lines_for_embed_fields(lines)
+            for i, chunk in enumerate(chunks[:24]):
+                field_name = "Entries" if i == 0 else "\u200b"
+                embed.add_field(name=field_name, value=chunk, inline=False)
+            if truncated or len(chunks) > 24:
+                embed.add_field(
+                    name="\u200b",
+                    value="… older entries truncated - still counted, just not all shown here.",
+                    inline=False,
+                )
         embed.set_footer(text=LOG_LIST_MARKER)
         return embed
 
@@ -471,10 +570,24 @@ class AttendanceCog(commands.Cog):
             ),
             color=discord.Color.blurple(),
         )
-        value = "\n".join(lines) if lines else "No active Fresh/Regular members found."
-        if len(value) > 4000:
-            value = value[:4000] + "\n… (truncated)"
-        embed.add_field(name="Raiders", value=value, inline=False)
+
+        if not lines:
+            embed.add_field(name="Raiders", value="No active Fresh/Regular members found.", inline=False)
+        else:
+            chunks, truncated = _chunk_lines_for_embed_fields(lines)
+            # Discord allows up to 25 fields per embed - cap well under that
+            # for headroom (title/description/footer also count toward the
+            # 6000-char total budget the chunker already respects).
+            for i, chunk in enumerate(chunks[:24]):
+                field_name = "Raiders" if i == 0 else "\u200b"  # zero-width name for continuation fields
+                embed.add_field(name=field_name, value=chunk, inline=False)
+            if truncated or len(chunks) > 24:
+                embed.add_field(
+                    name="\u200b",
+                    value="… list truncated - too many raiders to fit in one message. "
+                          "Consider lowering ROSTER_FRESH_ACTIVITY_WINDOW in config.py.",
+                    inline=False,
+                )
         embed.set_footer(text=ROSTER_MARKER)
         return embed
 
@@ -503,13 +616,27 @@ class AttendanceCog(commands.Cog):
     # --- excluded-players message ---------------------------------------
 
     def _render_excluded_embed(self) -> discord.Embed:
-        excluded = self._get_excluded()
+        entries = self._get_excluded_entries()
         embed = discord.Embed(
             title="🚫 Excused Players",
-            description="Excused players are skipped entirely by the attendance overview.",
+            description=(
+                "Excused players are skipped entirely by the attendance overview. "
+                "Remove by #ID, via the button or `/checkattendance removeexcluded id:<N>`."
+            ),
             color=discord.Color.orange(),
         )
-        embed.add_field(name="Currently excused", value=", ".join(excluded) if excluded else "None", inline=False)
+
+        if not entries:
+            embed.add_field(name="Currently excused", value="None", inline=False)
+        else:
+            lines = [f"**#{e['id']}** — {e['name']} ({e['reason']})" for e in entries]
+            chunks, truncated = _chunk_lines_for_embed_fields(lines)
+            for i, chunk in enumerate(chunks[:24]):
+                field_name = "Currently excused" if i == 0 else "\u200b"
+                embed.add_field(name=field_name, value=chunk, inline=False)
+            if truncated or len(chunks) > 24:
+                embed.add_field(name="\u200b", value="… list truncated.", inline=False)
+
         embed.set_footer(text=EXCLUDED_MARKER)
         return embed
 
@@ -563,16 +690,23 @@ class AttendanceCog(commands.Cog):
                 "**📋 Main Raid Log List** - the list of raids that actually count. "
                 "Only logs added here are used - nothing is auto-detected from "
                 "WarcraftLogs, so a random alt run or an off-night log never sneaks in. "
-                "Use the ➕/➖ buttons or `/checkattendance addlog` / `removelog`.\n\n"
+                "Use the ➕ Add Log / ➖ Remove Log buttons (Remove asks for the #ID shown "
+                "next to each entry), or `/checkattendance addlog` / `removelog id:`.\n\n"
 
-                "**🧾 Raider Roster** - shows every Fresh/Regular member, their main "
-                "character (with class icon), and any linked alts. If someone's Discord "
-                "nickname doesn't match their character name, fix it with "
-                "`/checkattendance setmain`. Alts are added with `/checkattendance link`.\n\n"
+                "**🧾 Raider Roster** - shows every Regular member, plus Fresh members who've "
+                f"actually shown up in at least one of the last {config.ROSTER_FRESH_ACTIVITY_WINDOW} "
+                "logs (keeps this readable even with a large Fresh population). Main character "
+                "and any alts shown with class icons. If someone's Discord nickname doesn't "
+                "match their character name, fix it with `/checkattendance setmain`. Alts are "
+                "added with `/checkattendance link`.\n\n"
 
-                "**🚫 Excused Players** - players sitting out attendance tracking "
-                "temporarily (injury, break, etc.) - they're skipped entirely rather than "
-                "counted as absent. Use the buttons or `/checkattendance exclude`/`include`.\n\n"
+                "**🚫 Excused Players** - players sitting out attendance tracking temporarily "
+                "(injury, break, etc.) - they're skipped entirely rather than counted as "
+                "absent. **+ Add player** picks a name from the current roster (no typing, no "
+                "typos) then asks for a short reason; **- Remove player** asks for the #ID "
+                "shown next to their entry. The `/checkattendance exclude name: reason:` "
+                "command offers live name suggestions as you type, if you'd rather type than "
+                "click; removal by command is `/checkattendance removeexcluded id:`.\n\n"
 
                 "**📊 Attendance Overview** - the actual promotion/demotion discussion "
                 "aid. Click Refresh (or run `/checkattendance run`, which has no cooldown) "
@@ -631,27 +765,36 @@ class AttendanceCog(commands.Cog):
         await self._sync_log_list_message(guild)
         return f"Removed log #{log_id}."
 
-    async def _do_exclude(self, guild, name: str) -> str:
-        excluded = self._get_excluded()
+    async def _do_exclude(self, guild, name: str, reason: str) -> str:
+        entries = self._get_excluded_entries()
         name = name.strip()
-        if not any(n.lower() == name.lower() for n in excluded):
-            excluded.append(name)
-            self._save_excluded(excluded)
-        await self._refresh_excluded_message(guild)
-        return f"**{name}** is now excused from attendance tracking."
+        reason = reason.strip()
 
-    async def _do_include(self, guild, name: str) -> str:
-        name = name.strip()
-        excluded = [n for n in self._get_excluded() if n.lower() != name.lower()]
-        self._save_excluded(excluded)
+        if any(e["name"].lower() == name.lower() for e in entries):
+            return f"**{name}** is already excused."
+
+        next_id = (max((e["id"] for e in entries), default=0)) + 1
+        entries.append({"id": next_id, "name": name, "reason": reason})
+        self._save_excluded_entries(entries)
+        await self._refresh_excluded_message(guild)
+        return f"Excused **{name}** (#{next_id}) - reason: {reason}"
+
+    async def _do_remove_excluded(self, guild, excluded_id: int) -> str:
+        entries = self._get_excluded_entries()
+        match = next((e for e in entries if e["id"] == excluded_id), None)
+        if match is None:
+            return f"No excused entry with ID #{excluded_id} found."
+
+        entries = [e for e in entries if e["id"] != excluded_id]
+        self._save_excluded_entries(entries)
 
         overrides = self._get_baseline_overrides()
-        overrides[name.lower()] = config.ATTENDANCE_INCLUDE_BASELINE
+        overrides[match["name"].lower()] = config.ATTENDANCE_INCLUDE_BASELINE
         self._save_baseline_overrides(overrides)
 
         await self._refresh_excluded_message(guild)
         return (
-            f"**{name}** is back on attendance tracking - assumed "
+            f"**{match['name']}** (#{excluded_id}) is back on attendance tracking - assumed "
             f"{config.ATTENDANCE_INCLUDE_BASELINE}/{config.ATTENDANCE_WINDOW} for the next "
             "`/checkattendance run` (or Refresh click) only, then real log data takes over again."
         )
@@ -674,7 +817,7 @@ class AttendanceCog(commands.Cog):
             rosters.append({n.lower() for n in names})
 
         alt_links = self._get_alt_links()
-        excluded = {n.lower() for n in self._get_excluded()}
+        excluded = self._get_excluded_names()
         baseline_overrides = self._get_baseline_overrides()
 
         fresh_role = guild.get_role(self.fresh_role_id)
@@ -747,7 +890,19 @@ class AttendanceCog(commands.Cog):
         )
 
         def _fmt(rows):
-            return "\n".join(f"**{name}** — {count}/{window}" for name, count, window in rows) or "None"
+            if not rows:
+                return "None"
+            lines = [f"**{name}** — {count}/{window}" for name, count, window in rows]
+            value = "\n".join(lines)
+            if len(value) <= 1024:
+                return value
+            kept, total = [], 0
+            for line in lines:
+                if total + len(line) + 1 > 1000:
+                    break
+                kept.append(line)
+                total += len(line) + 1
+            return "\n".join(kept) + f"\n… +{len(lines) - len(kept)} more"
 
         embed.add_field(name="✅ Promotion eligible (Fresh → Regular)", value=_fmt(results["promote"]), inline=False)
         embed.add_field(name="⚠️ Demotion review (Regular below threshold)", value=_fmt(results["demote"]), inline=False)
@@ -878,24 +1033,31 @@ class AttendanceCog(commands.Cog):
         ]
         await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
+    async def _exclude_name_autocomplete(self, interaction: discord.Interaction, current: str):
+        candidates = self._get_roster_candidate_names(interaction.guild)
+        current_lower = current.lower()
+        matches = [n for n in candidates if current_lower in n.lower()]
+        return [app_commands.Choice(name=n, value=n) for n in matches[:25]]
+
     @checkattendance_group.command(name="exclude", description="Excuse a player from attendance tracking")
-    @app_commands.describe(name="Their main character's name")
-    async def exclude(self, interaction: discord.Interaction, name: str):
+    @app_commands.describe(name="Their main character's name", reason="Why they're excused, e.g. vacation")
+    @app_commands.autocomplete(name=_exclude_name_autocomplete)
+    async def exclude(self, interaction: discord.Interaction, name: str, reason: str):
         if not await self._is_mod(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can exclude players.", ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
-        confirmation = await self._do_exclude(interaction.guild, name)
+        confirmation = await self._do_exclude(interaction.guild, name, reason)
         await interaction.followup.send(confirmation, ephemeral=True)
 
-    @checkattendance_group.command(name="include", description="Resume attendance tracking for a previously excused player")
-    @app_commands.describe(name="Their main character's name")
-    async def include(self, interaction: discord.Interaction, name: str):
+    @checkattendance_group.command(name="removeexcluded", description="Remove a player from the excused list by ID")
+    @app_commands.describe(id="The #ID shown next to the entry in the Excused Players message")
+    async def removeexcluded(self, interaction: discord.Interaction, id: int):
         if not await self._is_mod(interaction.guild, interaction.user.id):
-            await interaction.response.send_message("Only moderators can re-include players.", ephemeral=True)
+            await interaction.response.send_message("Only moderators can manage excused players.", ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
-        confirmation = await self._do_include(interaction.guild, name)
+        confirmation = await self._do_remove_excluded(interaction.guild, id)
         await interaction.followup.send(confirmation, ephemeral=True)
 
     @checkattendance_group.command(name="run", description="Generate/refresh the attendance overview (no cooldown)")
