@@ -62,6 +62,16 @@ async def on_ready():
         bot.tree.copy_global_to(guild=guild)
         synced = await bot.tree.sync(guild=guild)
         log.info("Synced %d command(s) to guild %s: %s", len(synced), guild_id, [c.name for c in synced])
+
+        # Remove any GLOBAL registrations left over from before guild-scoped
+        # sync was introduced (or from testing without DISCORD_GUILD_ID set).
+        # Without this, Discord ends up with two separate registrations of
+        # the same command - the guild-scoped one (works, instant) and a
+        # stale global one (can show up as a duplicate entry that doesn't
+        # actually invoke anything). Safe to run every startup - clearing
+        # an already-empty global set is a harmless no-op.
+        bot.tree.clear_commands(guild=None)
+        await bot.tree.sync()
     else:
         synced = await bot.tree.sync()
         log.info(

@@ -40,6 +40,9 @@ NOT_FOUND_TIMEOUT = 180    # waiting for the retry-name/continue-anyway choice
 
 AMSTERDAM_TZ = ZoneInfo("Europe/Amsterdam")
 
+ARCHIVE_CONFIRMATION_KEY = "archive_confirmation"  # sentinel store key, not a real message id
+REVIEW_EXPLAINER_MARKER = "review-channel-explainer"
+
 
 def _emoji_for(icon_str):
     """Converts a resolved icon string (e.g. '<:name:123>') into a
@@ -1079,6 +1082,48 @@ class ApplyCog(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self):
         await self._ensure_gear_check_explainer()
+        await self._ensure_review_channel_explainer()
+
+    async def _ensure_review_channel_explainer(self):
+        channel = self.bot.get_channel(self.review_channel_id)
+        if channel is None:
+            log.warning("REVIEW_CHANNEL_ID set but channel not found/visible")
+            return
+
+        try:
+            pins = await channel.pins()
+        except discord.Forbidden:
+            log.warning("Missing permission to read pins in review channel")
+            return
+
+        if any(m.content and REVIEW_EXPLAINER_MARKER in m.content for m in pins):
+            return  # already posted, nothing to do
+
+        content = (
+            f"-# {REVIEW_EXPLAINER_MARKER}\n"
+            "**Quick reference for moderators**\n"
+            f"• {APPROVE_EMOJI} **Approve** / {DENY_EMOJI} **Deny** on each card below. Deny "
+            "asks for an optional reason - visible here only, never sent to the applicant.\n"
+            "• 🔄 **Reset** undoes a mistaken decision, putting the card back to pending.\n"
+            "• Applicants can add/update their note or screenshot anytime with "
+            "`/update-application`, even after posting.\n"
+            "• `/gearcheck archive` moves every decided (approved/denied) card out to the "
+            "archive channel, keeping this one to just what's still pending."
+        )
+
+        try:
+            message = await channel.send(content)
+        except Exception:
+            log.exception("Failed to POST the explainer in review channel")
+            return
+
+        try:
+            await message.pin()
+        except Exception:
+            log.exception(
+                "Posted the explainer but failed to PIN it in review channel "
+                "(the message itself is up - only pinning failed)"
+            )
 
     async def _ensure_gear_check_explainer(self):
         gear_check_channel_id = os.environ.get("GEAR_CHECK_CHANNEL_ID")
@@ -1413,6 +1458,37 @@ class ApplyCog(commands.Cog):
 
     # --- /gearcheck archive -------------------------------------------
 
+    async def _post_or_update_archive_confirmation(self, guild, initiator, moved, failed):
+        """Posts (or, on repeat runs, edits in place) a single confirmation
+        message in the review channel - only one such message should ever
+        be visible at a time, so mods always see the latest archive run."""
+        review_channel = self.bot.get_channel(self.review_channel_id)
+        if review_channel is None:
+            return
+
+        now = discord.utils.utcnow().astimezone(AMSTERDAM_TZ)
+        timestamp_str = now.strftime("%Y-%m-%d %H:%M %Z")
+        archive_link = f"https://discord.com/channels/{guild.id}/{config.ARCHIVE_CHANNEL_ID}"
+
+        content = (
+            f"📦 **Archiving complete** - {moved} application(s) moved"
+            + (f", {failed} failed (see console log)" if failed else "")
+            + f"\nInitiated by {initiator.mention} at {timestamp_str}\n"
+            + f"Archived applications: {archive_link}"
+        )
+
+        record = self.bot.store.get(ARCHIVE_CONFIRMATION_KEY)
+        if record:
+            try:
+                message = await review_channel.fetch_message(record["message_id"])
+                await message.edit(content=content)
+                return
+            except (discord.NotFound, discord.Forbidden):
+                pass  # old confirmation is gone - fall through and post a fresh one
+
+        message = await review_channel.send(content=content)
+        self.bot.store.set(ARCHIVE_CONFIRMATION_KEY, message_id=message.id)
+
     @gearcheck_group.command(
         name="archive", description="Move all approved/denied applications to the archive channel"
     )
@@ -1444,7 +1520,10 @@ class ApplyCog(commands.Cog):
 
         moved = 0
         failed = 0
-        async for message in review_channel.history(limit=None):
+        # oldest_first so the archive ends up in the same order the review
+        # channel had (oldest applicant at the top, most recent at the
+        # bottom) - the default is newest-first, which would reverse it.
+        async for message in review_channel.history(limit=None, oldest_first=True):
             application = self.bot.store.get(message.id)
             if application is None or application.get("status") not in ("approved", "denied"):
                 continue
@@ -1460,6 +1539,8 @@ class ApplyCog(commands.Cog):
             except Exception:
                 log.exception("Failed to archive application message %s", message.id)
                 failed += 1
+
+        await self._post_or_update_archive_confirmation(interaction.guild, interaction.user, moved, failed)
 
         summary = f"Archived {moved} application(s)."
         if failed:
