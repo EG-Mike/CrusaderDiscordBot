@@ -63,6 +63,11 @@ class ApplicationStore:
                 self._data[str(message_id)].update(fields)
                 self._save()
 
+    def delete(self, message_id: int):
+        with _LOCK:
+            self._data.pop(str(message_id), None)
+            self._save()
+
     def find_latest_by_applicant(self, applicant_id: int):
         """
         Returns (message_id, record) for the most recent application by this

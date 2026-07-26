@@ -20,6 +20,7 @@ feature later means adding a new cog file, not touching this one.
 import os
 import asyncio
 import logging
+from zoneinfo import ZoneInfo
 
 import discord
 from discord import app_commands
@@ -36,6 +37,8 @@ DENY_EMOJI = "❌"
 DIALOG_TIMEOUT = 300       # role/spec selection
 SCREENSHOT_TIMEOUT = 180   # waiting for an optional screenshot reply
 NOT_FOUND_TIMEOUT = 180    # waiting for the retry-name/continue-anyway choice
+
+AMSTERDAM_TZ = ZoneInfo("Europe/Amsterdam")
 
 
 def _emoji_for(icon_str):
@@ -334,7 +337,29 @@ class ClassSelectView(discord.ui.View):
         self.stop()
 
 
+class DenyReasonModal(discord.ui.Modal, title="Deny Application"):
+    reason = discord.ui.TextInput(
+        label="Reason (optional - shown to mods, not applicant)",
+        style=discord.TextStyle.paragraph,
+        required=False,
+        max_length=500,
+    )
+
+    def __init__(self, cog: "ApplyCog", message_id: int):
+        super().__init__()
+        self.cog = cog
+        self.message_id = message_id
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        await self.cog._apply_denial(interaction, self.message_id, str(self.reason).strip() or None)
+
+
 class ApplyCog(commands.Cog):
+    gearcheck_group = app_commands.Group(
+        name="gearcheck", description="Gear-check application management (moderator only)"
+    )
+
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.review_channel_id = int(os.environ["REVIEW_CHANNEL_ID"])
@@ -501,7 +526,7 @@ class ApplyCog(commands.Cog):
 
         return tier_block, boss_block, hidden_block
 
-    def _render_application_view(self, application: dict) -> discord.ui.LayoutView:
+    def _render_application_view(self, application: dict, message_id: int = None) -> discord.ui.LayoutView:
         """
         Rebuilds the whole application layout from stored data - always
         from scratch, never by mutating an existing message's components.
@@ -509,18 +534,26 @@ class ApplyCog(commands.Cog):
         deny, reset, /update-application), so there's exactly one code path
         that knows how to render an application, and no dependency on
         component-mutation APIs.
+
+        message_id, if given, is this application's OWN message id - used
+        to exclude itself when counting prior denials (without this, an
+        application that was just denied would count itself as a "prior"
+        denial the moment it's rendered post-decision).
         """
         view = discord.ui.LayoutView(timeout=None)
         color = discord.Color(application.get("class_color") or 0x2B2D31)
         container = discord.ui.Container(accent_color=color)
 
         status = application.get("status", "pending")
+        is_pending = status == "pending"
+        icon_prefix = {"approved": f"{APPROVE_EMOJI} ", "denied": f"{DENY_EMOJI} "}.get(status, "")
         suffix = {"approved": " (APPROVED)", "denied": " (DENIED)"}.get(status, "")
         profile_url = application.get("profile_url") or ""
         character_name = application.get("character_name", "?")
-        title = f"## {character_name}{suffix}"
         if profile_url:
-            title = f"## [{character_name}{suffix}]({profile_url})"
+            title = f"## {icon_prefix}[{character_name}{suffix}]({profile_url})"
+        else:
+            title = f"## {icon_prefix}{character_name}{suffix}"
         container.add_item(discord.ui.TextDisplay(title))
         container.add_item(discord.ui.TextDisplay(f"Applicant: <@{application['applicant_id']}>"))
         container.add_item(discord.ui.Separator())
@@ -528,15 +561,15 @@ class ApplyCog(commands.Cog):
         prior_denials = [
             (mid, rec)
             for mid, rec in self.bot.store.find_all_by_applicant(application["applicant_id"])
-            if rec.get("status") == "denied"
+            if rec.get("status") == "denied" and mid != message_id
         ]
-        if prior_denials:
+        # Only worth flagging once it's a pattern, not a single past denial.
+        if len(prior_denials) >= 2:
             most_recent_id, most_recent_rec = prior_denials[-1]
             most_recent_date = discord.utils.snowflake_time(most_recent_id).strftime("%Y-%m-%d")
-            times = "time" if len(prior_denials) == 1 else "times"
             container.add_item(discord.ui.TextDisplay(
                 f"⚠️ **Previously Denied** ⚠️\nThis character has been denied {len(prior_denials)} "
-                f"{times} before. Most recent: **{most_recent_rec.get('character_name', '?')}** "
+                f"times before. Most recent: **{most_recent_rec.get('character_name', '?')}** "
                 f"on {most_recent_date}."
             ))
             container.add_item(discord.ui.Separator())
@@ -565,11 +598,11 @@ class ApplyCog(commands.Cog):
             container.add_item(discord.ui.TextDisplay(f"**Full profile:** {profile_url}"))
             container.add_item(discord.ui.Separator())
 
-        if application.get("note"):
-            container.add_item(discord.ui.TextDisplay(
-                f"**Applicant's note:**\n{application['note'][:1024]}"
-            ))
-            container.add_item(discord.ui.Separator())
+        note = application.get("note")
+        container.add_item(discord.ui.TextDisplay(
+            f"**Applicant's note:**\n{note[:1024] if note else 'No note provided'}"
+        ))
+        container.add_item(discord.ui.Separator())
 
         screenshot_urls = (application.get("screenshot_urls") or [])[: config.MAX_SCREENSHOTS]
         if screenshot_urls:
@@ -577,15 +610,14 @@ class ApplyCog(commands.Cog):
                 *[discord.MediaGalleryItem(u) for u in screenshot_urls]
             )
             container.add_item(gallery)
-            container.add_item(discord.ui.Separator())
+        else:
+            container.add_item(discord.ui.TextDisplay("**Screenshot(s):** No screenshot provided"))
+        container.add_item(discord.ui.Separator())
 
         footer_text = application.get("decision_footer") or "Use the buttons below to decide"
         container.add_item(discord.ui.TextDisplay(footer_text))
 
         view.add_item(container)
-
-        status = application.get("status", "pending")
-        is_pending = status == "pending"
 
         action_row = discord.ui.ActionRow()
 
@@ -624,7 +656,7 @@ class ApplyCog(commands.Cog):
         return view
 
     async def _refresh_review_message(self, message: discord.Message, application: dict):
-        await message.edit(view=self._render_application_view(application))
+        await message.edit(view=self._render_application_view(application, message_id=message.id))
 
     async def _post_application(
         self, interaction, char_data, role, spec, other_specs, note, screenshot_urls
@@ -640,6 +672,7 @@ class ApplyCog(commands.Cog):
             "applicant_id": interaction.user.id,
             "character_name": char_data["name"],
             "status": "pending",
+            "class_name": char_data["class_name"],
             "role": role,
             "spec": spec,
             "other_specs": other_specs,
@@ -664,6 +697,7 @@ class ApplyCog(commands.Cog):
             application["applicant_id"],
             application["character_name"],
             status="pending",
+            class_name=char_data["class_name"],
             role=role,
             spec=spec,
             other_specs=other_specs,
@@ -1133,19 +1167,39 @@ class ApplyCog(commands.Cog):
         )
 
         updated = self.bot.store.get(interaction.message.id)
-        await interaction.message.edit(view=self._render_application_view(updated))
+        await self._refresh_review_message(interaction.message, updated)
 
         await interaction.response.send_message(
             "Application reset - the Approve/Deny buttons are active again.", ephemeral=True
         )
 
+    async def _grant_role(self, guild, applicant, role_id, label, newly_assigned, already_had, reason):
+        """Assigns role_id to applicant if not already present, tracking the
+        outcome in the newly_assigned/already_had lists (both hold
+        display labels, e.g. an icon + name string)."""
+        if role_id is None:
+            return
+        role = guild.get_role(role_id)
+        if role is None:
+            return
+        if role in applicant.roles:
+            already_had.append(label)
+            return
+        try:
+            await applicant.add_roles(role, reason=reason)
+            newly_assigned.append(label)
+        except discord.Forbidden:
+            log.warning("Missing permission to assign role %s to %s", role.name, applicant)
+
+    def _class_or_role_label(self, guild, name: str, *, is_class: bool) -> str:
+        icon = (
+            icons.resolve_class_icon(guild, name)
+            if is_class
+            else icons.resolve_role_icon(guild, name)
+        )
+        return f"{icon} {name}".strip()
+
     async def _on_approve_click(self, interaction: discord.Interaction):
-        await self._handle_decision(interaction, "approved")
-
-    async def _on_deny_click(self, interaction: discord.Interaction):
-        await self._handle_decision(interaction, "denied")
-
-    async def _handle_decision(self, interaction: discord.Interaction, decision: str):
         application = self.bot.store.get(interaction.message.id)
         if application is None:
             await interaction.response.send_message(
@@ -1165,110 +1219,252 @@ class ApplyCog(commands.Cog):
             )
             return
 
-        # Defers as a silent "deferred message update" for component
-        # interactions - no visible loading state, just acknowledges so we
-        # have time for role/DM work before editing the message ourselves.
+        # Deferred message update - silently acknowledges the click, no
+        # visible loading state, and gives us time for role/DM work before
+        # editing the message ourselves.
         await interaction.response.defer()
+        await self._apply_approval(interaction, interaction.message.id)
+
+    async def _on_deny_click(self, interaction: discord.Interaction):
+        application = self.bot.store.get(interaction.message.id)
+        if application is None:
+            await interaction.response.send_message(
+                "Couldn't find this application's record.", ephemeral=True
+            )
+            return
+        if application["status"] != "pending":
+            await interaction.response.send_message(
+                "This application has already been decided - use Reset first if you need "
+                "to change it.",
+                ephemeral=True,
+            )
+            return
+        if not await self._is_mod(interaction.guild, interaction.user.id):
+            await interaction.response.send_message(
+                "Only moderators can approve or deny applications.", ephemeral=True
+            )
+            return
+
+        # A modal must be the FIRST response to an interaction, so this one
+        # can't defer first the way approve does - the modal's own
+        # on_submit defers instead, then calls _apply_denial.
+        await interaction.response.send_modal(DenyReasonModal(self, interaction.message.id))
+
+    async def _apply_approval(self, interaction: discord.Interaction, message_id: int):
+        application = self.bot.store.get(message_id)
+        if application is None or application["status"] != "pending":
+            return  # decided or removed while we were working - nothing to do
 
         guild = interaction.guild
         channel = interaction.channel
         applicant = guild.get_member(application["applicant_id"])
         reviewer = interaction.user
         character_name = application["character_name"]
-
-        # None on a fresh application; "approved"/"denied" if this decision
-        # follows a Reset - lets us know whether (and how) to notify the
-        # applicant, per the correction rules below.
+        class_name = application.get("class_name")
+        role_name = application.get("role")
         previous_decision = application.get("last_decision")
-        now = discord.utils.utcnow()
-        timestamp_str = now.strftime("%Y-%m-%d %H:%M %z UTC-2")
 
-        if decision == "approved":
-            assigned_roles = []
-            if applicant is not None:
-                role = guild.get_role(self.fresh_role_id)
-                if role is not None:
-                    try:
-                        await applicant.add_roles(role, reason="Guild application approved")
-                        assigned_roles.append(role.name)
-                    except discord.Forbidden:
-                        log.warning("Missing permission to assign role to %s", applicant)
+        newly_assigned = []
+        already_had = []
+        nickname_line = "Name not changed - no applicant member found"
 
+        if applicant is not None:
+            is_exempt = any(r.id in config.FRESH_EXEMPT_ROLE_IDS for r in applicant.roles)
+
+            if is_exempt:
+                already_had.append("Fresh/Regular/Organizer")
+            else:
+                await self._grant_role(
+                    guild, applicant, self.fresh_role_id, "Fresh",
+                    newly_assigned, already_had, "Guild application approved",
+                )
+
+            # Auto class/role tags - independent of the Fresh exemption,
+            # a Regular/Organizer should still get tagged for their class/role.
+            if role_name and role_name in config.AUTO_ROLE_IDS:
+                label = self._class_or_role_label(guild, role_name, is_class=False)
+                await self._grant_role(
+                    guild, applicant, config.AUTO_ROLE_IDS[role_name], label,
+                    newly_assigned, already_had, "Guild application approved",
+                )
+            if class_name and class_name in config.AUTO_ROLE_IDS:
+                label = self._class_or_role_label(guild, class_name, is_class=True)
+                await self._grant_role(
+                    guild, applicant, config.AUTO_ROLE_IDS[class_name], label,
+                    newly_assigned, already_had, "Guild application approved",
+                )
+
+            original_name = applicant.display_name
+            if is_exempt:
+                nickname_line = f"Name not changed - already Fresh/Regular/Organizer ({original_name})"
+            else:
                 try:
                     await applicant.edit(nick=character_name, reason="Guild application approved")
+                    nickname_line = f"Name changed: {original_name} → {character_name}"
                 except discord.Forbidden:
                     log.warning("Missing permission to set nickname for %s", applicant)
+                    nickname_line = f"⚠️ Name NOT changed (missing permission) - still {original_name}"
 
-                # Notify on a first-ever approval, or when correcting a
-                # previous denial. Re-approving after an already-approved
-                # state (double reset) has nothing new to tell them.
-                should_dm = previous_decision is None or previous_decision == "denied"
-                if should_dm:
-                    try:
-                        await applicant.send(
-                        f"🎉 Your character **{application['character_name']}** "
-                        "has been approved! Welcome to Crusader's PUG.\n\n" 
+            # Notify on a first-ever approval, or when correcting a
+            # previous denial. Re-approving after an already-approved
+            # state (double reset) has nothing new to tell them.
+            should_dm = previous_decision is None or previous_decision == "denied"
+            if should_dm:
+                try:
+                    await applicant.send(
+                    f"🎉 Your character **{application['character_name']}** "
+                    "has been approved! Welcome to Crusader's PUG.\n\n" 
 
-                        "You have been granted access to the raid-signup channel(s).\n" 
-                        "Make sure to sign-up and confirm your spot when you are placed on the roster!\n\n"
+                    "You have been granted access to the raid-signup channel(s).\n" 
+                    "Make sure to sign-up and confirm your spot when you are placed on the roster!\n\n"
 
-                        "One more step: When you sign up for a raid, you will need to register your character for raid sign-ups"
-                        " - this is a one time process!"
+                    "One more step: When you sign up for a raid, you will need to register your character for raid sign-ups"
+                    " - this is a one time process!"
 
-                        "Please note: your (server-specific) Discord nickname has been changed to your characters name."
-                        )
-                    except discord.Forbidden:
-                        await channel.send(
-                            f"(Couldn't DM {applicant.mention} - their DMs may be closed. "
-                            "Please let them know they've been accepted.)"
-                        )
+                    "Please note: your (server-specific) Discord nickname has been changed to your characters name."
+                    )
+                except discord.Forbidden:
+                    await channel.send(
+                        f"(Couldn't DM {applicant.mention} - their DMs may be closed. "
+                        "Please let them know they've been accepted.)"
+                    )
 
-            roles_str = ", ".join(assigned_roles) if assigned_roles else "None"
-            self.bot.store.update(
-                interaction.message.id,
-                status="approved",
-                last_decision="approved",
-                decision_footer=(
-                    f"✅ Approved by {reviewer} • {timestamp_str}\nRole(s) assigned: {roles_str}"
-                ),
-            )
+        now = discord.utils.utcnow().astimezone(AMSTERDAM_TZ)
+        timestamp_str = now.strftime("%Y-%m-%d %H:%M %Z")
 
-        else:  # denied
-            if applicant is not None:
-                role = guild.get_role(self.fresh_role_id)
-                if role is not None and role in applicant.roles:
-                    try:
-                        await applicant.remove_roles(role, reason="Guild application denied/corrected")
-                    except discord.Forbidden:
-                        log.warning("Missing permission to remove role from %s", applicant)
+        assigned_display = ", ".join(newly_assigned) if newly_assigned else "None"
+        already_display = f"\nAlready had: {', '.join(already_had)}" if already_had else ""
+        self.bot.store.update(
+            message_id,
+            status="approved",
+            last_decision="approved",
+            decision_footer=(
+                f"✅ Approved by {reviewer} • {timestamp_str}\n"
+                f"Role(s) assigned: {assigned_display}{already_display}\n"
+                f"{nickname_line}"
+            ),
+        )
 
-                # Only notify on a first-ever denial. If this is a
-                # correction of a previous approval, just revoke the role
-                # silently - no DM, per the correction rules.
-                should_dm = previous_decision is None
-                if should_dm:
-                    try:
-                        await applicant.send(
-                            f"Thanks for applying, **{character_name}**. "
-                            "Unfortunately we won't be moving forward with your application "
-                            "at this time. Feel free to reach out to an officer if you have "
-                            "questions or come back later."
-                        )
-                    except discord.Forbidden:
-                        await channel.send(
-                            f"(Couldn't DM {applicant.mention} - their DMs may be closed. "
-                            "Please let them know about the decision.)"
-                        )
-
-            self.bot.store.update(
-                interaction.message.id,
-                status="denied",
-                last_decision="denied",
-                decision_footer=f"❌ Denied by {reviewer} • {timestamp_str}\nRoles assigned: None",
-            )
-
-        updated = self.bot.store.get(interaction.message.id)
+        updated = self.bot.store.get(message_id)
         await self._refresh_review_message(interaction.message, updated)
+
+    async def _apply_denial(self, interaction: discord.Interaction, message_id: int, reason: str):
+        application = self.bot.store.get(message_id)
+        if application is None or application["status"] != "pending":
+            await interaction.followup.send(
+                "This application is no longer pending - nothing changed.", ephemeral=True
+            )
+            return
+
+        guild = interaction.guild
+        channel = interaction.channel
+        applicant = guild.get_member(application["applicant_id"])
+        reviewer = interaction.user
+        character_name = application["character_name"]
+        previous_decision = application.get("last_decision")
+
+        if applicant is not None:
+            role = guild.get_role(self.fresh_role_id)
+            if role is not None and role in applicant.roles:
+                try:
+                    await applicant.remove_roles(role, reason="Guild application denied/corrected")
+                except discord.Forbidden:
+                    log.warning("Missing permission to remove role from %s", applicant)
+
+            # Only notify on a first-ever denial. If this is a
+            # correction of a previous approval, just revoke the role
+            # silently - no DM, per the correction rules.
+            should_dm = previous_decision is None
+            if should_dm:
+                try:
+                    await applicant.send(
+                        f"Thanks for applying, **{character_name}**. "
+                        "Unfortunately we won't be moving forward with your application "
+                        "at this time. Feel free to reach out to an officer if you have "
+                        "questions or come back later."
+                    )
+                except discord.Forbidden:
+                    await channel.send(
+                        f"(Couldn't DM {applicant.mention} - their DMs may be closed. "
+                        "Please let them know about the decision.)"
+                    )
+
+        now = discord.utils.utcnow().astimezone(AMSTERDAM_TZ)
+        timestamp_str = now.strftime("%Y-%m-%d %H:%M %Z")
+
+        footer = f"❌ Denied by {reviewer} • {timestamp_str}\nRoles assigned: None"
+        if reason:
+            footer += f"\nReason: {reason}"
+
+        self.bot.store.update(
+            message_id,
+            status="denied",
+            last_decision="denied",
+            decision_footer=footer,
+        )
+
+        updated = self.bot.store.get(message_id)
+        review_channel = self.bot.get_channel(self.review_channel_id)
+        try:
+            message = await review_channel.fetch_message(message_id)
+        except (discord.NotFound, discord.Forbidden):
+            return
+        await self._refresh_review_message(message, updated)
+
+    # --- /gearcheck archive -------------------------------------------
+
+    @gearcheck_group.command(
+        name="archive", description="Move all approved/denied applications to the archive channel"
+    )
+    async def gearcheck_archive(self, interaction: discord.Interaction):
+        if not await self._is_mod(interaction.guild, interaction.user.id):
+            await interaction.response.send_message(
+                "Only moderators can archive applications.", ephemeral=True
+            )
+            return
+        if not config.ARCHIVE_ENABLED or not config.ARCHIVE_CHANNEL_ID:
+            await interaction.response.send_message(
+                "Archiving isn't enabled - set ARCHIVE_ENABLED/ARCHIVE_CHANNEL_ID in config.py.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        archive_channel = self.bot.get_channel(config.ARCHIVE_CHANNEL_ID)
+        if archive_channel is None:
+            await interaction.followup.send(
+                "Couldn't find the configured archive channel.", ephemeral=True
+            )
+            return
+        review_channel = self.bot.get_channel(self.review_channel_id)
+        if review_channel is None:
+            await interaction.followup.send("Couldn't find the review channel.", ephemeral=True)
+            return
+
+        moved = 0
+        failed = 0
+        async for message in review_channel.history(limit=None):
+            application = self.bot.store.get(message.id)
+            if application is None or application.get("status") not in ("approved", "denied"):
+                continue
+            try:
+                new_message = await archive_channel.send(
+                    view=self._render_application_view(application, message_id=message.id)
+                )
+                self.bot.store.set(new_message.id, **application)
+                self.bot.store.delete(message.id)
+                await message.delete()
+                moved += 1
+                await asyncio.sleep(0.5)  # stay clear of rate limits on big batches
+            except Exception:
+                log.exception("Failed to archive application message %s", message.id)
+                failed += 1
+
+        summary = f"Archived {moved} application(s)."
+        if failed:
+            summary += f" {failed} failed - check the console log."
+        await interaction.followup.send(summary, ephemeral=True)
 
 
 async def setup(bot: commands.Bot):

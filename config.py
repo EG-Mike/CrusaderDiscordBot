@@ -181,6 +181,43 @@ MAX_SCREENSHOTS = 4
 # checking if OXM ever re-registers their commands.
 OXM_REGISTER_COMMAND_ID = 1502459742461624360
 
+# Roles that, if an approved applicant already holds ANY of them, mean the
+# "Fresh" role should NOT be (re-)assigned or should be reported as
+# "already had" instead of "assigned" - they're already a step above plain
+# Fresh status. Also used to skip the nickname change for the same people.
+FRESH_EXEMPT_ROLE_IDS = [
+    1337919809928691793,  # Fresh
+    1337905799061700709,  # Regular
+    1337905891667742770,  # Organizer
+]
+
+# Auto-assigned class/role Discord roles, granted on approval based on the
+# applicant's selected main role and class (in addition to Fresh). Maps our
+# internal role/class name -> Discord role ID. Uses the same names as ROLES
+# and CLASS_SPECS' keys above, so icons resolve automatically via
+# icons.resolve_role_icon / icons.resolve_class_icon.
+AUTO_ROLE_IDS = {
+    "Tank": 1526338687087022151,
+    "Healer": 1526341457173020888,
+    "DPS": 1526341502018523266,
+    "Mage": 1526341727634325584,
+    "Warrior": 1526341753022709860,
+    "Shaman": 1526341770328150066,
+    "Hunter": 1526341788242149436,
+    "Warlock": 1526341809318400172,
+    "Paladin": 1526341858966507631,
+    "Druid": 1526341878457565355,
+    "Priest": 1526341889723207911,
+    "Rogue": 1526342262488043560,
+}
+
+# Archive: /gearcheck archive moves every approved/denied application out
+# of the review channel into a separate archive channel (re-posted there,
+# original deleted). Set ARCHIVE_ENABLED to False to disable the command
+# entirely without needing to remove the channel ID.
+ARCHIVE_ENABLED = True
+ARCHIVE_CHANNEL_ID = 1337906439066488914
+
 # --- WCL percentile color scale (verify against current WCL palette if it
 # ever changes - this was accurate as of the last time this was checked) ---
 # List of (min_percentile, max_percentile, hex_color)
