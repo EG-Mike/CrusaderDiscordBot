@@ -218,6 +218,23 @@ AUTO_ROLE_IDS = {
 ARCHIVE_ENABLED = True
 ARCHIVE_CHANNEL_ID = 1337906439066488914
 
+# --- Attendance tracking (Regular-role eligibility) ---
+# Regular role - separate from FRESH_EXEMPT_ROLE_IDS above (that list is
+# about skipping the Fresh assignment/nickname on approval; this is the
+# specific ID the attendance feature checks/toggles).
+REGULAR_ROLE_ID = 1337905799061700709
+
+ATTENDANCE_WINDOW = 5           # how many of the most recent tagged main-raid
+                                # logs count toward eligibility
+ATTENDANCE_MIN_ATTENDED = 3     # out of ATTENDANCE_WINDOW, needed to be
+                                # Regular-eligible (or keep Regular status)
+ATTENDANCE_MIN_KILLS_PER_LOG = 1  # boss kills needed within a single log's
+                                   # roster to count as "attended" that week
+ATTENDANCE_INCLUDE_BASELINE = 4   # assumed attended count (out of
+                                   # ATTENDANCE_WINDOW) applied for one
+                                   # /checkattendance run after re-including
+                                   # someone who was excused
+
 # --- WCL percentile color scale (verify against current WCL palette if it
 # ever changes - this was accurate as of the last time this was checked) ---
 # List of (min_percentile, max_percentile, hex_color)

@@ -10,8 +10,12 @@ Docs: https://www.warcraftlogs.com/api/docs
 """
 
 import time
+import asyncio
+import logging
 from collections import Counter
 import aiohttp
+
+log = logging.getLogger("wow-apply-bot.wcl")
 
 TOKEN_URL = "https://www.warcraftlogs.com/oauth/token"
 API_URL = "https://fresh.warcraftlogs.com/api/v2/client"
@@ -58,6 +62,28 @@ query CharacterTierLookup($id: Int!, $zoneId: Int!) {
   characterData {
     character(id: $id) {
       zoneRankings(zoneID: $zoneId)
+    }
+  }
+}
+"""
+
+# --- attendance tracking (report-level, not character-level) ---
+
+REPORT_FIGHTS_QUERY = """
+query ReportFights($code: String!) {
+  reportData {
+    report(code: $code) {
+      fights { id kill }
+    }
+  }
+}
+"""
+
+REPORT_PLAYER_DETAILS_QUERY = """
+query ReportPlayers($code: String!, $fightIDs: [Int]!) {
+  reportData {
+    report(code: $code) {
+      playerDetails(fightIDs: $fightIDs)
     }
   }
 }
@@ -220,7 +246,7 @@ class WarcraftLogsClient:
                 "encounter_id": encounter.get("id"),
                 "encounter_name": encounter.get("name", "Unknown boss"),
                 "kills": kills,
-                "best_percent": int(float(r.get("rankPercent"))),
+                "best_percent": r.get("rankPercent"),
             })
             spec = r.get("spec")
             if spec:
@@ -235,3 +261,79 @@ class WarcraftLogsClient:
             "total_kills": total_kills,
             "primary_spec": primary_spec,
         }
+
+    async def get_report_attendance(self, report_code: str, min_kills: int = 1) -> set:
+        """
+        Returns the set of character names present in at least `min_kills`
+        distinct boss-kill fights in this report - used for attendance
+        tracking. Fetches playerDetails PER kill fight (rather than one
+        combined call across all of them) specifically so a per-log kill
+        count threshold can be enforced correctly, not just "present in at
+        least one of the fights somewhere."
+
+        Verified against a real report (2026-07): report.fights[].kill is
+        true/false/null as expected (null = trash, false = wipe, true =
+        kill), and playerDetails(fightIDs: [...]) reliably returns `name`
+        per player across the dps/healers/tanks buckets.
+        """
+        token = await self._get_token()
+        headers = {"Authorization": f"Bearer {token}"}
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                API_URL,
+                json={"query": REPORT_FIGHTS_QUERY, "variables": {"code": report_code}},
+                headers=headers,
+            ) as resp:
+                resp.raise_for_status()
+                payload = await resp.json()
+
+            if "errors" in payload:
+                raise RuntimeError(f"WarcraftLogs API error: {payload['errors']}")
+
+            report = payload.get("data", {}).get("reportData", {}).get("report")
+            if not report:
+                return set()
+
+            kill_fight_ids = [f["id"] for f in (report.get("fights") or []) if f.get("kill")]
+            if not kill_fight_ids:
+                return set()
+
+            kill_counts = {}
+            for fight_id in kill_fight_ids:
+                async with session.post(
+                    API_URL,
+                    json={
+                        "query": REPORT_PLAYER_DETAILS_QUERY,
+                        "variables": {"code": report_code, "fightIDs": [fight_id]},
+                    },
+                    headers=headers,
+                ) as resp:
+                    resp.raise_for_status()
+                    player_payload = await resp.json()
+
+                await asyncio.sleep(0.15)  # pacing - a full attendance run can hit
+                                            # dozens of these across a 5-log window
+
+                if "errors" in player_payload:
+                    log.warning(
+                        "WCL error fetching playerDetails for fight %s in report %s: %s",
+                        fight_id, report_code, player_payload["errors"],
+                    )
+                    continue
+
+                report_data = (
+                    player_payload.get("data", {}).get("reportData", {}).get("report") or {}
+                )
+                details = report_data.get("playerDetails") or {}
+                inner = details.get("data") if isinstance(details.get("data"), dict) else {}
+                buckets = inner.get("playerDetails", {}) if inner else {}
+                for role_list in buckets.values():
+                    if not isinstance(role_list, list):
+                        continue
+                    for player in role_list:
+                        name = player.get("name")
+                        if name:
+                            kill_counts[name] = kill_counts.get(name, 0) + 1
+
+        return {name for name, count in kill_counts.items() if count >= min_kills}

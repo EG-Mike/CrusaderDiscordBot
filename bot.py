@@ -29,6 +29,7 @@ EXTENSIONS = [
     "cogs.apply",
     "cogs.announcements",
     "cogs.emoji_admin",
+    "cogs.attendance",
 ]
 
 intents = discord.Intents.default()
