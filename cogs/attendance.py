@@ -151,7 +151,7 @@ class RemoveLogModal(discord.ui.Modal, title="Remove Main Raid Log"):
 
 class ExcludeModal(discord.ui.Modal, title="Exclude Player"):
     name = discord.ui.TextInput(label="Character name (exact)", required=True, max_length=32)
-    reason = discord.ui.TextInput(label="Reason (e.g. vacation, injury)", required=True, max_length=200)
+    reason = discord.ui.TextInput(label="Reason (e.g. vacation, parental leave)", required=True, max_length=200)
 
     def __init__(self, cog: "AttendanceCog"):
         super().__init__()
@@ -662,17 +662,15 @@ class AttendanceCog(commands.Cog):
                 "logs (keeps this readable even with a large Fresh population). Main character "
                 "and any alts shown with class icons. If someone's Discord nickname doesn't "
                 "match their character name, fix it with `/checkattendance setmain`. Alts are "
-                "added with `/checkattendance link`. The 🚫 Excused section at the bottom lists "
-                "anyone sitting out attendance tracking (injury, break, etc.) - **+ Add player** "
-                "asks for a name and reason (typed, not a dropdown - a button can't offer live "
-                "suggestions the way a slash command can, so it validates what you typed against "
-                "the roster and suggests close matches if it's not exact); **- Remove player** "
+                "added with `/checkattendance link`\n\n. The 🚫 Excused section at the bottom lists "
+                "anyone sitting out attendance tracking (vacation, break, etc.) - **+ Add player** "
+                "asks for a name and reason; **- Remove player** "
                 "asks for the #ID next to their entry. `/checkattendance exclude name: reason:` "
                 "offers real live name suggestions as you type, if you'd rather use the command; "
                 "removal by command is `/checkattendance removeexcluded id:`.\n\n"
 
                 "**📊 Attendance Overview** - the actual promotion/demotion discussion "
-                "aid. Click Refresh (or run `/checkattendance run`, which has no cooldown) "
+                "aid. Click Refresh (or run `/checkattendance run`, which has no cooldown(DON'T ABUSE)) "
                 "to recompute it against the current log list.\n\n"
 
                 "Every button here has a matching slash command too, if you'd rather type "
