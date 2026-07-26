@@ -49,8 +49,27 @@ bot.store = ApplicationStore()
 @bot.event
 async def on_ready():
     await icons.provision_app_emojis(bot)
-    synced = await bot.tree.sync()
-    log.info("Synced %d command(s): %s", len(synced), [c.name for c in synced])
+
+    guild_id = os.environ.get("DISCORD_GUILD_ID")
+    if guild_id:
+        # Guild-scoped sync propagates in seconds instead of global sync's
+        # up-to-an-hour delay. copy_global_to() first copies every
+        # globally-defined command into this guild's command list, so
+        # commands can still be written normally (no guild= on each one)
+        # and just get synced here - this bot only ever runs in one guild
+        # anyway, so there's no downside to always doing this when set.
+        guild = discord.Object(id=int(guild_id))
+        bot.tree.copy_global_to(guild=guild)
+        synced = await bot.tree.sync(guild=guild)
+        log.info("Synced %d command(s) to guild %s: %s", len(synced), guild_id, [c.name for c in synced])
+    else:
+        synced = await bot.tree.sync()
+        log.info(
+            "Synced %d command(s) GLOBALLY (up to ~1hr to propagate - set "
+            "DISCORD_GUILD_ID in .env for instant sync instead): %s",
+            len(synced), [c.name for c in synced],
+        )
+
     log.info("Logged in as %s (id=%s)", bot.user, bot.user.id)
 
 
