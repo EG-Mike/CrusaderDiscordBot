@@ -236,14 +236,14 @@ class RosterView(discord.ui.View):
         await self.cog._refresh_roster_message(interaction.guild)
         await interaction.followup.send("Roster refreshed.", ephemeral=True)
 
-    @discord.ui.button(label="+ Add player", style=discord.ButtonStyle.success, custom_id="attendance_exclude_btn")
+    @discord.ui.button(label="+ Add player (exclusion)", style=discord.ButtonStyle.success, custom_id="attendance_exclude_btn")
     async def add_excluded(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await self.cog._is_mod(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can exclude players.", ephemeral=True)
             return
         await interaction.response.send_modal(ExcludeModal(self.cog))
 
-    @discord.ui.button(label="- Remove player", style=discord.ButtonStyle.danger, custom_id="attendance_include_btn")
+    @discord.ui.button(label="- Remove player (exclusion)", style=discord.ButtonStyle.danger, custom_id="attendance_include_btn")
     async def remove_excluded(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await self.cog._is_mod(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can remove excused players.", ephemeral=True)
@@ -398,23 +398,33 @@ class AttendanceCog(commands.Cog):
 
     # --- class icon lookups (for the roster message) -------------------
 
-    async def _lookup_class_by_name(self, character_name: str):
+    async def _lookup_class_by_name(self, character_name: str, cache: dict = None):
+        key = character_name.lower()
+        if cache is not None and key in cache:
+            return cache[key]
         try:
             char = await self.bot.wcl.get_character(character_name, self.server_slug, self.server_region)
         except Exception:
             log.exception("WCL class lookup failed for %s", character_name)
-            return None
-        return char["class_name"] if char else None
+            char = None
+        result = char["class_name"] if char else None
+        if cache is not None:
+            cache[key] = result
+        await asyncio.sleep(0.2)  # pacing - this loop can otherwise burst dozens of
+                                   # requests back-to-back with zero delay, which is
+                                   # exactly what trips WCL's 429 rate limiting
+        return result
 
-    async def _lookup_main_class(self, member: discord.Member, main_name: str):
+    async def _lookup_main_class(self, member: discord.Member, main_name: str, cache: dict = None):
         # Free path first: reuse the class already on file from their most
-        # recent gear-check application, if the name still matches.
+        # recent gear-check application, if the name still matches - no
+        # network call, no pacing needed.
         result = self.bot.store.find_latest_by_applicant(member.id)
         if result:
             _, record = result
             if record.get("character_name", "").lower() == main_name.lower() and record.get("class_name"):
                 return record["class_name"]
-        return await self._lookup_class_by_name(main_name)
+        return await self._lookup_class_by_name(main_name, cache=cache)
 
     async def _get_recent_attendance_union(self, window_size: int) -> set:
         """Lowercase names present (per ATTENDANCE_MIN_KILLS_PER_LOG) in ANY
@@ -433,6 +443,7 @@ class AttendanceCog(commands.Cog):
                 log.exception("Failed to fetch attendance for report %s", entry["report_code"])
                 names = set()
             union |= {n.lower() for n in names}
+            await asyncio.sleep(0.2)  # pacing between reports, not just within one report's fights
         return union
 
     # --- pinned log-list message -------------------------------------
@@ -441,10 +452,9 @@ class AttendanceCog(commands.Cog):
         embed = discord.Embed(
             title="📋 Main Raid Log List",
             description=(
-                f"This is an overview of the latest (mainraid) logs."
-                f"Add/remove logs with the buttons below to make sure they are used in the attendance calculation. \n\n"
-                f"Alternatively, use the manual commands `/checkattendance addlog` / or `removelog id:<N>`.\n\n"
-                f"The most recent **{config.ATTENDANCE_WINDOW}** entries (marked 🔸) are what the attendance-overview currently uses."
+                f"Add/remove with the buttons below, or `/checkattendance addlog` / "
+                f"`removelog id:<N>`.\nThe most recent **{config.ATTENDANCE_WINDOW}** "
+                f"entries (marked 🔸) are what the overview currently uses."
             ),
             color=discord.Color.blurple(),
         )
@@ -504,6 +514,7 @@ class AttendanceCog(commands.Cog):
         regular_role = guild.get_role(config.REGULAR_ROLE_ID)
         alt_links = self._get_alt_links()
         recent_activity = await self._get_recent_attendance_union(config.ROSTER_FRESH_ACTIVITY_WINDOW)
+        class_cache = {}  # shared for this whole refresh - main/alt/excused names can overlap
 
         lines = []
         skipped_inactive_fresh = 0
@@ -532,15 +543,14 @@ class AttendanceCog(commands.Cog):
                     skipped_inactive_fresh += 1
                     continue
 
-            main_class = await self._lookup_main_class(member, main_name)
+            main_class = await self._lookup_main_class(member, main_name, cache=class_cache)
             main_icon = icons.resolve_class_icon(guild, main_class) if main_class else ""
 
             line = f"{member.mention} → {main_icon} **{main_name}**".replace("  ", " ")
             for alt in alts:
-                alt_class = await self._lookup_class_by_name(alt)
+                alt_class = await self._lookup_class_by_name(alt, cache=class_cache)
                 alt_icon = icons.resolve_class_icon(guild, alt_class) if alt_class else ""
                 line += f"\n\u2003↳ {alt_icon} {alt}".replace("  ", " ")
-                await asyncio.sleep(0.1)
             lines.append(line)
 
         embed = discord.Embed(
@@ -579,12 +589,11 @@ class AttendanceCog(commands.Cog):
         else:
             excluded_lines = []
             for e in excluded_entries:
-                e_class = await self._lookup_class_by_name(e["name"])
+                e_class = await self._lookup_class_by_name(e["name"], cache=class_cache)
                 e_icon = icons.resolve_class_icon(guild, e_class) if e_class else ""
                 excluded_lines.append(
                     f"**#{e['id']}** — {e_icon} {e['name']} ({e['reason']})".replace("  ", " ")
                 )
-                await asyncio.sleep(0.1)
             excl_chunks, excl_truncated = _chunk_lines_for_embed_fields(excluded_lines, max_total_len=900)
             for i, chunk in enumerate(excl_chunks[:4]):
                 field_name = "🚫 Excused" if i == 0 else "\u200b"
@@ -822,6 +831,7 @@ class AttendanceCog(commands.Cog):
                 log.exception("Failed to fetch attendance for report %s", entry["report_code"])
                 names = set()
             rosters.append({n.lower() for n in names})
+            await asyncio.sleep(0.2)  # pacing between reports, not just within one report's fights
 
         alt_links = self._get_alt_links()
         excluded = self._get_excluded_names()
