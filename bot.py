@@ -8,6 +8,7 @@ touched.
 import os
 import asyncio
 import logging
+import time
 
 import discord
 from discord.ext import commands
@@ -49,8 +50,16 @@ bot.store = ApplicationStore()
 
 @bot.event
 async def on_ready():
-    await icons.provision_app_emojis(bot)
+    startup_start = time.monotonic()
+    log.info("=== Startup: connected to Discord, running post-connect setup now ===")
 
+    log.info("Startup: provisioning application emoji (class/role/spec icons)...")
+    step_start = time.monotonic()
+    await icons.provision_app_emojis(bot)
+    log.info("Startup: emoji provisioning done (%.1fs)", time.monotonic() - step_start)
+
+    log.info("Startup: syncing slash commands...")
+    step_start = time.monotonic()
     guild_id = os.environ.get("DISCORD_GUILD_ID")
     if guild_id:
         # Guild-scoped sync propagates in seconds instead of global sync's
@@ -80,8 +89,15 @@ async def on_ready():
             "DISCORD_GUILD_ID in .env for instant sync instead): %s",
             len(synced), [c.name for c in synced],
         )
+    log.info("Startup: command sync done (%.1fs)", time.monotonic() - step_start)
 
     log.info("Logged in as %s (id=%s)", bot.user, bot.user.id)
+    log.info(
+        "=== Startup: bot.py setup complete (%.1fs so far) - each cog's own "
+        "on_ready (pinned messages, roster refresh, etc.) runs separately and "
+        "may still be in progress; watch for its own 'startup complete' line ===",
+        time.monotonic() - startup_start,
+    )
 
 
 async def main():

@@ -27,6 +27,7 @@ import os
 import re
 import asyncio
 import logging
+import time
 
 import discord
 from discord import app_commands
@@ -150,7 +151,7 @@ class RemoveLogModal(discord.ui.Modal, title="Remove Main Raid Log"):
 
 class ExcludeModal(discord.ui.Modal, title="Exclude Player"):
     name = discord.ui.TextInput(label="Character name (exact)", required=True, max_length=32)
-    reason = discord.ui.TextInput(label="Reason (e.g. vacation, injury)", required=True, max_length=200)
+    reason = discord.ui.TextInput(label="Reason (e.g. vacation, Parental leave, etc)", required=True, max_length=200)
 
     def __init__(self, cog: "AttendanceCog"):
         super().__init__()
@@ -575,7 +576,14 @@ class AttendanceCog(commands.Cog):
         if not excluded_entries:
             embed.add_field(name="🚫 Excused", value="None", inline=False)
         else:
-            excluded_lines = [f"**#{e['id']}** — {e['name']} ({e['reason']})" for e in excluded_entries]
+            excluded_lines = []
+            for e in excluded_entries:
+                e_class = await self._lookup_class_by_name(e["name"])
+                e_icon = icons.resolve_class_icon(guild, e_class) if e_class else ""
+                excluded_lines.append(
+                    f"**#{e['id']}** — {e_icon} {e['name']} ({e['reason']})".replace("  ", " ")
+                )
+                await asyncio.sleep(0.1)
             excl_chunks, excl_truncated = _chunk_lines_for_embed_fields(excluded_lines, max_total_len=900)
             for i, chunk in enumerate(excl_chunks[:4]):
                 field_name = "🚫 Excused" if i == 0 else "\u200b"
@@ -675,15 +683,46 @@ class AttendanceCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
+        overall_start = time.monotonic()
+        log.info("Attendance startup: beginning (this is usually the slow part - roster and "
+                  "overview each make many sequential WCL API calls) ...")
+
+        log.info("Attendance startup: checking explainer message...")
         await self._ensure_explainer_message()
+
+        log.info("Attendance startup: checking log-list message...")
         await self._sync_log_list_message(None)
+
         guild_id = os.environ.get("DISCORD_GUILD_ID")
         guild = self.bot.get_guild(int(guild_id)) if guild_id else (self.bot.guilds[0] if self.bot.guilds else None)
         if guild is not None:
             if not (self.bot.store.get(ROSTER_MESSAGE_KEY) or {}).get("message_id"):
+                log.info(
+                    "Attendance startup: no roster message yet - building one now "
+                    "(fetches recent-activity data + a class lookup per raider/alt, can take "
+                    "a while the first time) ..."
+                )
+                step_start = time.monotonic()
                 await self._refresh_roster_message(guild)
+                log.info("Attendance startup: roster message done (%.1fs)", time.monotonic() - step_start)
+            else:
+                log.info("Attendance startup: roster message already exists, skipping rebuild")
+
             if not (self.bot.store.get(OVERVIEW_MESSAGE_KEY) or {}).get("message_id"):
+                log.info(
+                    "Attendance startup: no overview message yet - computing one now "
+                    "(fetches every kill fight's roster across the tracked log window) ..."
+                )
+                step_start = time.monotonic()
                 await self._refresh_overview_message(guild)
+                log.info("Attendance startup: overview message done (%.1fs)", time.monotonic() - step_start)
+            else:
+                log.info("Attendance startup: overview message already exists, skipping rebuild")
+
+        log.info(
+            "=== Attendance startup: COMPLETE (%.1fs total) - bot should be fully responsive now ===",
+            time.monotonic() - overall_start,
+        )
 
     # --- shared action logic (used by both slash commands and buttons) --
 
@@ -832,10 +871,9 @@ class AttendanceCog(commands.Cog):
             color=discord.Color.blurple(),
         )
 
-        def _fmt(rows):
-            if not rows:
+        def _fmt(lines):
+            if not lines:
                 return "None"
-            lines = [f"**{name}** — {count}/{window}" for name, count, window in rows]
             value = "\n".join(lines)
             if len(value) <= 1024:
                 return value
@@ -847,9 +885,21 @@ class AttendanceCog(commands.Cog):
                 total += len(line) + 1
             return "\n".join(kept) + f"\n… +{len(lines) - len(kept)} more"
 
-        embed.add_field(name="✅ Promotion eligible (Fresh → Regular)", value=_fmt(results["promote"]), inline=False)
-        embed.add_field(name="⚠️ Demotion review (Regular below threshold)", value=_fmt(results["demote"]), inline=False)
-        embed.add_field(name="👀 On watch for next raid", value=_fmt(results["watch_promote"] + results["watch_demote"]), inline=False)
+        def _rows(rows):
+            return [f"**{name}** — {count}/{window}" for name, count, window in rows]
+
+        watch_lines = (
+            [f"⬆️ **{name}** — {count}/{window}" for name, count, window in results["watch_promote"]]
+            + [f"⬇️ **{name}** — {count}/{window}" for name, count, window in results["watch_demote"]]
+        )
+
+        embed.add_field(name="✅ Promotion eligible (Fresh → Regular)", value=_fmt(_rows(results["promote"])), inline=False)
+        embed.add_field(name="⚠️ Demotion review (Regular below threshold)", value=_fmt(_rows(results["demote"])), inline=False)
+        embed.add_field(
+            name="👀 On watch for next raid (⬆️ could be promoted / ⬇️ could be demoted)",
+            value=_fmt(watch_lines),
+            inline=False,
+        )
         embed.add_field(name="🚫 Excluded", value=", ".join(results["excluded"]) or "None", inline=False)
         embed.set_footer(text="Role changes are manual - this is a discussion aid, not an automatic action.")
         return embed

@@ -1081,8 +1081,10 @@ class ApplyCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
+        log.info("Apply cog startup: checking gear-check and review-channel explainers...")
         await self._ensure_gear_check_explainer()
         await self._ensure_review_channel_explainer()
+        log.info("Apply cog startup: complete")
 
     async def _ensure_review_channel_explainer(self):
         channel = self.bot.get_channel(self.review_channel_id)
