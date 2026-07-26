@@ -151,7 +151,7 @@ class RemoveLogModal(discord.ui.Modal, title="Remove Main Raid Log"):
 
 class ExcludeModal(discord.ui.Modal, title="Exclude Player"):
     name = discord.ui.TextInput(label="Character name (exact)", required=True, max_length=32)
-    reason = discord.ui.TextInput(label="Reason (e.g. vacation, parental leave, etc.)", required=True, max_length=200)
+    reason = discord.ui.TextInput(label="Reason (e.g. vacation, injury)", required=True, max_length=200)
 
     def __init__(self, cog: "AttendanceCog"):
         super().__init__()
@@ -236,14 +236,14 @@ class RosterView(discord.ui.View):
         await self.cog._refresh_roster_message(interaction.guild)
         await interaction.followup.send("Roster refreshed.", ephemeral=True)
 
-    @discord.ui.button(label="+ Add player (exclusion)", style=discord.ButtonStyle.success, custom_id="attendance_exclude_btn")
+    @discord.ui.button(label="+ Add player", style=discord.ButtonStyle.success, custom_id="attendance_exclude_btn")
     async def add_excluded(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await self.cog._is_mod(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can exclude players.", ephemeral=True)
             return
         await interaction.response.send_modal(ExcludeModal(self.cog))
 
-    @discord.ui.button(label="- Remove player (exclusion)", style=discord.ButtonStyle.danger, custom_id="attendance_include_btn")
+    @discord.ui.button(label="- Remove player", style=discord.ButtonStyle.danger, custom_id="attendance_include_btn")
     async def remove_excluded(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await self.cog._is_mod(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can remove excused players.", ephemeral=True)
@@ -792,8 +792,10 @@ class AttendanceCog(commands.Cog):
         next_id = (max((e["id"] for e in entries), default=0)) + 1
         entries.append({"id": next_id, "name": name, "reason": reason})
         self._save_excluded_entries(entries)
-        await self._refresh_roster_message(guild)
-        return f"Excused **{name}** (#{next_id}) - reason: {reason}"
+        return (
+            f"Excused **{name}** (#{next_id}) - reason: {reason}. "
+            "Click 🔄 Refresh Roster to update the displayed list."
+        )
 
     async def _do_remove_excluded(self, guild, excluded_id: int) -> str:
         entries = self._get_excluded_entries()
@@ -808,11 +810,11 @@ class AttendanceCog(commands.Cog):
         overrides[match["name"].lower()] = config.ATTENDANCE_INCLUDE_BASELINE
         self._save_baseline_overrides(overrides)
 
-        await self._refresh_roster_message(guild)
         return (
             f"**{match['name']}** (#{excluded_id}) is back on attendance tracking - assumed "
             f"{config.ATTENDANCE_INCLUDE_BASELINE}/{config.ATTENDANCE_WINDOW} for the next "
-            "`/checkattendance run` (or Refresh click) only, then real log data takes over again."
+            "`/checkattendance run` (or Refresh click) only, then real log data takes over again. "
+            "Click 🔄 Refresh Roster to update the displayed list."
         )
 
     # --- attendance computation + overview message -----------------------
