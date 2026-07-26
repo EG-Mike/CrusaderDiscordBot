@@ -556,10 +556,10 @@ class AttendanceCog(commands.Cog):
         embed = discord.Embed(
             title="🧾 Raider Roster",
             description=(
-                "Discord member → main character (alts indented below). Regular members "
+                "Discord nickname → main character (alts indented below). Regular members "
                 "always shown; Fresh members only shown if active in at least one of the "
-                f"last {config.ROSTER_FRESH_ACTIVITY_WINDOW} logs"
-                + (f" - {skipped_inactive_fresh} inactive Fresh member(s) hidden." if skipped_inactive_fresh else ".")
+                f"last '{config.ROSTER_FRESH_ACTIVITY_WINDOW}' logs"
+                + (f" - '{skipped_inactive_fresh}' inactive Fresh member(s) hidden." if skipped_inactive_fresh else ".")
             ),
             color=discord.Color.blurple(),
         )
@@ -646,10 +646,14 @@ class AttendanceCog(commands.Cog):
         embed = discord.Embed(
             title="How attendance tracking works",
             description=(
-                "**The short version:** to be Regular-eligible, someone needs to have "
-                f"attended (killed at least {config.ATTENDANCE_MIN_KILLS_PER_LOG} boss) in "
-                f"at least {config.ATTENDANCE_MIN_ATTENDED} of the last "
-                f"{config.ATTENDANCE_WINDOW} tagged main raids.\n\n"
+                "**The short version:** \n"
+                "After each main-raid manually add the log to the log list (no efficient way to do this automatically, too many variables)\n"
+                "This will then be used to calculate attendance. \n"
+                f"to be Regular-eligible, someone needs to have "
+                f"attended (killed at least `{config.ATTENDANCE_MIN_KILLS_PER_LOG}` boss) in "
+                f"at least `{config.ATTENDANCE_MIN_ATTENDED}` of the last "
+                f"`{config.ATTENDANCE_WINDOW}` tagged main raids.\n\n"
+                "When people join a raid with their alts (and we want that to count towards attendance, you should add their character as an alt by using '/checkattendance link')"
 
                 "**📋 Main Raid Log List** - the list of raids that actually count. "
                 "Only logs added here are used - nothing is auto-detected from "
@@ -658,7 +662,7 @@ class AttendanceCog(commands.Cog):
                 "next to each entry), or `/checkattendance addlog` / `removelog id:`.\n\n"
 
                 "**🧾 Raider Roster** - shows every Regular member, plus Fresh members who've "
-                f"actually shown up in at least one of the last {config.ROSTER_FRESH_ACTIVITY_WINDOW} "
+                f"actually shown up in at least one of the last `{config.ROSTER_FRESH_ACTIVITY_WINDOW}` "
                 "logs (keeps this readable even with a large Fresh population). Main character "
                 "and any alts shown with class icons. If someone's Discord nickname doesn't "
                 "match their character name, fix it with `/checkattendance setmain`. Alts are "
@@ -702,7 +706,7 @@ class AttendanceCog(commands.Cog):
             return False
         channel = self.bot.get_channel(self.attendance_channel_id)
         if channel is None:
-            return False
+            return False    
         try:
             await channel.fetch_message(message_id)
             return True
@@ -900,8 +904,8 @@ class AttendanceCog(commands.Cog):
         embed = discord.Embed(
             title="📊 Attendance Overview",
             description=(
-                f"Based on the {results['window_size']} most recent tagged main-raid log(s) "
-                f"(need {config.ATTENDANCE_MIN_ATTENDED}/{config.ATTENDANCE_WINDOW} to be Regular-eligible)."
+                f"Based on the '{results['window_size']}'' most recent tagged main-raid log(s)\n"
+                f"Players need {config.ATTENDANCE_MIN_ATTENDED}/{config.ATTENDANCE_WINDOW} to be Regular-eligible)."
             ),
             color=discord.Color.blurple(),
         )
@@ -929,7 +933,7 @@ class AttendanceCog(commands.Cog):
         )
 
         embed.add_field(name="✅ Promotion eligible (Fresh → Regular)", value=_fmt(_rows(results["promote"])), inline=False)
-        embed.add_field(name="⚠️ Demotion review (Regular below threshold)", value=_fmt(_rows(results["demote"])), inline=False)
+        embed.add_field(name="⚠️ Demotion review (Below Regular threshold)", value=_fmt(_rows(results["demote"])), inline=False)
         embed.add_field(
             name="👀 On watch for next raid (⬆️ could be promoted / ⬇️ could be demoted)",
             value=_fmt(watch_lines),
