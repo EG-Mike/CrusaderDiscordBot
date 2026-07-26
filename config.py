@@ -235,6 +235,12 @@ ATTENDANCE_INCLUDE_BASELINE = 4   # assumed attended count (out of
                                    # /checkattendance run after re-including
                                    # someone who was excused
 
+ROSTER_FRESH_ACTIVITY_WINDOW = 10  # the Raider Roster message only lists
+                                    # Fresh members active in at least one of
+                                    # this many recent logs (Regular members
+                                    # are always shown regardless) - keeps
+                                    # the roster usable at large Fresh counts
+
 # --- WCL percentile color scale (verify against current WCL palette if it
 # ever changes - this was accurate as of the last time this was checked) ---
 # List of (min_percentile, max_percentile, hex_color)
