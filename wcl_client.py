@@ -15,6 +15,8 @@ import logging
 from collections import Counter
 import aiohttp
 
+from storage import ApplicationStore
+
 log = logging.getLogger("wow-apply-bot.wcl")
 
 TOKEN_URL = "https://www.warcraftlogs.com/oauth/token"
@@ -91,12 +93,23 @@ query ReportPlayers($code: String!, $fightIDs: [Int]!) {
 
 
 class WarcraftLogsClient:
-    def __init__(self, client_id: str, client_secret: str):
+    def __init__(self, client_id: str, client_secret: str, report_cache_path: str = "wcl_report_cache.json"):
         self.client_id = client_id
         self.client_secret = client_secret
         self._token = None
         self._token_expires_at = 0
         self._class_map = None  # cached id -> name, fetched once from the API
+
+        # Caches each report's raw per-player kill-fight tally, keyed by
+        # report code - a WCL report's fight/kill data doesn't change once
+        # uploaded, so once we've paid the cost of walking every kill fight
+        # for a report, we never need to do it again. Deliberately caches
+        # the raw counts (not a pre-filtered attendance set), so changing
+        # ATTENDANCE_MIN_KILLS_PER_LOG later still works correctly against
+        # already-cached data - see get_report_attendance() below. To force
+        # a re-fetch for a specific report (e.g. if you suspect it was
+        # re-uploaded/edited), delete that file or its entry manually.
+        self._report_cache = ApplicationStore(path=report_cache_path)
 
     async def _get_token(self) -> str:
         if self._token and time.time() < self._token_expires_at - 30:
@@ -262,20 +275,23 @@ class WarcraftLogsClient:
             "primary_spec": primary_spec,
         }
 
-    async def get_report_attendance(self, report_code: str, min_kills: int = 1) -> set:
+    async def get_report_kill_counts(self, report_code: str) -> dict:
         """
-        Returns the set of character names present in at least `min_kills`
-        distinct boss-kill fights in this report - used for attendance
-        tracking. Fetches playerDetails PER kill fight (rather than one
-        combined call across all of them) specifically so a per-log kill
-        count threshold can be enforced correctly, not just "present in at
-        least one of the fights somewhere."
+        Returns {character_name: kill_count} - how many distinct boss-kill
+        fights each character appeared in, for this report. This is the
+        expensive part (one WCL request per kill fight), so it's cached
+        locally by report code once computed - see the note on
+        self._report_cache in __init__ for why that's safe to do.
 
         Verified against a real report (2026-07): report.fights[].kill is
         true/false/null as expected (null = trash, false = wipe, true =
         kill), and playerDetails(fightIDs: [...]) reliably returns `name`
         per player across the dps/healers/tanks buckets.
         """
+        cached = self._report_cache.get(report_code)
+        if cached is not None:
+            return cached.get("kill_counts", {})
+
         token = await self._get_token()
         headers = {"Authorization": f"Bearer {token}"}
 
@@ -293,11 +309,12 @@ class WarcraftLogsClient:
 
             report = payload.get("data", {}).get("reportData", {}).get("report")
             if not report:
-                return set()
+                return {}
 
             kill_fight_ids = [f["id"] for f in (report.get("fights") or []) if f.get("kill")]
             if not kill_fight_ids:
-                return set()
+                self._report_cache.set(report_code, kill_counts={})
+                return {}
 
             kill_counts = {}
             for fight_id in kill_fight_ids:
@@ -336,4 +353,15 @@ class WarcraftLogsClient:
                         if name:
                             kill_counts[name] = kill_counts.get(name, 0) + 1
 
+        self._report_cache.set(report_code, kill_counts=kill_counts)
+        return kill_counts
+
+    async def get_report_attendance(self, report_code: str, min_kills: int = 1) -> set:
+        """
+        Returns the set of character names present in at least `min_kills`
+        distinct boss-kill fights in this report - used for attendance
+        tracking. Thin wrapper around get_report_kill_counts(), which does
+        the actual (and cached) WCL fetching.
+        """
+        kill_counts = await self.get_report_kill_counts(report_code)
         return {name for name, count in kill_counts.items() if count >= min_kills}
