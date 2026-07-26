@@ -1096,23 +1096,61 @@ class ApplyCog(commands.Cog):
             log.warning("Missing permission to read pins in review channel")
             return
 
-        if any(m.content and REVIEW_EXPLAINER_MARKER in m.content for m in pins):
+        if any(m.embeds and m.embeds[0].footer.text == REVIEW_EXPLAINER_MARKER for m in pins):
             return  # already posted, nothing to do
 
-        content = (
-            f"-# {REVIEW_EXPLAINER_MARKER}\n"
-            "**Quick reference for moderators**\n"
-            f"• {APPROVE_EMOJI} **Approve** / {DENY_EMOJI} **Deny** on each card below. Deny "
-            "asks for an optional reason - visible here only, never sent to the applicant.\n"
-            "• 🔄 **Reset** undoes a mistaken decision, putting the card back to pending.\n"
-            "• Applicants can add/update their note or screenshot anytime with "
-            "`/update-application`, even after posting.\n"
-            "• `/gearcheck archive` moves every decided (approved/denied) card out to the "
-            "archive channel, keeping this one to just what's still pending."
+        embed = discord.Embed(
+            title="How the gear-check review process works",
+            description=(
+                "Here's the full flow, walked through with an example applicant, "
+                "**Skullcrusher**:\n\n"
+
+                "**1. Before a card ever shows up here**\n"
+                "Skullcrusher clicks the button in #gear-check, gives their character "
+                "name, and the bot looks them up on WarcraftLogs. Over DM, they confirm "
+                "their role/spec and can add an optional note or screenshot(s). Once "
+                "that's done (or skipped, or it times out), a summary card posts right "
+                "here - that's the point where it becomes your job.\n\n"
+
+                f"**2. Clicking {APPROVE_EMOJI} Approve**\n"
+                "- They're assigned the Fresh role - unless they already hold Fresh, "
+                "Regular, or Organizer, in which case that's skipped and the card says so "
+                "instead of pretending something changed.\n"
+                "- They're also auto-tagged with their class (e.g. Mage) and role "
+                "(Tank/Healer/DPS) roles.\n"
+                "- Their server nickname is changed to their character name - again "
+                "skipped for already-established members.\n"
+                "- The card's footer shows exactly what was newly assigned vs. what they "
+                "already had, plus the nickname change (or why it didn't happen).\n"
+                "- Skullcrusher gets a DM confirming they're in, with a note about "
+                "registering for raid sign-ups.\n\n"
+
+                f"**3. Clicking {DENY_EMOJI} Deny**\n"
+                "- A popup asks you for an optional reason. It's saved on the card for "
+                "other mods to see - it's **never** shown to the applicant.\n"
+                "- Skullcrusher gets a DM letting them know it didn't work out **only on "
+                "a first-time denial**. If you're instead correcting an earlier approval "
+                "into a denial, no DM is sent - their Fresh role is just quietly removed.\n\n"
+
+                "**4. 🔄 Reset**\n"
+                "Made the wrong call? Reset puts the card back to pending - Approve/Deny "
+                "become clickable again. Re-deciding still follows the rules above: "
+                "approving after a wrong denial sends the acceptance DM as normal; "
+                "denying after a wrong approval doesn't send a denial DM, since they were "
+                "never told they were out.\n\n"
+
+                "**5. `/gearcheck archive`**\n"
+                "Run this anytime to move every already-decided card (approved or denied) "
+                "out of this channel into the archive channel, keeping this one focused "
+                "on what's still pending. A single confirmation message here tracks who "
+                "last ran it and when - it gets updated in place, not reposted, each time."
+            ),
+            color=discord.Color.blurple(),
         )
+        embed.set_footer(text=REVIEW_EXPLAINER_MARKER)
 
         try:
-            message = await channel.send(content)
+            message = await channel.send(embed=embed)
         except Exception:
             log.exception("Failed to POST the explainer in review channel")
             return
