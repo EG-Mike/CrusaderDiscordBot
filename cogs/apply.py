@@ -339,7 +339,7 @@ class ClassSelectView(discord.ui.View):
 
 class DenyReasonModal(discord.ui.Modal, title="Deny Application"):
     reason = discord.ui.TextInput(
-        label="Reason (optional - shown to mods, not applicant)",
+        label="Reason (optional, mods only)",
         style=discord.TextStyle.paragraph,
         required=False,
         max_length=500,
