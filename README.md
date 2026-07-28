@@ -69,6 +69,33 @@ moderator-driven announcement system.
    containing just `---` splits the message into separate sections, each
    with a real divider between them.
 
+## Commands
+
+### Everyone
+
+| Command | Description |
+|---|---|
+| `/apply <character>` | Apply to the guild with your character name - kicks off the gear-check flow. |
+| `/update-application` | Add or update the note/screenshot(s) on your latest pending application. |
+
+### Moderator only
+
+| Command | Description |
+|---|---|
+| `/announce` | Draft an announcement in the sandbox channel, with Edit/Publish buttons. |
+| `/add-emoji <wowhead_links>` | Add custom emoji from one or more Wowhead item/spell links. |
+| `/gearcheck archive` | Move all approved/denied applications to the archive channel. |
+| `/checkattendance run` | Generate/refresh the attendance overview (no cooldown). |
+| `/checkattendance addlog <date> <tier> <link>` | Add a main-raid log to the tracked list. |
+| `/checkattendance removelog <id>` | Remove a log from the tracked list by its `#ID`. |
+| `/checkattendance link <main> <alt>` | Link an alt character to a main, for attendance purposes. |
+| `/checkattendance removealt <alt>` | Remove a previously linked alt. |
+| `/checkattendance setmain <member> <character>` | Override a member's main character name. |
+| `/checkattendance removemain <member>` | Remove a member's main-name override. |
+| `/checkattendance links <member>` | Debug: show a member's resolved main name and linked alts. |
+| `/checkattendance exclude <name> <reason>` | Excuse a player from attendance tracking. |
+| `/checkattendance removeexcluded <id>` | Remove a player from the excused list by its `#ID`. |
+
 ## Setting up on a new server
 
 ### 1. Create the Discord application and bot
