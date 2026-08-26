@@ -69,6 +69,31 @@ moderator-driven announcement system.
    containing just `---` splits the message into separate sections, each
    with a real divider between them.
 
+### Raid summaries
+
+1. A moderator runs **`/raidsummary`** after a raid, giving it: the tier
+   raided, the WCL report link, the Gargul loot export (as a file
+   attachment), full-clear-or-progress, and optionally a note and a
+   YouTube/Twitch/image link to feature.
+2. The bot posts a new thread in the raid-summary **forum channel** with:
+   a tier banner, a TL;DR (bosses down, pulls, loot count, duration),
+   roster composition, a boss-by-boss pull/first-kill breakdown, elite
+   (99%+) parses and the raid MVP, guild rank vs. other guilds (if
+   `GUILD_NAME` is set), a "fun stats" death count, the full loot list
+   (Wowhead-linked, with item icons and quality colors), and a link to the
+   full log. It auto-applies the tier + clear-status forum tags.
+3. Loot especially can run long, so the summary is automatically split
+   across as many thread messages as needed to stay under Discord's
+   per-message limits - never a single wall of text.
+4. All WCL data for a report (fights, parses, deaths, roster) is fetched
+   and cached **once per report code**, shared with `/checkattendance` -
+   summarizing a log that's already been used for attendance (or vice
+   versa) costs zero extra WarcraftLogs requests for anything already
+   cached.
+5. Item names/icons come from Wowhead (looked up by ID and cached
+   permanently, since Gargul's export only gives an item ID) - see the
+   setup step below and the warning at the top of `wowhead.py`.
+
 ## Commands
 
 ### Everyone
@@ -95,6 +120,7 @@ moderator-driven announcement system.
 | `/checkattendance links <member>` | Debug: show a member's resolved main name and linked alts. |
 | `/checkattendance exclude <name> <reason>` | Excuse a player from attendance tracking. |
 | `/checkattendance removeexcluded <id>` | Remove a player from the excused list by its `#ID`. |
+| `/raidsummary <tier> <report> <loot_export> <clear_status> [media_link] [note]` | Post a raid summary thread to the raid-summary forum. |
 
 ## Setting up on a new server
 
@@ -206,7 +232,25 @@ where OXM is actually present (e.g. a real server channel) - in a DM
 between the applicant and this bot, it typically falls back to plain text,
 which is why the DM also includes a plain-text fallback instruction.
 
-### 10. Install and run
+### 10. Raid summary forum (optional, for `/raidsummary`)
+
+1. Create a **Forum channel** (not a text channel) for raid recaps.
+2. In that channel's settings, add tags matching your tier names exactly
+   (`config.CURRENT_TIER["name"]` / `PREVIOUS_TIER["name"]`, e.g. `BT/Hyjal`)
+   plus `Full Clear` and `Progress` (see `config.CLEAR_STATUS_TAG_NAMES`).
+   The bot only applies tags that already exist here - it never creates or
+   edits forum tags itself.
+3. Set `RAID_SUMMARY_FORUM_CHANNEL_ID` in `.env` to that channel's ID.
+4. Optionally set `GUILD_NAME` in `.env` (exact WarcraftLogs guild name) to
+   enable the "guild rank" section.
+5. Optionally fill in `config.RAID_TIER_BANNERS` with a banner image URL per
+   tier (blank = no banner, never blocks the summary either way).
+6. **Before relying on it**, post one real summary and sanity-check the
+   loot section: if item names come back as "Item #NNNNN" instead of real
+   names, see the verification note at the top of `wowhead.py` -
+   `config.WOWHEAD_DATA_ENV` likely needs adjusting for your game version.
+
+### 11. Install and run
 
 ```bash
 pip install -r requirements.txt
@@ -221,12 +265,16 @@ Check the console for `Synced N command(s): [...]` and
 ```
 bot.py              - entry point: sets up the bot, shared singletons, loads cogs
 config.py           - all tunable config (colors, tiers, specs, icon sources, OXM command ID)
-wcl_client.py        - WarcraftLogs API client
+wcl_client.py        - WarcraftLogs API client (fights/rankings/deaths/roster, cached per-report)
+wowhead.py           - Wowhead item name/icon/link lookup (cached permanently by item ID)
+gargul_loot.py       - parser for Gargul's loot-export CSV format
 storage.py           - tiny JSON-backed persistence (generic - any cog can use it)
 icons.py             - shared icon resolution (guild emoji + auto-provisioned application emoji)
 cogs/
   apply.py           - the whole guild-application feature (self-contained)
   announcements.py   - the whole announcement feature (self-contained)
+  attendance.py      - the whole attendance-tracking feature (self-contained)
+  raid_summary.py    - the whole raid-summary feature (self-contained)
 debug_zones.py        - lists every WCL zone/encounter ID visible via the API
 debug_rankings.py     - dumps raw zoneRankings JSON for one character - the
                         source of truth for a zone ID, since debug_zones.py's
@@ -281,3 +329,16 @@ when adding a new persistent component elsewhere.
   pending/posted state so a restart doesn't lose anything. They're plain
   JSON files in the working directory - fine at this scale, but not
   written for high-concurrency or multi-process use.
+- **`/raidsummary`'s WCL/Wowhead parsing needs a live verification pass.**
+  It was written without WCL credentials or network access to wowhead.com
+  available, so several pieces are best-effort rather than confirmed
+  against a real response: the `Report.rankings` and Deaths-table JSON
+  shapes in `wcl_client.py` (parsed defensively - a shape mismatch just
+  empties that one section instead of crashing), the guild zone-rankings
+  shape behind the "guild rank" section, and Wowhead's tooltip endpoint/
+  `dataEnv` param in `wowhead.py` (see its module docstring). Post one real
+  summary and check each section actually populated before trusting it.
+  `discord.ui.Section`/`Thumbnail` (the per-loot-item icon layout) are
+  likewise unverified beyond existing in discord.py 2.6+ alongside the
+  other Components V2 classes already used here - if loot rows render
+  without icons, that's the first thing to check.
