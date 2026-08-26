@@ -72,24 +72,32 @@ moderator-driven announcement system.
 ### Raid summaries
 
 1. A moderator runs **`/raidsummary`** after a raid, giving it: the tier
-   raided, the WCL report link, full-clear-or-progress, and optionally the
-   Gargul loot export (can be added later - see below), a note, and a
-   YouTube/Twitch/image link to feature.
+   raided, the WCL report link, full-clear-or-progress, main-or-alt raid,
+   and optionally the Gargul loot export (can be added later - see below),
+   a note, and a YouTube/Twitch/image link to feature.
 2. The bot posts a new thread in the raid-summary **forum channel**. The
    top post has: a tier banner image, a TL;DR (bosses down, pulls, loot
-   count; first-pull/raid-ended clock times + total duration; per-instance
-   clear time - e.g. Black Temple and Mount Hyjal tracked separately, each
-   compared to our fastest-ever clear of that instance with a ⚡ badge on a
-   new/tied record), a **Links** section (the full WCL log + a
-   [Wipefest](https://www.wipefest.gg) analysis link), roster composition,
-   a boss-by-boss breakdown (pull count, kill time + its difference from
-   our fastest-ever kill of that boss, and every wipe indented underneath
-   with the boss's HP% at that wipe), elite (99%+) parses and the raid MVP,
-   who broke their own personal-best parse on a boss tonight, the top 5 by
-   damage done - bosses + trash, with each person's share of the raid's
-   total damage, a guild rank vs. other guilds (if `GUILD_NAME` is set),
-   and a death leaderboard (top 5). It auto-applies the tier + clear-status
-   forum tags.
+   count; first-pull/raid-ended clock times + total duration, anchored to
+   the first REAL boss pull rather than whatever time the log recording
+   itself started; per-instance clear time - e.g. Black Temple and Mount
+   Hyjal tracked separately, each compared to our fastest-ever clear of
+   that instance with a ⚡ badge on a new/tied record), a **Links** section
+   (the full WCL log + a [Wipefest](https://www.wipefest.gg) analysis
+   link), roster composition, a boss-by-boss breakdown (pull count, kill
+   time + its difference from our fastest-ever kill of that boss, and every
+   *real* wipe indented underneath with the boss's HP% at that wipe - a
+   100%-HP "wipe" is treated as a deliberate reset, not a real attempt, and
+   doesn't count), three **Raid MVP's** (highest DPS parse, highest overall
+   damage done, highest overall healing done) plus elite (99%+) parse
+   callouts, who broke their own personal-best parse on a boss tonight, the
+   top 5 by damage done - bosses + trash, with each person's exact share of
+   the raid's total damage, a guild rank vs. other guilds (if `GUILD_NAME`
+   is set), and a death leaderboard (top 5). Every name mentioned anywhere
+   in the summary - parses, MVP's, leaderboards, loot winners - is prefixed
+   with that character's class icon (same icon source as
+   `/checkattendance`'s roster). It auto-applies forum tags: tier and main/
+   alt-raid by exact tag ID (`config.TIER_TAG_IDS` / `RAID_TYPE_TAG_IDS`),
+   clear-status by name (`config.CLEAR_STATUS_TAG_NAMES`).
 3. **Loot** is always its own separate message (normally the 2nd one) as a
    compact list - one line per item: a real item icon (see below) + a
    clickable Wowhead-linked name + who won it. Never a wall of text mixed
@@ -164,7 +172,7 @@ moderator-driven announcement system.
 | `/checkattendance links <member>` | Debug: show a member's resolved main name and linked alts. |
 | `/checkattendance exclude <name> <reason>` | Excuse a player from attendance tracking. |
 | `/checkattendance removeexcluded <id>` | Remove a player from the excused list by its `#ID`. |
-| `/raidsummary <tier> <report> <clear_status> [loot_export] [media_link] [note]` | Post a raid summary thread to the raid-summary forum (loot can be added later via the thread's Add Loot button). |
+| `/raidsummary <tier> <report> <clear_status> <raid_type> [loot_export] [media_link] [note]` | Post a raid summary thread to the raid-summary forum (loot can be added later via the thread's Add Loot button). |
 
 ## Setting up on a new server
 
@@ -279,11 +287,16 @@ which is why the DM also includes a plain-text fallback instruction.
 ### 10. Raid summary forum (optional, for `/raidsummary`)
 
 1. Create a **Forum channel** (not a text channel) for raid recaps.
-2. In that channel's settings, add tags matching your tier names exactly
-   (`config.CURRENT_TIER["name"]` / `PREVIOUS_TIER["name"]`, e.g. `BT/Hyjal`)
-   plus `Full Clear` and `Progress` (see `config.CLEAR_STATUS_TAG_NAMES`).
-   The bot only applies tags that already exist here - it never creates or
-   edits forum tags itself.
+2. In that channel's settings, add: two tags for the tiers (e.g.
+   `BT/Hyjal`, `SSC/TK`), two for main vs. alt/fun raids (e.g. `Mainraid`,
+   `Altraid`), and two for clear status (`Full Clear`, `Progress`). The
+   bot only applies tags that already exist here - it never creates or
+   edits forum tags itself. Tier and main/alt tags are matched by exact
+   Discord tag ID, not name - after creating them, enable Developer Mode,
+   right-click each tag, Copy ID, and put the four IDs into
+   `config.TIER_TAG_IDS` / `config.RAID_TYPE_TAG_IDS`. Clear-status tags
+   are matched by name instead (`config.CLEAR_STATUS_TAG_NAMES`), so those
+   two just need to be named exactly `Full Clear`/`Progress`.
 3. Set `RAID_SUMMARY_FORUM_CHANNEL_ID` in `.env` to that channel's ID.
 4. Optionally set `GUILD_NAME` in `.env` (exact WarcraftLogs guild name) to
    enable the "guild rank" section.

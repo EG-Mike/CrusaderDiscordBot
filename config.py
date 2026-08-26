@@ -303,16 +303,36 @@ RAID_TIER_BANNERS = {
     "SSC/TK": "images/banner-ssctk.jpg",
 }
 
-# Forum tag names the bot looks for (by exact name, case-insensitive) on the
-# raid-summary forum channel and applies automatically to each new thread -
-# one tier tag (matching CURRENT_TIER/PREVIOUS_TIER's "name") plus one clear-
-# status tag below. Create matching tags in the forum channel's settings in
-# Discord first; a tag that doesn't exist there yet is silently skipped
-# (the bot never creates/edits forum tags itself - that's server structure,
-# left to a moderator).
+# Forum tags the raid-summary forum channel already has, auto-applied to
+# every new thread. Two matching schemes are used side by side:
+#   - Clear-status tags below are matched by NAME (case-insensitive)
+#     against whatever tags exist in the channel - no fixed ID was given
+#     for these, so create tags named exactly "Full Clear"/"Progress" in
+#     the forum channel's settings.
+#   - Tier and raid-type tags (TIER_TAG_IDS / RAID_TYPE_TAG_IDS further
+#     down) are matched by exact Discord tag ID instead - faster/more
+#     robust than name-matching, but means those ID constants need
+#     updating if the tags are ever deleted and recreated in Discord.
+# Either way, the bot never creates/edits forum tags itself (that's server
+# structure, left to a moderator) - a tag that doesn't exist/match is
+# silently skipped rather than blocking the post.
 CLEAR_STATUS_TAG_NAMES = {
     "full_clear": "Full Clear",
     "progress": "Progress",
+}
+
+# Tier -> forum tag ID (see the note above CLEAR_STATUS_TAG_NAMES).
+TIER_TAG_IDS = {
+    "BT/Hyjal": 1542313259779231815,
+    "SSC/TK": 1542313289575432212,
+}
+
+# Main-raid vs. alt/fun-raid -> forum tag ID - which one applies is a
+# moderator's call per raid (there's no way to infer it from WCL data), so
+# /raidsummary's `raid_type` option picks between these two keys.
+RAID_TYPE_TAG_IDS = {
+    "main": 1542313205521580082,
+    "alt": 1542313324262334474,
 }
 
 # Some tiers bundle two real WoW raid instances under one WCL zone/one
