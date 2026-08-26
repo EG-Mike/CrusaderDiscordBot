@@ -8,17 +8,37 @@ so raiders have somewhere to discuss each raid night.
 
 Design, per discussion:
   - A moderator runs /raidsummary once per raid, giving it: which tier was
-    raided, the WCL report link, optionally the Gargul loot export (as a
-    file attachment - can be added later, see below), whether it was a
-    full clear or still progress, and optionally a note + a media link
-    (YouTube/Twitch clip or an image) to feature.
+    raided, the WCL report link, whether it was a full clear or still
+    progress, whether it's a main or alt/fun raid, and optionally the
+    Gargul loot export (as a file attachment - can be added later, see
+    below), a note, and a media link (YouTube/Twitch clip or an image) to
+    feature.
   - All WCL data for the report (fights/pulls, parse rankings, deaths,
-    damage done) comes from ONE cached fetch -
+    damage done, healing done) comes from ONE cached fetch -
     wcl_client.WarcraftLogsClient.get_report_summary() - shared with
-    cogs/attendance.py's attendance check. Roster composition is a
-    SEPARATE, lazily-fetched call (get_report_role_composition) - see
+    cogs/attendance.py's attendance check. Roster composition (and the
+    name -> class map used for icons everywhere below) is a SEPARATE,
+    lazily-fetched call (get_report_role_composition) - see
     _build_comp_block()'s docstring for why that one isn't folded into the
-    always-cheap summary fetch.
+    always-cheap summary fetch. Every name mentioned anywhere in the
+    summary (parses, MVP's, damage/death leaderboards, loot winners) is
+    prefixed with that character's class icon, same icon source
+    /checkattendance's roster uses (see _name_icon()).
+  - "First pull" is the first REAL boss pull (the earliest fight with a
+    non-null encounter_id), not the report's own recorded start time -
+    those can differ by several minutes of trash/travel before the actual
+    first pull, and WCL's per-fight start/end times are relative offsets
+    from the report's start, not absolute, so the first pull's real clock
+    time is report start + that fight's relative offset. Total duration is
+    measured from that same first-pull anchor to the raid's end, so all
+    three numbers on that line stay mutually consistent. A wipe fight
+    logged at 100% boss HP is a deliberate reset, not a real attempt, and
+    is filtered out everywhere (pull counts, wipe listings, clear-time
+    spans) - see _group_fights_by_encounter().
+  - Forum tags: the tier and main/alt-raid tags are applied by exact
+    Discord tag ID (config.TIER_TAG_IDS / RAID_TYPE_TAG_IDS); the clear-
+    status tag is matched by name instead (config.CLEAR_STATUS_TAG_NAMES) -
+    see _resolve_applied_tags().
   - Gargul's export gives itemID + winner only (no item name/icon/boss) -
     see gargul_loot.py. Item name/icon/Wowhead link are resolved via
     wowhead.py (permanently cached locally, itemID -> name never changes).
@@ -300,6 +320,40 @@ class RaidSummaryCog(commands.Cog):
         filename = os.path.basename(path)
         return f"attachment://{filename}", discord.File(path, filename=filename)
 
+    def _resolve_applied_tags(self, forum_channel: discord.ForumChannel, tier_name: str,
+                               clear_status_value: str, raid_type_value: str) -> list:
+        """
+        Tier and raid-type tags are matched by exact Discord tag ID
+        (config.TIER_TAG_IDS / RAID_TYPE_TAG_IDS); the clear-status tag is
+        matched by name (config.CLEAR_STATUS_TAG_NAMES - no fixed ID was
+        given for those). Either way, a tag that isn't actually present in
+        this forum channel right now is silently skipped rather than
+        failing the post - see the comment above CLEAR_STATUS_TAG_NAMES.
+        """
+        available_by_id = {t.id: t for t in forum_channel.available_tags}
+        wanted_ids = []
+        if tier_name in config.TIER_TAG_IDS:
+            wanted_ids.append(config.TIER_TAG_IDS[tier_name])
+        if raid_type_value in config.RAID_TYPE_TAG_IDS:
+            wanted_ids.append(config.RAID_TYPE_TAG_IDS[raid_type_value])
+        applied = [available_by_id[tid] for tid in wanted_ids if tid in available_by_id]
+
+        clear_status_name = config.CLEAR_STATUS_TAG_NAMES.get(clear_status_value, "").lower()
+        applied += [
+            t for t in forum_channel.available_tags
+            if t.name.lower() == clear_status_name and t.id not in wanted_ids
+        ]
+        return applied
+
+    def _name_icon(self, guild: discord.Guild, class_name) -> str:
+        """A class icon (app emoji, same source as /checkattendance's
+        roster) prefix for a name, or '' if the class is unknown/unresolved -
+        never raises, a missing icon just means the plain name."""
+        if not class_name:
+            return ""
+        icon = icons.resolve_class_icon(guild, class_name)
+        return f"{icon} " if icon else ""
+
     # --- data assembly -----------------------------------------------------
 
     async def _resolve_loot(self, loot_rows: list) -> list:
@@ -313,16 +367,19 @@ class RaidSummaryCog(commands.Cog):
             resolved.append({**row, "item": item_cache[item_id]})
         return resolved
 
-    async def _build_loot_lines(self, resolved_loot: list) -> list:
+    async def _build_loot_lines(self, resolved_loot: list, guild: discord.Guild, classes_map: dict) -> list:
         """
-        One compact line per loot row: "<icon> [Item](wowhead) →
-        **Winner** *(OS)*". The icon is a real bot-owned emoji for that
-        item, provisioned on demand and cached forever (see
+        One compact line per loot row: "<item icon> [Item](wowhead) →
+        <class icon> **Winner** *(OS)*". The item icon is a real bot-owned
+        emoji for that item, provisioned on demand and cached forever (see
         icons.ensure_item_emoji) - reuses the exact same "download the icon,
         upload as an application emoji" mechanism /add-emoji already uses,
         just triggered automatically per unique item in this loot list
         instead of by a moderator pasting links. Falls back to a colored
-        quality-square emoji if an item's icon couldn't be provisioned.
+        quality-square emoji if an item's icon couldn't be provisioned. The
+        winner's class icon comes from classes_map (see
+        wcl_client.get_report_role_composition) - same icon source as
+        /checkattendance's roster.
         """
         if not resolved_loot:
             return []
@@ -346,9 +403,10 @@ class RaidSummaryCog(commands.Cog):
                 icon_cache[item_id] = icon or QUALITY_EMOJI.get(item.get("quality"), DEFAULT_QUALITY_EMOJI)
 
             offspec_tag = " *(OS)*" if row["offspec"] else ""
+            class_icon = self._name_icon(guild, classes_map.get(row["character"]))
             lines.append(
                 f"{icon_cache[item_id]} [{item['name']}]({item['wowhead_url']}) → "
-                f"**{row['character']}**{offspec_tag}"
+                f"{class_icon}**{row['character']}**{offspec_tag}"
             )
         return lines
 
@@ -358,8 +416,29 @@ class RaidSummaryCog(commands.Cog):
             encounter_id = fight.get("encounter_id")
             if encounter_id is None:
                 continue  # trash/non-encounter fights don't count toward boss pulls
+            if not fight["kill"] and (fight.get("boss_percentage") or 0) >= 100:
+                continue  # a 100%-HP "wipe" is a deliberate reset, not a real pull
             groups.setdefault(encounter_id, []).append(fight)
         return groups
+
+    def _tier_stats(self, tier: dict, fights_by_encounter: dict) -> tuple:
+        """Returns (killed_count, attempted_count, total_pulls) - scoped to
+        ONLY this tier's own configured bosses. fights_by_encounter can
+        contain fights for encounter_ids outside the tier (e.g. a stray
+        unrelated encounter in the same report) - those must not count
+        toward this tier's stats, which is exactly what iterating
+        tier["bosses"] (rather than fights_by_encounter directly) ensures -
+        same scoping _build_boss_lines already uses for its own listing."""
+        killed_count = attempted_count = total_pulls = 0
+        for encounter_id in tier["bosses"].values():
+            group = fights_by_encounter.get(encounter_id)
+            if not group:
+                continue
+            attempted_count += 1
+            total_pulls += len(group)
+            if any(f["kill"] for f in group):
+                killed_count += 1
+        return killed_count, attempted_count, total_pulls
 
     def _build_boss_lines(self, tier: dict, fights_by_encounter: dict, records: dict) -> tuple:
         """
@@ -473,23 +552,19 @@ class RaidSummaryCog(commands.Cog):
                 updates[instance_name] = new_fastest
         return lines, updates
 
-    async def _build_comp_block(self, report_code: str) -> str:
+    def _build_comp_block(self, composition: dict) -> str:
         """
         Raid composition via a 70%-threshold role classification (see
         wcl_client.ROLE_THRESHOLD / get_report_role_composition) rather than
         each character's single most-common role - a tank/healer who also
         DPS'd some fights still counts as their main role as long as they
         filled it at least 70% of the time; otherwise they're counted as
-        DPS, same as WCL's own comp breakdown handles hybrids. This is a
-        separate, lazily-fetched WCL call (not part of the always-cheap
-        report summary), so it's the one section that can still take a
-        moment on a report with a lot of wipes.
+        DPS, same as WCL's own comp breakdown handles hybrids. `composition`
+        is fetched ONCE by the caller (a separate, lazily-cached WCL call,
+        not part of the always-cheap report summary - the one fetch that
+        can still take a moment on a report with a lot of wipes) and reused
+        for the class icons everywhere else in the summary too.
         """
-        try:
-            composition = await self.bot.wcl.get_report_role_composition(report_code)
-        except Exception:
-            log.warning("Role composition lookup failed for %s", report_code, exc_info=True)
-            return ""
         if not composition:
             return ""
         total = len(composition["tanks"]) + len(composition["healers"]) + len(composition["dps"])
@@ -500,53 +575,89 @@ class RaidSummaryCog(commands.Cog):
             f"{len(composition['healers'])} Healers, {len(composition['dps'])} DPS"
         )
 
-    def _build_deaths_block(self, deaths: dict) -> str:
+    def _build_deaths_block(self, deaths: dict, guild: discord.Guild, classes_map: dict) -> str:
         if not deaths:
             return ""
         total = sum(deaths.values())
         top = sorted(deaths.items(), key=lambda kv: -kv[1])[:5]
-        lines = [f"💀 **{name}** — {count} death{'s' if count != 1 else ''}" for name, count in top]
+        lines = [
+            f"💀 {self._name_icon(guild, classes_map.get(name))}**{name}** — {count} death{'s' if count != 1 else ''}"
+            for name, count in top
+        ]
         return f"**Death leaderboard** — {total} total death{'s' if total != 1 else ''}\n" + "\n".join(lines)
 
-    def _build_damage_block(self, damage_done: dict) -> str:
+    def _build_damage_block(self, damage_done: dict, guild: discord.Guild, classes_map: dict) -> str:
         """Top 5 by total damage across the whole report (bosses AND
         trash) - matches WCL's own "Overall" damage-done ranking view,
-        including each entry's share of the raid's total damage."""
+        including each entry's exact share of the raid's total damage."""
         if not damage_done:
             return ""
         total_damage = sum(damage_done.values()) or 1
         top = sorted(damage_done.items(), key=lambda kv: -kv[1])[:5]
         lines = [
-            f"⚔️ **{name}** — {amount:,} damage ({amount / total_damage * 100:.1f}%)"
+            f"⚔️ {self._name_icon(guild, classes_map.get(name))}**{name}** — "
+            f"{amount:,} damage ({amount / total_damage * 100:.2f}%)"
             for name, amount in top
         ]
         return "**Top Overall Damage (bosses + trash)**\n" + "\n".join(lines)
 
-    def _build_parses_block(self, parses: list, fights: list) -> str:
-        if not parses:
-            return ""
+    def _build_parses_block(self, parses: list, fights: list, damage_done: dict, healing_done: dict,
+                             guild: discord.Guild, classes_map: dict) -> str:
+        """
+        "Raid MVP's" - three separate lines: highest DPS parse (rank
+        percentile, DPS-role parses only - healers/tanks have their own
+        separate WCL metrics, not comparable on the same percentile scale),
+        highest overall damage done, and highest overall healing done.
+        Followed by the elite (>= config.PARSE_HIGHLIGHT_THRESHOLD) parse
+        callouts, any role.
+        """
         fight_names = {f["id"]: f["name"] for f in fights}
         with_pct = [p for p in parses if p.get("rank_percent") is not None]
-        if not with_pct:
-            return ""
+
+        mvp_lines = []
+        dps_parses = [p for p in with_pct if p.get("role") == "dps"]
+        if dps_parses:
+            top = max(dps_parses, key=lambda p: p["rank_percent"])
+            mvp_lines.append(
+                f"🏆 {self._name_icon(guild, top.get('class'))}**{top['name']}** — highest DPS parse "
+                f"({top['rank_percent']:.1f}% on {_boss_name(top, fight_names)})"
+            )
+        if damage_done:
+            name, amount = max(damage_done.items(), key=lambda kv: kv[1])
+            mvp_lines.append(
+                f"🏆 {self._name_icon(guild, classes_map.get(name))}**{name}** — "
+                f"highest damage done ({amount:,})"
+            )
+        if healing_done:
+            name, amount = max(healing_done.items(), key=lambda kv: kv[1])
+            mvp_lines.append(
+                f"🏆 {self._name_icon(guild, classes_map.get(name))}**{name}** — "
+                f"highest healing done ({amount:,})"
+            )
 
         lines = []
-        mvp = max(with_pct, key=lambda p: p["rank_percent"])
-        lines.append(
-            f"🏆 **Raid MVP:** {mvp['name']} — {mvp['rank_percent']:.1f}% on {_boss_name(mvp, fight_names)}"
-        )
+        if mvp_lines:
+            lines.append("**Raid MVP's**")
+            lines.extend(mvp_lines)
 
         elite = sorted(
             (p for p in with_pct if p["rank_percent"] >= config.PARSE_HIGHLIGHT_THRESHOLD),
             key=lambda p: -p["rank_percent"],
         )
-        for p in elite[:20]:
-            spec_class = " ".join(x for x in (p.get("spec"), p.get("class")) if x)
-            suffix = f" ({spec_class})" if spec_class else ""
-            lines.append(f"🌟 **{p['name']}** — {p['rank_percent']:.1f}% on {_boss_name(p, fight_names)}{suffix}")
+        if elite:
+            if lines:
+                lines.append("")
+            for p in elite[:20]:
+                spec_class = " ".join(x for x in (p.get("spec"), p.get("class")) if x)
+                suffix = f" ({spec_class})" if spec_class else ""
+                lines.append(
+                    f"🌟 {self._name_icon(guild, p.get('class'))}**{p['name']}** — {p['rank_percent']:.1f}% on "
+                    f"{_boss_name(p, fight_names)}{suffix}"
+                )
+
         return "\n".join(lines)
 
-    def _build_personal_bests_block(self, parses: list, fights: list, records: dict) -> tuple:
+    def _build_personal_bests_block(self, parses: list, fights: list, records: dict, guild: discord.Guild) -> tuple:
         """
         Returns (block_text, updates) where updates is
         {encounter_id: {character_name: new_best_percent}} for every parse
@@ -587,7 +698,7 @@ class RaidSummaryCog(commands.Cog):
                 continue
             if pct > prior_best:
                 lines.append(
-                    f"📈 **{name}** — {prior_best:.1f}% → {pct:.1f}% on "
+                    f"📈 {self._name_icon(guild, p.get('class'))}**{name}** — {prior_best:.1f}% → {pct:.1f}% on "
                     f"{_boss_name(p, fight_names)} (+{pct - prior_best:.1f})"
                 )
                 updates.setdefault(encounter_id, {})[name] = pct
@@ -771,6 +882,7 @@ class RaidSummaryCog(commands.Cog):
         tier="Which raid tier was raided",
         report="WCL report link (or bare report code)",
         clear_status="Full clear or still progressing?",
+        raid_type="Main raid or an alt/fun raid?",
         loot_export="Gargul loot export (.csv/.txt) - optional, add later with the Add Loot button if not ready yet",
         media_link="Optional: a YouTube/Twitch clip or image URL to feature",
         note="Optional short note/highlight for the top of the summary",
@@ -784,6 +896,10 @@ class RaidSummaryCog(commands.Cog):
             app_commands.Choice(name="Full Clear", value="full_clear"),
             app_commands.Choice(name="Progress", value="progress"),
         ],
+        raid_type=[
+            app_commands.Choice(name="Main Raid", value="main"),
+            app_commands.Choice(name="Alt Raid", value="alt"),
+        ],
     )
     async def raidsummary(
         self,
@@ -791,6 +907,7 @@ class RaidSummaryCog(commands.Cog):
         tier: app_commands.Choice[str],
         report: str,
         clear_status: app_commands.Choice[str],
+        raid_type: app_commands.Choice[str],
         loot_export: discord.Attachment = None,
         media_link: str = None,
         note: str = None,
@@ -843,28 +960,44 @@ class RaidSummaryCog(commands.Cog):
         # --- resolve loot item data ---
         resolved_loot = await self._resolve_loot(loot_rows)
 
+        # Raid composition (also the source of class icons used throughout
+        # the rest of the summary, including loot) - one lazily-cached WCL
+        # call, best-effort like everything else here.
+        try:
+            composition = await self.bot.wcl.get_report_role_composition(report_code)
+        except Exception:
+            log.warning("Role composition lookup failed for %s", report_code, exc_info=True)
+            composition = None
+        classes_map = (composition or {}).get("classes", {})
+
         tier_data = self._resolve_tier(tier.value)
         fights_by_encounter = self._group_fights_by_encounter(summary["fights"])
         records = self._get_records()
         boss_lines, newly_killed_ids, new_fastest_kills = self._build_boss_lines(
             tier_data, fights_by_encounter, records
         )
-
-        killed_count = sum(1 for g in fights_by_encounter.values() if any(f["kill"] for f in g))
-        attempted_count = len(fights_by_encounter)
-        total_pulls = sum(len(g) for g in fights_by_encounter.values())
-        raid_duration_ms = (
-            (summary["end_time"] - summary["start_time"])
-            if summary["start_time"] and summary["end_time"] else None
-        )
+        killed_count, attempted_count, total_pulls = self._tier_stats(tier_data, fights_by_encounter)
         clear_label = "Full Clear!" if clear_status.value == "full_clear" else "Progress Raid"
 
+        # "First pull" is the first REAL boss pull, not the report's own
+        # start (which can include several minutes of trash/travel before
+        # the first pull) - Fight.start_time is relative to the report's
+        # absolute start, so it has to be added back on to get a real clock
+        # time. Total duration is measured from that same first-pull anchor
+        # to the raid's end, so the three numbers on this line are always
+        # mutually consistent.
         report_date = "?"
         duration_line = ""
-        if summary["start_time"] and summary["end_time"]:
-            report_date = datetime.fromtimestamp(summary["start_time"] / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+        encounter_fights = [f for f in summary["fights"] if f.get("encounter_id") is not None]
+        first_pull_relative_ms = (
+            min((f["start_time"] for f in encounter_fights if f["start_time"] is not None), default=None)
+        )
+        if summary["start_time"] and summary["end_time"] and first_pull_relative_ms is not None:
+            first_pull_absolute_ms = summary["start_time"] + first_pull_relative_ms
+            raid_duration_ms = summary["end_time"] - first_pull_absolute_ms
+            report_date = datetime.fromtimestamp(first_pull_absolute_ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
             first_pull_clock = (
-                datetime.fromtimestamp(summary["start_time"] / 1000, tz=timezone.utc).astimezone(AMSTERDAM_TZ).strftime("%H:%M")
+                datetime.fromtimestamp(first_pull_absolute_ms / 1000, tz=timezone.utc).astimezone(AMSTERDAM_TZ).strftime("%H:%M")
             )
             raid_end_clock = (
                 datetime.fromtimestamp(summary["end_time"] / 1000, tz=timezone.utc).astimezone(AMSTERDAM_TZ).strftime("%H:%M")
@@ -885,37 +1018,39 @@ class RaidSummaryCog(commands.Cog):
 
         pre_loot_blocks = [self._text_block(self._build_links_block(report_code))]
 
-        comp_block = await self._build_comp_block(report_code)
+        comp_block = self._build_comp_block(composition)
         if comp_block:
             pre_loot_blocks.append(self._text_block(comp_block))
         if boss_lines:
             pre_loot_blocks.append(self._text_block("**Boss-by-boss**\n" + "\n".join(boss_lines)))
-        parses_block = self._build_parses_block(summary["parses"], summary["fights"])
+        parses_block = self._build_parses_block(
+            summary["parses"], summary["fights"], summary["damage_done"], summary["healing_done"],
+            interaction.guild, classes_map,
+        )
         if parses_block:
             pre_loot_blocks.append(self._text_block(parses_block))
         personal_bests_block, parse_updates = self._build_personal_bests_block(
-            summary["parses"], summary["fights"], records
+            summary["parses"], summary["fights"], records, interaction.guild
         )
         if personal_bests_block:
             pre_loot_blocks.append(self._text_block(personal_bests_block))
         guild_rank_block = await self._build_guild_rank_block(tier_data, fights_by_encounter)
         if guild_rank_block:
             pre_loot_blocks.append(self._text_block(guild_rank_block))
-        damage_block = self._build_damage_block(summary["damage_done"])
+        damage_block = self._build_damage_block(summary["damage_done"], interaction.guild, classes_map)
         if damage_block:
             pre_loot_blocks.append(self._text_block(damage_block))
-        deaths_block = self._build_deaths_block(summary["deaths"])
+        deaths_block = self._build_deaths_block(summary["deaths"], interaction.guild, classes_map)
         if deaths_block:
             pre_loot_blocks.append(self._text_block(deaths_block))
 
-        loot_lines = await self._build_loot_lines(resolved_loot)
+        loot_lines = await self._build_loot_lines(resolved_loot, interaction.guild, classes_map)
         loot_blocks = self._build_loot_blocks(loot_lines)
 
         banner_source, banner_file = self._load_banner(tier_data["name"])
         page_views = self._render_pages(pre_loot_blocks, loot_blocks, header_ctx, note, media_link, banner_source)
 
-        tag_names = {tier_data["name"].lower(), config.CLEAR_STATUS_TAG_NAMES[clear_status.value].lower()}
-        applied_tags = [t for t in forum_channel.available_tags if t.name.lower() in tag_names]
+        applied_tags = self._resolve_applied_tags(forum_channel, tier_data["name"], clear_status.value, raid_type.value)
 
         thread_name = f"{tier_data['name']} — {report_date}"
         try:
@@ -963,6 +1098,7 @@ class RaidSummaryCog(commands.Cog):
         self.bot.store.set(
             last_message.id,
             thread_id=thread.id,
+            report_code=report_code,
             page_message_ids=[m.id for m in posted_messages],
             pre_loot_blocks=pre_loot_blocks,
             loot_blocks=loot_blocks,
@@ -1097,7 +1233,20 @@ class RaidSummaryCog(commands.Cog):
             return
 
         resolved_loot = await self._resolve_loot(loot_rows)
-        loot_lines = await self._build_loot_lines(resolved_loot)
+
+        # Re-fetch composition for class icons on the winner names - cheap,
+        # since get_report_role_composition caches per report_code and this
+        # report was already summarized once at post time.
+        classes_map = {}
+        report_code = record.get("report_code")
+        if report_code:
+            try:
+                composition = await self.bot.wcl.get_report_role_composition(report_code)
+                classes_map = (composition or {}).get("classes", {})
+            except Exception:
+                log.warning("Role composition lookup failed while adding loot for %s", report_code, exc_info=True)
+
+        loot_lines = await self._build_loot_lines(resolved_loot, interaction.guild, classes_map)
 
         record["loot_blocks"] = self._build_loot_blocks(loot_lines)
         record["header_ctx"]["loot_count"] = len(resolved_loot)

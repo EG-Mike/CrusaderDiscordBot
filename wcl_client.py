@@ -152,6 +152,18 @@ query ReportDamageDone($code: String!, $fightIDs: [Int]!) {
 }
 """
 
+# dataType: Healing, across every fight at once - the "highest healing done"
+# raid MVP line.
+REPORT_HEALING_QUERY = """
+query ReportHealing($code: String!, $fightIDs: [Int]!) {
+  reportData {
+    report(code: $code) {
+      table(fightIDs: $fightIDs, dataType: Healing)
+    }
+  }
+}
+"""
+
 # Guild-level (not report-level) - a guild's speed/execution rankings across
 # every boss in a zone, i.e. "how does our kill of Boss X compare to other
 # guilds on the server/region". Best-effort: this JSON shape could not be
@@ -361,12 +373,15 @@ class WarcraftLogsClient:
         per given fight, returning:
           - kill_counts: {name: fight_count} - only meaningful when
             fight_ids are kill fights (attendance's use).
-          - role_tally: {name: {"tank": n, "healer": n, "dps": n, "total": n}} -
-            how many of THESE given fights each character appeared in under
-            each role bucket. Fight-set-agnostic by design, so
-            get_report_role_composition() can call this again for wipe
-            fights and merge the two tallies into a whole-report picture
-            without re-fetching the kill fights it already has.
+          - role_tally: {name: {"tank": n, "healer": n, "dps": n, "total": n,
+            "class": class_name}} - how many of THESE given fights each
+            character appeared in under each role bucket, plus their class
+            (first-seen - doesn't change across fights). Fight-set-agnostic
+            by design, so get_report_role_composition() can call this again
+            for wipe fights and merge the two tallies into a whole-report
+            picture (including a name -> class map for icons elsewhere in
+            a raid summary) without re-fetching the kill fights it already
+            has.
 
         Verified against a real report (2026-07): report.fights[].kill is
         true/false/null as expected (null = trash, false = wipe, true =
@@ -411,7 +426,9 @@ class WarcraftLogsClient:
                     if not name:
                         continue
                     kill_counts[name] = kill_counts.get(name, 0) + 1
-                    tally = role_tally.setdefault(name, {"tank": 0, "healer": 0, "dps": 0, "total": 0})
+                    tally = role_tally.setdefault(
+                        name, {"tank": 0, "healer": 0, "dps": 0, "total": 0, "class": player.get("type")}
+                    )
                     tally[_normalize_role(role_key)] += 1
                     tally["total"] += 1
 
@@ -525,6 +542,21 @@ class WarcraftLogsClient:
             return {}
         return dict(totals)
 
+    async def _fetch_healing_done(self, session, headers, report_code: str, fight_ids: list) -> dict:
+        """Best-effort {character_name: total_healing} across the whole
+        report - the "highest healing done" raid MVP line."""
+        entries = await self._fetch_table_entries(session, headers, report_code, fight_ids, REPORT_HEALING_QUERY)
+        totals = Counter()
+        try:
+            for entry in entries:
+                name = entry.get("name")
+                if name:
+                    totals[name] += entry.get("total") or 0
+        except Exception:
+            log.warning("Unexpected shape for healing table - skipping", exc_info=True)
+            return {}
+        return dict(totals)
+
     async def get_report_summary(self, report_code: str) -> dict:
         """
         THE single per-report fetch point. Everything any feature needs from
@@ -555,10 +587,11 @@ class WarcraftLogsClient:
             "fights": [{"id","name","encounter_id","kill","difficulty",
                         "start_time","end_time","boss_percentage","fight_percentage"}, ...],
             "kill_counts": {name: kill_fight_count},        # attendance - verified shape
-            "kill_fight_roles": {name: {"tank","healer","dps","total"}},  # best-effort, kill fights only
+            "kill_fight_roles": {name: {"tank","healer","dps","total","class"}},  # best-effort, kill fights only
             "parses": [{"name","class","spec","rank_percent","fight_id","boss_name","role"}, ...],  # best-effort
             "deaths": {name: death_count},                   # best-effort
             "damage_done": {name: total_damage},              # best-effort
+            "healing_done": {name: total_healing},            # best-effort
           }
         """
         cached = self._report_cache.get(report_code)
@@ -584,7 +617,8 @@ class WarcraftLogsClient:
             if not report:
                 empty = {
                     "zone": None, "start_time": None, "end_time": None, "fights": [],
-                    "kill_counts": {}, "kill_fight_roles": {}, "parses": [], "deaths": {}, "damage_done": {},
+                    "kill_counts": {}, "kill_fight_roles": {}, "parses": [], "deaths": {},
+                    "damage_done": {}, "healing_done": {},
                 }
                 self._report_cache.set(report_code, **empty)
                 return empty
@@ -612,6 +646,7 @@ class WarcraftLogsClient:
             parses = self._parse_rankings(report.get("rankings"))
             deaths = await self._fetch_deaths(session, headers, report_code, all_fight_ids)
             damage_done = await self._fetch_damage_done(session, headers, report_code, all_fight_ids)
+            healing_done = await self._fetch_healing_done(session, headers, report_code, all_fight_ids)
 
             zone = report.get("zone")
             summary = {
@@ -624,6 +659,7 @@ class WarcraftLogsClient:
                 "parses": parses,
                 "deaths": deaths,
                 "damage_done": damage_done,
+                "healing_done": healing_done,
             }
 
         self._report_cache.set(report_code, **summary)
@@ -640,8 +676,12 @@ class WarcraftLogsClient:
         here, and that result is cached onto the same per-report cache
         entry so a second raid summary for this report never re-fetches it.
 
-        Returns {"tanks": [name,...], "healers": [...], "dps": [...]}, or
-        None if the report has no fights.
+        Returns {"tanks": [name,...], "healers": [...], "dps": [...],
+        "classes": {name: class_name}}, or None if the report has no
+        fights. "classes" covers every character seen in ANY fight this
+        report (kill or wipe) - used elsewhere in a raid summary to prefix
+        names with a class icon (loot winners, damage/death leaderboards,
+        etc.) without a separate lookup.
         """
         summary = await self.get_report_summary(report_code)
         if not summary.get("fights"):
@@ -662,12 +702,15 @@ class WarcraftLogsClient:
 
         tally = {name: dict(counts) for name, counts in summary["kill_fight_roles"].items()}
         for name, counts in wipe_tally.items():
-            entry = tally.setdefault(name, {"tank": 0, "healer": 0, "dps": 0, "total": 0})
+            entry = tally.setdefault(name, {"tank": 0, "healer": 0, "dps": 0, "total": 0, "class": None})
             for key in ("tank", "healer", "dps", "total"):
                 entry[key] += counts[key]
+            if entry.get("class") is None:
+                entry["class"] = counts.get("class")
 
-        tanks, healers, dps = [], [], []
+        tanks, healers, dps, classes = [], [], [], {}
         for name, counts in tally.items():
+            classes[name] = counts.get("class")
             total = counts["total"] or 1
             tank_frac = counts["tank"] / total
             healer_frac = counts["healer"] / total
@@ -678,7 +721,7 @@ class WarcraftLogsClient:
             else:
                 dps.append(name)
 
-        composition = {"tanks": tanks, "healers": healers, "dps": dps}
+        composition = {"tanks": tanks, "healers": healers, "dps": dps, "classes": classes}
         cached_entry["role_composition"] = composition
         self._report_cache.set(report_code, **cached_entry)
         return composition
