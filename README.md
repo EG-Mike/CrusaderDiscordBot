@@ -76,21 +76,36 @@ moderator-driven announcement system.
    attachment), full-clear-or-progress, and optionally a note and a
    YouTube/Twitch/image link to feature.
 2. The bot posts a new thread in the raid-summary **forum channel** with:
-   a tier banner, a TL;DR (bosses down, pulls, loot count, duration),
-   roster composition, a boss-by-boss pull/first-kill breakdown, elite
-   (99%+) parses and the raid MVP, guild rank vs. other guilds (if
-   `GUILD_NAME` is set), a "fun stats" death count, the full loot list
-   (Wowhead-linked, with item icons and quality colors), and a link to the
-   full log. It auto-applies the tier + clear-status forum tags.
-3. Loot especially can run long, so the summary is automatically split
+   a tier banner, a TL;DR (bosses down, pulls, loot count, duration, raid
+   clear time), a boss-by-boss breakdown (pull count, kill time, and its
+   difference from our fastest-ever kill of that boss, with a ⚡ badge on a
+   new/tied record), roster composition, elite (99%+) parses and the raid
+   MVP, guild rank vs. other guilds (if `GUILD_NAME` is set), a "fun stats"
+   death count, the full loot list (Wowhead-linked, with item icons and
+   quality colors), and a link to the full log. It auto-applies the tier +
+   clear-status forum tags.
+3. Fastest-kill and fastest-clear records persist across raids (per boss,
+   and per raid zone for full clears) - each new summary compares against
+   whatever's on record and only updates it if this run matched or beat it.
+   Records are only ever set by posting a new summary, never by editing one.
+4. Every summary's last message has a persistent **✏️ Edit** button (any
+   moderator) to update the note or the media link after the fact - e.g.
+   adding a clip once someone uploads it. Nothing else is editable: the
+   boss/parse/loot/deaths sections are computed once at post time and
+   frozen, specifically so an edit can never retroactively change an
+   already-shown "first kill"/"fastest" badge (see `cogs/raid_summary.py`'s
+   module docstring for why).
+5. Loot especially can run long, so the summary is automatically split
    across as many thread messages as needed to stay under Discord's
-   per-message limits - never a single wall of text.
-4. All WCL data for a report (fights, parses, deaths, roster) is fetched
+   per-message limits - never a single wall of text. Editing re-splits and
+   reconciles against however many messages already exist (edits in place,
+   adds/removes messages if the edit changed the page count).
+6. All WCL data for a report (fights, parses, deaths, roster) is fetched
    and cached **once per report code**, shared with `/checkattendance` -
    summarizing a log that's already been used for attendance (or vice
    versa) costs zero extra WarcraftLogs requests for anything already
    cached.
-5. Item names/icons come from Wowhead (looked up by ID and cached
+7. Item names/icons come from Wowhead (looked up by ID and cached
    permanently, since Gargul's export only gives an item ID) - see the
    setup step below and the warning at the top of `wowhead.py`.
 
@@ -341,4 +356,8 @@ when adding a new persistent component elsewhere.
   `discord.ui.Section`/`Thumbnail` (the per-loot-item icon layout) are
   likewise unverified beyond existing in discord.py 2.6+ alongside the
   other Components V2 classes already used here - if loot rows render
-  without icons, that's the first thing to check.
+  without icons, that's the first thing to check. The ✏️ Edit button's
+  `message.edit(view=...)` call on an already-posted forum thread message
+  follows the same pattern already used for announcements' Edit button, but
+  specifically for a `LayoutView`-based forum *thread* message (as opposed
+  to a plain channel message) wasn't independently re-verified here either.
