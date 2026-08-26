@@ -2,9 +2,9 @@
 Config constants: TBC class colors, WCL percentile color scale, and current/
 previous raid tier definitions.
 
-TIER TRANSITION: when BT/Hyjal releases, update CURRENT_TIER below to
-FUTURE_TIERS["BT/Hyjal"], and set PREVIOUS_TIER to today's CURRENT_TIER
-value (SSC/TK). That's the one-line switch.
+TIER TRANSITION: when Sunwell Plateau releases, update CURRENT_TIER below to
+FUTURE_TIERS["Sunwell Plateau"], and set PREVIOUS_TIER to today's
+CURRENT_TIER value (BT/Hyjal). That's the one-line switch.
 
 All zone/encounter IDs below were pulled directly from WCL's
 `worldData.zones` query against the fresh.warcraftlogs.com host (via
@@ -270,6 +270,27 @@ def color_for_percentile(pct) -> int:
 # `bosses` maps a display name -> WCL encounter ID.
 
 CURRENT_TIER = {
+    "name": "BT/Hyjal",
+    "zone_id": 1011,
+    "bosses": {
+        "High Warlord Naj'entus": 601,
+        "Supremus": 602,
+        "Shade of Akama": 603,
+        "Teron Gorefiend": 604,
+        "Gurtogg Bloodboil": 605,
+        "Reliquary of Souls": 606,
+        "Mother Shahraz": 607,
+        "The Illidari Council": 608,
+        "Illidan Stormrage": 609,
+        "Rage Winterchill": 618,
+        "Anetheron": 619,
+        "Kaz'rogal": 620,
+        "Azgalor": 621,
+        "Archimonde": 622,
+    },
+}
+
+PREVIOUS_TIER = {
     "name": "SSC/TK",
     "zone_id": 1056,
     "bosses": {
@@ -286,18 +307,10 @@ CURRENT_TIER = {
     },
 }
 
-PREVIOUS_TIER = {
-    "name": "Gruul/Magtheridon",
-    "zone_id": 1008,
-    "bosses": {
-        "High King Maulgar": 100649,
-        "Gruul the Dragonkiller": 100650,
-        "Magtheridon": 100651,
-    },
-}
-
-# If the applicant has fewer than this many total logged kills in the current
-# tier, also show their previous-tier performance for context.
+# If the applicant has fewer than this many full clears of the current tier
+# (all current-tier bosses killed at least this many times each - see
+# _count_full_clears in cogs/apply.py), also show their previous-tier
+# performance for context.
 NEW_TIER_LOG_THRESHOLD = 3
 
 # --- Future tiers, pre-filled from the same debug_zones.py run so the
@@ -306,26 +319,6 @@ NEW_TIER_LOG_THRESHOLD = 3
 #   CURRENT_TIER = FUTURE_TIERS["BT/Hyjal"]
 # (then do the same again for each subsequent tier as your guild progresses)
 FUTURE_TIERS = {
-    "BT/Hyjal": {
-        "name": "BT/Hyjal",
-        "zone_id": 1011,
-        "bosses": {
-            "High Warlord Naj'entus": 601,
-            "Supremus": 602,
-            "Shade of Akama": 603,
-            "Teron Gorefiend": 604,
-            "Gurtogg Bloodboil": 605,
-            "Reliquary of Souls": 606,
-            "Mother Shahraz": 607,
-            "The Illidari Council": 608,
-            "Illidan Stormrage": 609,
-            "Rage Winterchill": 618,
-            "Anetheron": 619,
-            "Kaz'rogal": 620,
-            "Azgalor": 621,
-            "Archimonde": 622,
-        },
-    },
     "Sunwell Plateau": {
         "name": "Sunwell Plateau",
         "zone_id": 1013,

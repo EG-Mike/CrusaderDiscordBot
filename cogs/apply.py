@@ -436,6 +436,26 @@ class ApplyCog(commands.Cog):
             parts.append(f"{icon} {s}".strip())
         return ", ".join(parts)
 
+    def _count_full_clears(self, tier_data) -> int:
+        """
+        Number of full clears of the current tier: the minimum kill count
+        across ALL current-tier bosses (a boss with zero logged kills -
+        including one entirely absent from the WCL response - caps this at
+        0). Deliberately NOT total_kills (a sum across bosses): farming one
+        early boss repeatedly would inflate that sum past
+        NEW_TIER_LOG_THRESHOLD despite the applicant never having killed the
+        rest of the tier.
+        """
+        kills_by_encounter = {}
+        if tier_data:
+            for b in tier_data.get("per_boss") or []:
+                if b.get("encounter_id") is not None:
+                    kills_by_encounter[b["encounter_id"]] = b.get("kills", 0)
+        return min(
+            (kills_by_encounter.get(eid, 0) for eid in config.CURRENT_TIER["bosses"].values()),
+            default=0,
+        )
+
     async def _compute_tier_and_boss_blocks(self, character: dict):
         """
         Live WCL lookups happen ONLY here, once, at posting time. Everything
@@ -452,11 +472,11 @@ class ApplyCog(commands.Cog):
             except Exception:
                 log.exception("Failed to fetch current-tier data")
 
-        current_kills = current_tier_data.get("total_kills", 0) if current_tier_data else 0
+        full_clears = self._count_full_clears(current_tier_data)
         current_has_data = bool(
             current_tier_data and current_tier_data.get("best_performance_average") is not None
         )
-        low_kill_count = current_has_data and current_kills < config.NEW_TIER_LOG_THRESHOLD
+        low_kill_count = current_has_data and full_clears < config.NEW_TIER_LOG_THRESHOLD
         no_current_data = not current_has_data
 
         prev_tier_data = None
@@ -479,8 +499,8 @@ class ApplyCog(commands.Cog):
         tier_lines = []
         if low_kill_count and prev_tier_data:
             tier_lines.append(
-                f"⚠️ **Limited current-tier logs** - this character has only {current_kills} "
-                f"kill(s) logged in {config.CURRENT_TIER['name']}, so {config.PREVIOUS_TIER['name']} "
+                f"⚠️ **Limited current-tier clears** - this character has only {full_clears} "
+                f"full clear(s) of {config.CURRENT_TIER['name']}, so {config.PREVIOUS_TIER['name']} "
                 "data is also included below."
             )
             tier_lines.append(
