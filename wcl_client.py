@@ -30,6 +30,20 @@ ROLE_THRESHOLD = 0.70
 
 _ROLE_KEY_MAP = {"tanks": "tank", "healers": "healer", "dps": "dps"}
 
+# Every key get_report_summary()'s cached entry must have. Checked on every
+# cache read (see get_report_summary) rather than just checking for
+# "fights" - a per-report cache is persisted to disk (wcl_report_cache.json)
+# and outlives the process, so an entry cached by an older version of this
+# method (before some field existed) would otherwise be returned as-is,
+# missing that field, and crash whatever downstream code expects it (this
+# happened for real: "healing_done" was added after some reports were
+# already cached). An incomplete entry just gets transparently re-fetched
+# once instead.
+_SUMMARY_KEYS = {
+    "zone", "start_time", "end_time", "fights", "kill_counts",
+    "kill_fight_roles", "parses", "deaths", "damage_done", "healing_done",
+}
+
 
 def _normalize_role(role_key: str) -> str:
     return _ROLE_KEY_MAP.get(role_key, "dps")
@@ -418,6 +432,13 @@ class WarcraftLogsClient:
             details = report_data.get("playerDetails") or {}
             inner = details.get("data") if isinstance(details.get("data"), dict) else {}
             buckets = inner.get("playerDetails", {}) if inner else {}
+            if not isinstance(buckets, dict):
+                # Seen live: WCL returns [] here (not the expected
+                # {dps/healers/tanks: [...]} dict) for some fights - a wipe
+                # fight with no meaningful player data, going by when this
+                # showed up. Treat as "no players for this fight" rather
+                # than crashing the whole report/composition fetch.
+                continue
             for role_key, role_list in buckets.items():
                 if not isinstance(role_list, list):
                     continue
@@ -566,9 +587,10 @@ class WarcraftLogsClient:
         report code and cached together, so e.g. /checkattendance and a raid
         summary generated from the same log never pay for the same WCL
         requests twice. Cached in the same self._report_cache as before (see
-        __init__'s note on it) - old cache entries from before this method
-        existed just get transparently re-fetched once (they won't have a
-        "fights" key yet).
+        __init__'s note on it) - an incomplete/outdated cache entry (missing
+        any key in _SUMMARY_KEYS, e.g. from before this method existed, or
+        from before a field was added to it) is treated as a cache miss and
+        transparently re-fetched.
 
         "kill_fight_roles" is deliberately KILL FIGHTS ONLY (cheap, already
         paid for by kill_counts' own fetch) - a full-report role tally
@@ -595,7 +617,7 @@ class WarcraftLogsClient:
           }
         """
         cached = self._report_cache.get(report_code)
-        if cached is not None and "fights" in cached:
+        if cached is not None and _SUMMARY_KEYS.issubset(cached.keys()):
             return cached
 
         token = await self._get_token()
@@ -688,8 +710,9 @@ class WarcraftLogsClient:
             return None
 
         cached_entry = self._report_cache.get(report_code) or {}
-        if cached_entry.get("role_composition") is not None:
-            return cached_entry["role_composition"]
+        cached_composition = cached_entry.get("role_composition")
+        if cached_composition is not None and "classes" in cached_composition:
+            return cached_composition
 
         fights = summary["fights"]
         kill_fight_ids = {f["id"] for f in fights if f["kill"]}
