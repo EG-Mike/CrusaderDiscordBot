@@ -72,45 +72,65 @@ moderator-driven announcement system.
 ### Raid summaries
 
 1. A moderator runs **`/raidsummary`** after a raid, giving it: the tier
-   raided, the WCL report link, the Gargul loot export (as a file
-   attachment), full-clear-or-progress, and optionally a note and a
+   raided, the WCL report link, full-clear-or-progress, and optionally the
+   Gargul loot export (can be added later - see below), a note, and a
    YouTube/Twitch/image link to feature.
-2. The bot posts a new thread in the raid-summary **forum channel** with:
-   a tier banner image, a TL;DR (bosses down, pulls, loot count, duration,
-   raid clear time), a boss-by-boss breakdown (pull count, kill time, and
-   its difference from our fastest-ever kill of that boss, with a ⚡ badge
-   on a new/tied record), roster composition, elite (99%+) parses and the
-   raid MVP, who broke their own personal-best parse on a boss tonight, the
-   top 5 by damage done (bosses + trash), guild rank vs. other guilds (if
-   `GUILD_NAME` is set), a "fun stats" death count, and a link to the full
-   log. It auto-applies the tier + clear-status forum tags.
+2. The bot posts a new thread in the raid-summary **forum channel**. The
+   top post has: a tier banner image, a TL;DR (bosses down, pulls, loot
+   count; first-pull/raid-ended clock times + total duration; per-instance
+   clear time - e.g. Black Temple and Mount Hyjal tracked separately, each
+   compared to our fastest-ever clear of that instance with a ⚡ badge on a
+   new/tied record), a **Links** section (the full WCL log + a
+   [Wipefest](https://www.wipefest.gg) analysis link), roster composition,
+   a boss-by-boss breakdown (pull count, kill time + its difference from
+   our fastest-ever kill of that boss, and every wipe indented underneath
+   with the boss's HP% at that wipe), elite (99%+) parses and the raid MVP,
+   who broke their own personal-best parse on a boss tonight, the top 5 by
+   damage done - bosses + trash, with each person's share of the raid's
+   total damage, a guild rank vs. other guilds (if `GUILD_NAME` is set),
+   and a death leaderboard (top 5). It auto-applies the tier + clear-status
+   forum tags.
 3. **Loot** is always its own separate message (normally the 2nd one) as a
    compact list - one line per item: a real item icon (see below) + a
    clickable Wowhead-linked name + who won it. Never a wall of text mixed
    in with the rest of the summary.
-4. Fastest-kill, fastest-clear, and personal-best-parse records persist
-   across raids (per boss; per raid zone for full clears; per boss+character
-   for parses) - each new summary compares against whatever's on record and
-   only updates it if this run matched or beat it. Records are only ever
-   set by posting a new summary, never by editing one.
-5. Every summary's last message has a persistent **✏️ Edit** button (any
-   moderator) to update the note or the media link after the fact - e.g.
-   adding a clip once someone uploads it. Nothing else is editable: the
-   boss/parse/loot/damage/deaths sections are computed once at post time
-   and frozen, specifically so an edit can never retroactively change an
-   already-shown "first kill"/"fastest" badge (see `cogs/raid_summary.py`'s
-   module docstring for why).
-6. The summary is automatically split across as many thread messages as
+4. Roster composition uses a 70%-threshold role classification, not just
+   "whichever role someone appeared under most" - a tank/healer who also
+   DPS'd some fights (common on trash, or when short-handed) still counts
+   as their main role as long as they filled it in at least 70% of the
+   fights they were in that raid; everyone else counts as DPS. This needs
+   its own extra WCL fetch (every wipe fight's roster, not just kills - see
+   `wcl_client.get_report_role_composition`), so it's the one section of a
+   summary that can take a moment longer on a report with a lot of wipes.
+5. Fastest-kill, fastest-clear (tracked per real raid instance, not per
+   tier - see `config.TIER_SUB_INSTANCES`), and personal-best-parse records
+   persist across raids - each new summary compares against whatever's on
+   record and only updates it if this run matched or beat it. Clear-time
+   tracking is purely data-driven (every boss in that instance killed this
+   raid) - independent of the Full Clear/Progress pick, so a "Progress"
+   raid can still show a clean per-instance clear if that wing got
+   finished. Records are only ever set by posting a new summary, never by
+   editing one or adding loot later.
+6. Every summary's last message has two persistent buttons (any moderator):
+   **✏️ Edit** (update the note/media link via a modal) and **🎁 Add/Update
+   Loot** (post the Gargul export - as its own reply in the thread within 5
+   minutes of clicking, since Discord modals can't take file uploads - to
+   add loot that wasn't ready yet, or replace it if it was wrong). Nothing
+   else is editable: the boss/parse/damage/deaths/comp sections are
+   computed once at post time and frozen, specifically so an edit can never
+   retroactively change an already-shown "first kill"/"fastest"/personal-
+   best line (see `cogs/raid_summary.py`'s module docstring for why).
+7. The summary is automatically split across as many thread messages as
    needed to stay under Discord's per-message limits - never a single wall
-   of text. Editing re-splits and reconciles against however many messages
-   already exist (edits in place, adds/removes messages if the edit changed
-   the page count).
-7. All WCL data for a report (fights, parses, damage, deaths, roster) is
-   fetched and cached **once per report code**, shared with
-   `/checkattendance` - summarizing a log that's already been used for
-   attendance (or vice versa) costs zero extra WarcraftLogs requests for
-   anything already cached.
-8. Item names/links come from Wowhead (looked up by ID and cached
+   of text. Editing/adding loot later re-splits and reconciles against
+   however many messages already exist (edits in place, adds/removes
+   messages if the change altered the page count).
+8. All WCL data for a report (fights, parses, damage, deaths) is fetched
+   and cached **once per report code**, shared with `/checkattendance` -
+   summarizing a log that's already been used for attendance (or vice
+   versa) costs zero extra WarcraftLogs requests for anything already
+   cached. (Roster composition, per point 4 above, is a separate lazy fetch.)
+9. Item names/links come from Wowhead (looked up by ID and cached
    permanently, since Gargul's export only gives an item ID) - see the
    setup step below and `wowhead.py`. Each loot line's icon is a real
    Discord emoji, auto-provisioned the first time that item shows up in a
@@ -144,7 +164,7 @@ moderator-driven announcement system.
 | `/checkattendance links <member>` | Debug: show a member's resolved main name and linked alts. |
 | `/checkattendance exclude <name> <reason>` | Excuse a player from attendance tracking. |
 | `/checkattendance removeexcluded <id>` | Remove a player from the excused list by its `#ID`. |
-| `/raidsummary <tier> <report> <loot_export> <clear_status> [media_link] [note]` | Post a raid summary thread to the raid-summary forum. |
+| `/raidsummary <tier> <report> <clear_status> [loot_export] [media_link] [note]` | Post a raid summary thread to the raid-summary forum (loot can be added later via the thread's Add Loot button). |
 
 ## Setting up on a new server
 
@@ -372,4 +392,12 @@ when adding a new persistent component elsewhere.
   thread message follows the same pattern already used for announcements'
   Edit button, but specifically for a `LayoutView`-based forum *thread*
   message (as opposed to a plain channel message) wasn't independently
-  re-verified here either.
+  re-verified here either. The 🎁 Add Loot button's `bot.wait_for("message", ...)`
+  flow is a standard discord.py pattern but is new to this codebase - worth
+  a real test (does the timeout message show up correctly, does the
+  uploaded message get cleaned up) before relying on it live. Roster
+  composition's 70% threshold (`wcl_client.get_report_role_composition`)
+  reuses the already-verified `playerDetails` shape, just against wipe
+  fights instead of kills - lower risk than the other best-effort pieces
+  above, but still worth a glance the first time a report with real wipes
+  goes through it.
