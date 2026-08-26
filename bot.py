@@ -15,6 +15,7 @@ from discord.ext import commands
 from dotenv import load_dotenv
 
 from wcl_client import WarcraftLogsClient
+from wowhead import WowheadClient
 from storage import ApplicationStore
 import icons
 
@@ -31,6 +32,7 @@ EXTENSIONS = [
     "cogs.announcements",
     "cogs.emoji_admin",
     "cogs.attendance",
+    "cogs.raid_summary",
 ]
 
 intents = discord.Intents.default()
@@ -45,6 +47,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # Shared singletons every cog can reach via self.bot.<name> - avoids each
 # feature file re-instantiating its own WCL client / storage.
 bot.wcl = WarcraftLogsClient(os.environ["WCL_CLIENT_ID"], os.environ["WCL_CLIENT_SECRET"])
+bot.wowhead = WowheadClient()
 bot.store = ApplicationStore()
 
 

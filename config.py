@@ -266,6 +266,61 @@ def color_for_percentile(pct) -> int:
     return 0x666666
 
 
+# --- Raid summary feature (cogs/raid_summary.py) ---
+
+# A parse at or above this percentile gets called out by name in the
+# summary's "elite parses" section.
+PARSE_HIGHLIGHT_THRESHOLD = 99
+
+# Wowhead's tooltip API pulls from a specific game-version dataset, selected
+# via this ?dataEnv= param - see the big warning at the top of wowhead.py.
+# None = Wowhead's retail/default dataset, which will show the WRONG (retail)
+# item data for a Classic/TBC/Fresh realm. This MUST be verified/set once
+# real item lookups can be tested - it could not be confirmed from this
+# sandbox (wowhead.com isn't reachable from here).
+WOWHEAD_DATA_ENV = None
+
+# WoW item quality (as returned by Wowhead) -> embed/accent color.
+ITEM_QUALITY_COLORS = {
+    0: 0x9D9D9D,  # poor (grey)
+    1: 0xFFFFFF,  # common (white)
+    2: 0x1EFF00,  # uncommon (green)
+    3: 0x0070DD,  # rare (blue)
+    4: 0xA335EE,  # epic (purple)
+    5: 0xFF8000,  # legendary (orange)
+}
+
+
+def color_for_item_quality(quality) -> int:
+    """Returns the hex int color for a WoW item quality (0-5), white if unknown."""
+    if quality is None:
+        return ITEM_QUALITY_COLORS[1]
+    return ITEM_QUALITY_COLORS.get(quality, ITEM_QUALITY_COLORS[1])
+
+
+# Banner image shown at the top of each raid summary, keyed by the same
+# tier "name" string used in CURRENT_TIER/PREVIOUS_TIER above (e.g.
+# "BT/Hyjal"). Fill in a real image URL per tier you want to summarize -
+# your own uploaded banner art, or a Wowhead zone-splash URL. A tier with no
+# entry here just posts without a banner image (never blocks the summary).
+RAID_TIER_BANNERS = {
+    "BT/Hyjal": "",
+    "SSC/TK": "",
+}
+
+# Forum tag names the bot looks for (by exact name, case-insensitive) on the
+# raid-summary forum channel and applies automatically to each new thread -
+# one tier tag (matching CURRENT_TIER/PREVIOUS_TIER's "name") plus one clear-
+# status tag below. Create matching tags in the forum channel's settings in
+# Discord first; a tag that doesn't exist there yet is silently skipped
+# (the bot never creates/edits forum tags itself - that's server structure,
+# left to a moderator).
+CLEAR_STATUS_TAG_NAMES = {
+    "full_clear": "Full Clear",
+    "progress": "Progress",
+}
+
+
 # --- Raid tier config ---
 # `bosses` maps a display name -> WCL encounter ID.
 
