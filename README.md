@@ -76,40 +76,47 @@ moderator-driven announcement system.
    attachment), full-clear-or-progress, and optionally a note and a
    YouTube/Twitch/image link to feature.
 2. The bot posts a new thread in the raid-summary **forum channel** with:
-   a tier banner, a TL;DR (bosses down, pulls, loot count, duration, raid
-   clear time), a boss-by-boss breakdown (pull count, kill time, and its
-   difference from our fastest-ever kill of that boss, with a ⚡ badge on a
-   new/tied record), roster composition, elite (99%+) parses and the raid
-   MVP, who broke their own personal-best parse on a boss tonight, guild
-   rank vs. other guilds (if `GUILD_NAME` is set), a "fun stats" death
-   count, the full loot list (Wowhead-linked, with item icons and quality
-   colors), and a link to the full log. It auto-applies the tier +
-   clear-status forum tags.
-3. Fastest-kill, fastest-clear, and personal-best-parse records persist
+   a tier banner image, a TL;DR (bosses down, pulls, loot count, duration,
+   raid clear time), a boss-by-boss breakdown (pull count, kill time, and
+   its difference from our fastest-ever kill of that boss, with a ⚡ badge
+   on a new/tied record), roster composition, elite (99%+) parses and the
+   raid MVP, who broke their own personal-best parse on a boss tonight, the
+   top 5 by damage done (bosses + trash), guild rank vs. other guilds (if
+   `GUILD_NAME` is set), a "fun stats" death count, and a link to the full
+   log. It auto-applies the tier + clear-status forum tags.
+3. **Loot** is always its own separate message (normally the 2nd one) as a
+   compact list - one line per item: a real item icon (see below) + a
+   clickable Wowhead-linked name + who won it. Never a wall of text mixed
+   in with the rest of the summary.
+4. Fastest-kill, fastest-clear, and personal-best-parse records persist
    across raids (per boss; per raid zone for full clears; per boss+character
    for parses) - each new summary compares against whatever's on record and
    only updates it if this run matched or beat it. Records are only ever
    set by posting a new summary, never by editing one.
-4. Every summary's last message has a persistent **✏️ Edit** button (any
+5. Every summary's last message has a persistent **✏️ Edit** button (any
    moderator) to update the note or the media link after the fact - e.g.
    adding a clip once someone uploads it. Nothing else is editable: the
-   boss/parse/loot/deaths sections are computed once at post time and
-   frozen, specifically so an edit can never retroactively change an
+   boss/parse/loot/damage/deaths sections are computed once at post time
+   and frozen, specifically so an edit can never retroactively change an
    already-shown "first kill"/"fastest" badge (see `cogs/raid_summary.py`'s
    module docstring for why).
-5. Loot especially can run long, so the summary is automatically split
-   across as many thread messages as needed to stay under Discord's
-   per-message limits - never a single wall of text. Editing re-splits and
-   reconciles against however many messages already exist (edits in place,
-   adds/removes messages if the edit changed the page count).
-6. All WCL data for a report (fights, parses, deaths, roster) is fetched
-   and cached **once per report code**, shared with `/checkattendance` -
-   summarizing a log that's already been used for attendance (or vice
-   versa) costs zero extra WarcraftLogs requests for anything already
-   cached.
-7. Item names/icons come from Wowhead (looked up by ID and cached
+6. The summary is automatically split across as many thread messages as
+   needed to stay under Discord's per-message limits - never a single wall
+   of text. Editing re-splits and reconciles against however many messages
+   already exist (edits in place, adds/removes messages if the edit changed
+   the page count).
+7. All WCL data for a report (fights, parses, damage, deaths, roster) is
+   fetched and cached **once per report code**, shared with
+   `/checkattendance` - summarizing a log that's already been used for
+   attendance (or vice versa) costs zero extra WarcraftLogs requests for
+   anything already cached.
+8. Item names/links come from Wowhead (looked up by ID and cached
    permanently, since Gargul's export only gives an item ID) - see the
-   setup step below and the warning at the top of `wowhead.py`.
+   setup step below and `wowhead.py`. Each loot line's icon is a real
+   Discord emoji, auto-provisioned the first time that item shows up in a
+   summary (reusing `/add-emoji`'s own "Wowhead icon -> bot-owned
+   application emoji" mechanism - see `icons.ensure_item_emoji`) - never
+   consumes the server's own emoji slots.
 
 ## Commands
 
@@ -260,12 +267,15 @@ which is why the DM also includes a plain-text fallback instruction.
 3. Set `RAID_SUMMARY_FORUM_CHANNEL_ID` in `.env` to that channel's ID.
 4. Optionally set `GUILD_NAME` in `.env` (exact WarcraftLogs guild name) to
    enable the "guild rank" section.
-5. Optionally fill in `config.RAID_TIER_BANNERS` with a banner image URL per
-   tier (blank = no banner, never blocks the summary either way).
+5. Optionally set a banner per tier in `config.RAID_TIER_BANNERS` - either a
+   plain image URL, or (the default) a local file path under `images/`
+   (e.g. `images/banner-bt.jpg`). Local files just need to exist on disk
+   next to the bot; nothing to upload anywhere manually. A tier with a
+   missing/unconfigured banner just posts without one.
 6. **Before relying on it**, post one real summary and sanity-check the
-   loot section: if item names come back as "Item #NNNNN" instead of real
-   names, see the verification note at the top of `wowhead.py` -
-   `config.WOWHEAD_DATA_ENV` likely needs adjusting for your game version.
+   loot section: item names/icons come from Wowhead's `&xml` data feed (see
+   `wowhead.py`) - if they keep coming back as "Item #NNNNN" placeholders,
+   test a single known item ID first.
 
 ### 11. Install and run
 
@@ -346,20 +356,20 @@ when adding a new persistent component elsewhere.
   pending/posted state so a restart doesn't lose anything. They're plain
   JSON files in the working directory - fine at this scale, but not
   written for high-concurrency or multi-process use.
-- **`/raidsummary`'s WCL/Wowhead parsing needs a live verification pass.**
-  It was written without WCL credentials or network access to wowhead.com
-  available, so several pieces are best-effort rather than confirmed
-  against a real response: the `Report.rankings` and Deaths-table JSON
-  shapes in `wcl_client.py` (parsed defensively - a shape mismatch just
-  empties that one section instead of crashing), the guild zone-rankings
-  shape behind the "guild rank" section, and Wowhead's tooltip endpoint/
-  `dataEnv` param in `wowhead.py` (see its module docstring). Post one real
-  summary and check each section actually populated before trusting it.
-  `discord.ui.Section`/`Thumbnail` (the per-loot-item icon layout) are
-  likewise unverified beyond existing in discord.py 2.6+ alongside the
-  other Components V2 classes already used here - if loot rows render
-  without icons, that's the first thing to check. The ✏️ Edit button's
-  `message.edit(view=...)` call on an already-posted forum thread message
-  follows the same pattern already used for announcements' Edit button, but
-  specifically for a `LayoutView`-based forum *thread* message (as opposed
-  to a plain channel message) wasn't independently re-verified here either.
+- **`/raidsummary`'s WCL parsing needs a live verification pass.** It was
+  written without WCL credentials available, so some pieces are best-effort
+  rather than confirmed against a real response: the `Report.rankings`
+  JSON shape in `wcl_client.py` (parsed defensively - a shape mismatch just
+  empties that section instead of crashing; the boss-name field in
+  particular was already wrong once - see `_parse_rankings`'s docstring -
+  and now has two independent fallback paths, but is still worth watching),
+  the Deaths/DamageDone table shapes, and the guild zone-rankings shape
+  behind the "guild rank" section. Post one real summary and check each
+  section actually populated before trusting it. Item lookups (`wowhead.py`)
+  reuse the same `&xml` endpoint `/add-emoji` already relies on, so that
+  part carries the same (lighter) caveat as that existing command. The
+  ✏️ Edit button's `message.edit(view=...)` call on an already-posted forum
+  thread message follows the same pattern already used for announcements'
+  Edit button, but specifically for a `LayoutView`-based forum *thread*
+  message (as opposed to a plain channel message) wasn't independently
+  re-verified here either.
