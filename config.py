@@ -315,6 +315,34 @@ CLEAR_STATUS_TAG_NAMES = {
     "progress": "Progress",
 }
 
+# Some tiers bundle two real WoW raid instances under one WCL zone/one
+# CURRENT_TIER/PREVIOUS_TIER entry (e.g. "BT/Hyjal" is actually Black Temple
+# + Mount Hyjal, two separate raid entries in-game). For the raid summary's
+# per-instance clear-time tracking (so e.g. Black Temple and Mount Hyjal
+# clear times are tracked/compared separately, matching how WarcraftLogs
+# itself breaks them out), map tier name -> {instance display name: [boss
+# display names]} using the EXACT same boss name strings as that tier's
+# `bosses` dict above. A tier with no entry here just gets treated as one
+# single instance (using the tier's own name) - standard TBC raid
+# structure, not guessed.
+TIER_SUB_INSTANCES = {
+    "BT/Hyjal": {
+        "Black Temple": [
+            "High Warlord Naj'entus", "Supremus", "Shade of Akama", "Teron Gorefiend",
+            "Gurtogg Bloodboil", "Reliquary of Souls", "Mother Shahraz",
+            "The Illidari Council", "Illidan Stormrage",
+        ],
+        "Mount Hyjal": ["Rage Winterchill", "Anetheron", "Kaz'rogal", "Azgalor", "Archimonde"],
+    },
+    "SSC/TK": {
+        "Serpentshrine Cavern": [
+            "Hydross the Unstable", "The Lurker Below", "Leotheras the Blind",
+            "Fathom-Lord Karathress", "Morogrim Tidewalker", "Lady Vashj",
+        ],
+        "The Eye": ["Al'ar", "Void Reaver", "High Astromancer Solarian", "Kael'thas Sunstrider"],
+    },
+}
+
 
 # --- Raid tier config ---
 # `bosses` maps a display name -> WCL encounter ID.

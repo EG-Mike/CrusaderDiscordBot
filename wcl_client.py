@@ -22,6 +22,18 @@ log = logging.getLogger("wow-apply-bot.wcl")
 TOKEN_URL = "https://www.warcraftlogs.com/oauth/token"
 API_URL = "https://fresh.warcraftlogs.com/api/v2/client"
 
+# A character counts as Tank/Healer for get_report_role_composition() only
+# if they filled that role in at least this fraction of the fights they
+# appeared in (handles hybrids who tank/heal some pulls and DPS others) -
+# otherwise they're counted as DPS.
+ROLE_THRESHOLD = 0.70
+
+_ROLE_KEY_MAP = {"tanks": "tank", "healers": "healer", "dps": "dps"}
+
+
+def _normalize_role(role_key: str) -> str:
+    return _ROLE_KEY_MAP.get(role_key, "dps")
+
 CHARACTER_QUERY = """
 query CharacterLookup($name: String!, $serverSlug: String!, $serverRegion: String!) {
   characterData {
@@ -342,23 +354,28 @@ class WarcraftLogsClient:
             "primary_spec": primary_spec,
         }
 
-    async def _fetch_player_details(self, session, headers, report_code: str, kill_fight_ids: list):
+    async def _fetch_player_details(self, session, headers, report_code: str, fight_ids: list):
         """
-        Shared by get_report_summary() below - one WCL request per kill
-        fight (the expensive part), returning both the per-character kill
-        tally (attendance) and a best-effort name->{class, role} roster
-        (raid-summary comp breakdown), from the same playerDetails response
-        so this loop only ever runs once per report.
+        Shared by get_report_summary() (kill fights) and
+        get_report_role_composition() below (wipe fights) - one WCL request
+        per given fight, returning:
+          - kill_counts: {name: fight_count} - only meaningful when
+            fight_ids are kill fights (attendance's use).
+          - role_tally: {name: {"tank": n, "healer": n, "dps": n, "total": n}} -
+            how many of THESE given fights each character appeared in under
+            each role bucket. Fight-set-agnostic by design, so
+            get_report_role_composition() can call this again for wipe
+            fights and merge the two tallies into a whole-report picture
+            without re-fetching the kill fights it already has.
 
         Verified against a real report (2026-07): report.fights[].kill is
         true/false/null as expected (null = trash, false = wipe, true =
         kill), and playerDetails(fightIDs: [...]) reliably returns `name`
-        per player across the dps/healers/tanks buckets. The class hint
-        (player.get("type")) is best-effort and not separately verified.
+        per player across the dps/healers/tanks buckets.
         """
         kill_counts = {}
-        roster = {}
-        for fight_id in kill_fight_ids:
+        role_tally = {}
+        for fight_id in fight_ids:
             async with session.post(
                 API_URL,
                 json={
@@ -394,10 +411,11 @@ class WarcraftLogsClient:
                     if not name:
                         continue
                     kill_counts[name] = kill_counts.get(name, 0) + 1
-                    if name not in roster:
-                        roster[name] = {"class": player.get("type"), "role": role_key}
+                    tally = role_tally.setdefault(name, {"tank": 0, "healer": 0, "dps": 0, "total": 0})
+                    tally[_normalize_role(role_key)] += 1
+                    tally["total"] += 1
 
-        return kill_counts, roster
+        return kill_counts, role_tally
 
     def _parse_rankings(self, raw) -> list:
         """
@@ -511,13 +529,24 @@ class WarcraftLogsClient:
         """
         THE single per-report fetch point. Everything any feature needs from
         a WCL report - fight list (incl. wipes/trash, not just kills),
-        parse rankings, deaths, roster/comp, and the attendance kill-count
-        tally - is fetched here ONCE per report code and cached together, so
-        e.g. /checkattendance and a raid summary generated from the same log
-        never pay for the same WCL requests twice. Cached in the same
-        self._report_cache as before (see __init__'s note on it) - old
-        cache entries from before this method existed just get transparently
-        re-fetched once (they won't have a "fights" key yet).
+        parse rankings, deaths, damage done, the attendance kill-count
+        tally, and a KILL-FIGHTS-ONLY role tally - is fetched here ONCE per
+        report code and cached together, so e.g. /checkattendance and a raid
+        summary generated from the same log never pay for the same WCL
+        requests twice. Cached in the same self._report_cache as before (see
+        __init__'s note on it) - old cache entries from before this method
+        existed just get transparently re-fetched once (they won't have a
+        "fights" key yet).
+
+        "kill_fight_roles" is deliberately KILL FIGHTS ONLY (cheap, already
+        paid for by kill_counts' own fetch) - a full-report role tally
+        (needed to correctly classify hybrids who tank/heal some pulls and
+        DPS others) also needs the WIPE fights' playerDetails, which costs
+        one more WCL request per wipe. That's significant enough NOT to pay
+        on every summary fetch (attendance never needs it) - see
+        get_report_role_composition() below, which extends this tally
+        on-demand instead, only when a raid summary's comp section actually
+        needs it, and caches the result right alongside this report's entry.
 
         Returns:
           {
@@ -526,7 +555,7 @@ class WarcraftLogsClient:
             "fights": [{"id","name","encounter_id","kill","difficulty",
                         "start_time","end_time","boss_percentage","fight_percentage"}, ...],
             "kill_counts": {name: kill_fight_count},        # attendance - verified shape
-            "roster": {name: {"class", "role"}},             # best-effort
+            "kill_fight_roles": {name: {"tank","healer","dps","total"}},  # best-effort, kill fights only
             "parses": [{"name","class","spec","rank_percent","fight_id","boss_name","role"}, ...],  # best-effort
             "deaths": {name: death_count},                   # best-effort
             "damage_done": {name: total_damage},              # best-effort
@@ -555,7 +584,7 @@ class WarcraftLogsClient:
             if not report:
                 empty = {
                     "zone": None, "start_time": None, "end_time": None, "fights": [],
-                    "kill_counts": {}, "roster": {}, "parses": [], "deaths": {}, "damage_done": {},
+                    "kill_counts": {}, "kill_fight_roles": {}, "parses": [], "deaths": {}, "damage_done": {},
                 }
                 self._report_cache.set(report_code, **empty)
                 return empty
@@ -577,7 +606,9 @@ class WarcraftLogsClient:
             all_fight_ids = [f["id"] for f in fights]
             kill_fight_ids = [f["id"] for f in fights if f["kill"]]
 
-            kill_counts, roster = await self._fetch_player_details(session, headers, report_code, kill_fight_ids)
+            kill_counts, kill_fight_roles = await self._fetch_player_details(
+                session, headers, report_code, kill_fight_ids
+            )
             parses = self._parse_rankings(report.get("rankings"))
             deaths = await self._fetch_deaths(session, headers, report_code, all_fight_ids)
             damage_done = await self._fetch_damage_done(session, headers, report_code, all_fight_ids)
@@ -589,7 +620,7 @@ class WarcraftLogsClient:
                 "end_time": report.get("endTime"),
                 "fights": fights,
                 "kill_counts": kill_counts,
-                "roster": roster,
+                "kill_fight_roles": kill_fight_roles,
                 "parses": parses,
                 "deaths": deaths,
                 "damage_done": damage_done,
@@ -597,6 +628,60 @@ class WarcraftLogsClient:
 
         self._report_cache.set(report_code, **summary)
         return summary
+
+    async def get_report_role_composition(self, report_code: str) -> dict:
+        """
+        Best-effort raid composition across the WHOLE report (not just kill
+        fights) - see ROLE_THRESHOLD above: a character counts as Tank/
+        Healer only if they filled that role in at least that fraction of
+        the fights they appeared in this report; everyone else counts as
+        DPS. Kill fights' data is reused from get_report_summary()'s own
+        fetch (already paid for); only the wipe fights need a fresh fetch
+        here, and that result is cached onto the same per-report cache
+        entry so a second raid summary for this report never re-fetches it.
+
+        Returns {"tanks": [name,...], "healers": [...], "dps": [...]}, or
+        None if the report has no fights.
+        """
+        summary = await self.get_report_summary(report_code)
+        if not summary.get("fights"):
+            return None
+
+        cached_entry = self._report_cache.get(report_code) or {}
+        if cached_entry.get("role_composition") is not None:
+            return cached_entry["role_composition"]
+
+        fights = summary["fights"]
+        kill_fight_ids = {f["id"] for f in fights if f["kill"]}
+        wipe_fight_ids = [f["id"] for f in fights if f["id"] not in kill_fight_ids]
+
+        token = await self._get_token()
+        headers = {"Authorization": f"Bearer {token}"}
+        async with aiohttp.ClientSession() as session:
+            _, wipe_tally = await self._fetch_player_details(session, headers, report_code, wipe_fight_ids)
+
+        tally = {name: dict(counts) for name, counts in summary["kill_fight_roles"].items()}
+        for name, counts in wipe_tally.items():
+            entry = tally.setdefault(name, {"tank": 0, "healer": 0, "dps": 0, "total": 0})
+            for key in ("tank", "healer", "dps", "total"):
+                entry[key] += counts[key]
+
+        tanks, healers, dps = [], [], []
+        for name, counts in tally.items():
+            total = counts["total"] or 1
+            tank_frac = counts["tank"] / total
+            healer_frac = counts["healer"] / total
+            if tank_frac >= ROLE_THRESHOLD and tank_frac >= healer_frac:
+                tanks.append(name)
+            elif healer_frac >= ROLE_THRESHOLD:
+                healers.append(name)
+            else:
+                dps.append(name)
+
+        composition = {"tanks": tanks, "healers": healers, "dps": dps}
+        cached_entry["role_composition"] = composition
+        self._report_cache.set(report_code, **cached_entry)
+        return composition
 
     async def get_report_kill_counts(self, report_code: str) -> dict:
         """

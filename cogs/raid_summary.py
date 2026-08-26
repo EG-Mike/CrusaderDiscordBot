@@ -1,24 +1,24 @@
 """
-Raid summary feature - posts a presentable per-raid recap (banner, a
-compact loot list with real item icons/Wowhead links, boss-by-boss pulls
-with kill time + fastest-kill tracking, elite parses, personal bests, top
-damage, guild rank, "fun stats", and a link to the full log) as a new
-thread in a Discord forum channel, so raiders have somewhere to discuss
-each raid night.
+Raid summary feature - posts a presentable per-raid recap (banner, links to
+the full log + Wipefest analysis, a compact loot list with real item icons/
+Wowhead links, boss-by-boss pulls with kill time + wipe breakdown + fastest-
+kill tracking, elite parses, personal bests, top damage, roster composition,
+guild rank, a death leaderboard) as a new thread in a Discord forum channel,
+so raiders have somewhere to discuss each raid night.
 
 Design, per discussion:
   - A moderator runs /raidsummary once per raid, giving it: which tier was
-    raided, the WCL report link, the Gargul loot export (as a file
-    attachment - Gargul's export has no size limit worth worrying about,
-    unlike a modal's 4000-char text field), whether it was a full clear or
-    still progress, and optionally a note + a media link (YouTube/Twitch
-    clip or an image) to feature.
+    raided, the WCL report link, optionally the Gargul loot export (as a
+    file attachment - can be added later, see below), whether it was a
+    full clear or still progress, and optionally a note + a media link
+    (YouTube/Twitch clip or an image) to feature.
   - All WCL data for the report (fights/pulls, parse rankings, deaths,
-    damage done, roster/comp) comes from ONE cached fetch -
+    damage done) comes from ONE cached fetch -
     wcl_client.WarcraftLogsClient.get_report_summary() - shared with
-    cogs/attendance.py's attendance check. If a log's already been parsed
-    for attendance (or vice versa), generating its raid summary costs zero
-    extra WCL requests for anything that fetch already covers.
+    cogs/attendance.py's attendance check. Roster composition is a
+    SEPARATE, lazily-fetched call (get_report_role_composition) - see
+    _build_comp_block()'s docstring for why that one isn't folded into the
+    always-cheap summary fetch.
   - Gargul's export gives itemID + winner only (no item name/icon/boss) -
     see gargul_loot.py. Item name/icon/Wowhead link are resolved via
     wowhead.py (permanently cached locally, itemID -> name never changes).
@@ -41,28 +41,36 @@ Design, per discussion:
     missing/unconfigured banner just means no banner, never blocks posting.
   - Kill-time/clear-time/parse records: self._get_records() persists three
     things across raids - see RECORDS_KEY: (1) per encounter, the fastest
-    kill time we've ever recorded; (2) per raid zone, the fastest full
-    clear; (3) per (encounter, character), that character's own best parse
-    on that boss. Every posted summary compares against whatever's on
-    record: kill/clear times get the delta + a ⚡ badge on a new (or tied)
-    fastest, and any parse that beats a character's own prior best gets
-    called out in "Personal bests broken tonight" (a parse merely equal to
-    their prior best isn't shown - "improved" means strictly better). A
-    boss/zone/character with nothing on record yet just gets this raid's
-    number recorded silently as the new baseline, nothing to compare
-    against. Records are only ever updated by a fresh /raidsummary post,
-    never by editing one.
-  - Editing: only the note and media link are editable after posting (via
-    the persistent ✏️ Edit button on the summary's last message) -
-    everything else (boss lines, parses, personal bests, loot, damage,
-    deaths, guild rank) is computed ONCE at post time and frozen. This is
-    deliberate, not a shortcut: those sections read from the fastest-kill/
-    first-kill/personal-best records, which get UPDATED at post time -
-    recomputing them on every edit would make an already-posted "first
-    kill!"/"fastest!"/personal-best line silently change (or disappear)
-    later, since by then the record equals itself. Freezing them avoids
-    that whole class of bug, and it's cheap since it's exactly what needed
-    editing per the ask ("add a clip/screenshot later").
+    kill time we've ever recorded; (2) per raid instance (see
+    config.TIER_SUB_INSTANCES - some tiers, e.g. "BT/Hyjal", bundle two
+    real WoW raid instances together, and clear time is tracked per real
+    instance, not per tier), the fastest full clear; (3) per (encounter,
+    character), that character's own best parse on that boss. Every posted
+    summary compares against whatever's on record: kill/clear times get the
+    delta + a ⚡ badge on a new (or tied) fastest, and any parse that beats
+    a character's own prior best gets called out in "Personal bests broken
+    tonight". Clear-time tracking is purely DATA-driven (every boss in that
+    instance killed this raid), independent of the mod's Full Clear/
+    Progress pick - a "Progress" raid can still show a clean per-instance
+    clear if that wing got finished. A boss/instance/character with nothing
+    on record yet just gets this raid's number recorded silently as the new
+    baseline, nothing to compare against. Records are only ever updated by
+    a fresh /raidsummary post, never by editing one or adding loot later.
+  - Editing/adding loot later: the note, media link, and loot are each
+    independently updatable after posting via persistent buttons on the
+    summary's last message (✏️ Edit for note/media, 🎁 Add/Update Loot for
+    loot - loot can't go through a modal like the other two since Discord
+    modals have no file-upload field; that button instead asks the
+    moderator to reply in the thread with the export and catches it via
+    bot.wait_for()). Everything else (boss lines, parses, personal bests,
+    damage, deaths, guild rank, comp) is computed ONCE at post time and
+    frozen. This is deliberate, not a shortcut: those sections read from
+    the fastest-kill/first-kill/personal-best records, which get UPDATED at
+    post time - recomputing them later would make an already-posted "first
+    kill!"/"fastest!"/personal-best line silently change (or disappear),
+    since by then the record equals itself. Freezing them avoids that whole
+    class of bug, and it's cheap since it's exactly what needed to stay
+    editable per the ask.
   - Discord's Components V2 caps a single message at ~4000 chars of text
     across all TextDisplay components (and a component-count budget) - loot
     especially can blow past that for a big clear, so the whole summary is
@@ -70,10 +78,11 @@ Design, per discussion:
     separate forum-thread messages as needed - see _paginate_blocks(). The
     first message becomes the thread's OP (with the tier + clear-status
     forum tags applied, and the banner attached if any); the rest are
-    follow-up posts in the same thread. Editing re-paginates from the
-    frozen blocks + fresh tldr/footer text, and reconciles against however
-    many messages existed before (edits messages in place, sends new ones
-    if the edit made the summary longer, deletes leftovers if shorter).
+    follow-up posts in the same thread. Editing/adding-loot re-paginates
+    from the frozen blocks + fresh tldr/loot/footer content, and reconciles
+    against however many messages existed before (see _reconcile_pages -
+    edits messages in place, sends new ones if longer, deletes leftovers if
+    shorter).
   - Self-contained like every other cog here - a future feature is a new
     cog file, not changes to this one.
 """
@@ -84,6 +93,7 @@ import asyncio
 import logging
 from collections import Counter
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import discord
 from discord import app_commands
@@ -99,11 +109,16 @@ REPORT_LINK_RE = re.compile(r"(?:reports/|^)([A-Za-z0-9]{8,20})(?:[/#].*)?$")
 
 RECORDS_KEY = "raid_summary_records"
 EDIT_BUTTON_CUSTOM_ID = "raidsummary_edit_btn"
+ADD_LOOT_BUTTON_CUSTOM_ID = "raidsummary_addloot_btn"
+ADD_LOOT_WAIT_SECONDS = 300
 
 QUALITY_EMOJI = {0: "⬜", 1: "⬜", 2: "🟩", 3: "🟦", 4: "🟪", 5: "🟧"}
 DEFAULT_QUALITY_EMOJI = "⬜"
 
-ROLE_DISPLAY = {"dps": "DPS", "healers": "Healers", "tanks": "Tanks"}
+# Same guild-local timezone convention already used elsewhere (see
+# cogs/apply.py's AMSTERDAM_TZ) - raid start/end clock times are far more
+# readable in local time than UTC.
+AMSTERDAM_TZ = ZoneInfo("Europe/Amsterdam")
 
 # Conservative budget per forum-thread message - see the module docstring's
 # note on Components V2's ~4000-char/40-component caps.
@@ -126,16 +141,6 @@ def _boss_name(p: dict, fight_names: dict) -> str:
     return p.get("boss_name") or fight_names.get(p.get("fight_id"), "Unknown boss")
 
 
-def _format_duration(ms) -> str:
-    """Compact 'Xh Ym Zs' style - used for the plain raid-duration stat."""
-    if not ms or ms < 0:
-        return "?"
-    total_seconds = int(ms / 1000)
-    m, s = divmod(total_seconds, 60)
-    h, m = divmod(m, 60)
-    return f"{h}h {m}m {s}s" if h else f"{m}m {s}s"
-
-
 def _format_clock(ms) -> str:
     """'m:ss' or 'h:mm:ss' - for a single boss kill time, e.g. '4:39'."""
     if not ms or ms < 0:
@@ -146,9 +151,21 @@ def _format_clock(ms) -> str:
     return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
 
 
+def _format_duration_compact(ms) -> str:
+    """'1h47min' or '47min' - for the "First pull / Raid ended / Total
+    duration" line."""
+    if not ms or ms < 0:
+        return "?"
+    total_seconds = int(ms / 1000)
+    h, rem = divmod(total_seconds, 3600)
+    m, _s = divmod(rem, 60)
+    return f"{h}h{m}min" if h else f"{m}min"
+
+
 def _format_duration_words(ms) -> str:
-    """'1 hour 44 minutes' - for the raid clear-time headline (minute
-    precision - see _format_delta for the second-precision comparison)."""
+    """'57 minutes 12 seconds' or '1 hour 44 minutes 30 seconds' - matches
+    WarcraftLogs' own clear-time phrasing, full precision (see
+    _format_delta for the signed comparison used alongside it)."""
     if not ms or ms < 0:
         return "?"
     total_seconds = int(ms / 1000)
@@ -157,10 +174,8 @@ def _format_duration_words(ms) -> str:
     parts = []
     if h:
         parts.append(f"{h} hour{'s' if h != 1 else ''}")
-    if m or not h:
-        parts.append(f"{m} minute{'s' if m != 1 else ''}")
-    if not h and not m:
-        parts = [f"{s} second{'s' if s != 1 else ''}"]
+    parts.append(f"{m} minute{'s' if m != 1 else ''}")
+    parts.append(f"{s} second{'s' if s != 1 else ''}")
     return " ".join(parts)
 
 
@@ -216,12 +231,12 @@ class RaidSummaryCog(commands.Cog):
         self.guild_name = os.environ.get("GUILD_NAME")  # optional - enables the guild-rank section
 
     async def cog_load(self):
-        # Registers the Edit button's custom_id so it keeps working across
+        # Registers both buttons' custom_ids so they keep working across
         # bot restarts - same pattern as announcements.py's draft/published
-        # Edit buttons. The actual record lookup happens by the clicked
+        # Edit button. The actual record lookup happens by the clicked
         # message's ID at click time, not anything baked into this dummy view.
         dummy = discord.ui.LayoutView(timeout=None)
-        self._add_edit_action_row(dummy)
+        self._add_action_buttons(dummy)
         self.bot.add_view(dummy)
 
     # --- permission check (self-contained, same as other cogs) -----------
@@ -258,6 +273,15 @@ class RaidSummaryCog(commands.Cog):
             if tier["name"] == tier_name:
                 return tier
         raise ValueError(f"Unknown tier '{tier_name}'.")
+
+    def _tier_clear_groupings(self, tier: dict) -> dict:
+        """{instance display name: [boss names]} - config.TIER_SUB_INSTANCES'
+        breakdown for this tier if configured, otherwise the whole tier
+        treated as one single instance under its own name."""
+        sub_instances = config.TIER_SUB_INSTANCES.get(tier["name"])
+        if sub_instances:
+            return sub_instances
+        return {tier["name"]: list(tier["bosses"].keys())}
 
     def _load_banner(self, tier_name: str):
         """Returns (media_source, file_or_None) for the tier's banner, per
@@ -341,8 +365,11 @@ class RaidSummaryCog(commands.Cog):
         """
         Returns (lines, newly_killed_ids, new_fastest_kills) where
         new_fastest_kills is {encounter_id: duration_ms} for every boss this
-        raid that either had no prior time on record, or beat/tied it -
-        the caller persists these after a successful post.
+        raid that either had no prior time on record, or beat/tied it - the
+        caller persists these after a successful post. Every non-kill
+        (wipe) fight in a boss's group gets its own indented line below the
+        boss's summary line, in pull order, showing the boss's remaining
+        health % at that wipe.
         """
         lines = []
         newly_killed = []
@@ -385,59 +412,115 @@ class RaidSummaryCog(commands.Cog):
                     f"({clock}){badge}"
                 )
             else:
-                attempts = [f["boss_percentage"] for f in group if f.get("boss_percentage") is not None]
-                best = min(attempts) if attempts else None
-                pct_text = f", best attempt {best:.1f}% remaining" if best is not None else ""
-                lines.append(
-                    f"❌ **{boss_name}** — {pulls} pull{'s' if pulls != 1 else ''}, not downed{pct_text}"
-                )
+                lines.append(f"❌ **{boss_name}** — {pulls} pull{'s' if pulls != 1 else ''}, not downed")
+
+            wipe_number = 0
+            for f in group:
+                if f["kill"]:
+                    continue
+                wipe_number += 1
+                pct = f.get("boss_percentage")
+                pct_text = f"{round(pct)}%" if pct is not None else "?"
+                lines.append(f" ↳ Wipe {wipe_number}: {pct_text}")
 
         return lines, newly_killed, new_fastest_kills
 
-    def _build_clear_time_line(self, zone_name: str, clear_ms: int, records: dict) -> tuple:
-        """Returns (line, new_fastest_clear_ms_or_None) - only meaningful for
-        a full clear, so the caller only calls this when clear_status is
-        'full_clear'."""
-        if not zone_name or not clear_ms:
-            return "", None
-
+    def _build_clear_time_line(self, instance_name: str, clear_ms: int, records: dict) -> tuple:
+        """Returns (line, new_fastest_clear_ms_or_None) for one instance."""
         clear_words = _format_duration_words(clear_ms)
-        prior = records["clears"].get(zone_name, {}).get("fastest_ms")
+        prior = records["clears"].get(instance_name, {}).get("fastest_ms")
 
         if prior is None:
-            return f"🕐 **{zone_name} clear time:** {clear_words}", clear_ms
+            return f"🕐 **{instance_name} clear time:** {clear_words}", clear_ms
 
         delta = clear_ms - prior
         if delta < 0:
-            return f"🕐 **{zone_name} clear time:** {clear_words} ⚡ **Fastest clear!** ({_format_delta(delta)})", clear_ms
+            return f"🕐 **{instance_name} clear time:** {clear_words} ⚡ **Fastest clear!** ({_format_delta(delta)})", clear_ms
         elif delta == 0:
-            return f"🕐 **{zone_name} clear time:** {clear_words} ⚡ **Tied our fastest!**", clear_ms
+            return f"🕐 **{instance_name} clear time:** {clear_words} ⚡ **Tied our fastest!**", clear_ms
         else:
-            return f"🕐 **{zone_name} clear time:** {clear_words} ({_format_delta(delta)})", None
+            return f"🕐 **{instance_name} clear time:** {clear_words} ({_format_delta(delta)})", None
 
-    def _build_comp_line(self, roster: dict) -> str:
-        role_counts = Counter(v["role"] for v in roster.values() if v.get("role"))
-        if not roster:
+    def _build_clear_time_lines(self, tier: dict, fights_by_encounter: dict, records: dict) -> tuple:
+        """
+        Returns (lines, updates) - one line per instance that was FULLY
+        cleared this raid (every configured boss in that instance/tier
+        killed), independent of the mod's Full-Clear/Progress pick - a raid
+        marked "Progress" overall can still show a clean per-instance clear
+        if that specific wing got finished. updates is {instance_name:
+        new_fastest_ms} for the caller to persist after a successful post.
+        """
+        lines, updates = [], {}
+        for instance_name, boss_names in self._tier_clear_groupings(tier).items():
+            encounter_ids = [tier["bosses"][n] for n in boss_names if n in tier["bosses"]]
+            groups = [fights_by_encounter.get(eid) for eid in encounter_ids]
+            if not encounter_ids or any(g is None for g in groups):
+                continue
+            if not all(any(f["kill"] for f in g) for g in groups):
+                continue
+
+            times = [
+                (f["start_time"], f["end_time"]) for g in groups for f in g
+                if f["start_time"] is not None and f["end_time"] is not None
+            ]
+            if not times:
+                continue
+            duration_ms = max(t[1] for t in times) - min(t[0] for t in times)
+
+            line, new_fastest = self._build_clear_time_line(instance_name, duration_ms, records)
+            lines.append(line)
+            if new_fastest is not None:
+                updates[instance_name] = new_fastest
+        return lines, updates
+
+    async def _build_comp_block(self, report_code: str) -> str:
+        """
+        Raid composition via a 70%-threshold role classification (see
+        wcl_client.ROLE_THRESHOLD / get_report_role_composition) rather than
+        each character's single most-common role - a tank/healer who also
+        DPS'd some fights still counts as their main role as long as they
+        filled it at least 70% of the time; otherwise they're counted as
+        DPS, same as WCL's own comp breakdown handles hybrids. This is a
+        separate, lazily-fetched WCL call (not part of the always-cheap
+        report summary), so it's the one section that can still take a
+        moment on a report with a lot of wipes.
+        """
+        try:
+            composition = await self.bot.wcl.get_report_role_composition(report_code)
+        except Exception:
+            log.warning("Role composition lookup failed for %s", report_code, exc_info=True)
             return ""
-        parts = [f"{count} {ROLE_DISPLAY.get(role, role)}" for role, count in role_counts.items()]
-        return f"**Roster:** {len(roster)} raiders" + (f" — {', '.join(parts)}" if parts else "")
+        if not composition:
+            return ""
+        total = len(composition["tanks"]) + len(composition["healers"]) + len(composition["dps"])
+        if not total:
+            return ""
+        return (
+            f"**Roster:** {total} raiders — {len(composition['tanks'])} Tanks, "
+            f"{len(composition['healers'])} Healers, {len(composition['dps'])} DPS"
+        )
 
     def _build_deaths_block(self, deaths: dict) -> str:
         if not deaths:
             return ""
         total = sum(deaths.values())
-        top = sorted(deaths.items(), key=lambda kv: -kv[1])[:8]
+        top = sorted(deaths.items(), key=lambda kv: -kv[1])[:5]
         lines = [f"💀 **{name}** — {count} death{'s' if count != 1 else ''}" for name, count in top]
-        return f"**Fun stats** — {total} total death{'s' if total != 1 else ''}\n" + "\n".join(lines)
+        return f"**Death leaderboard** — {total} total death{'s' if total != 1 else ''}\n" + "\n".join(lines)
 
     def _build_damage_block(self, damage_done: dict) -> str:
         """Top 5 by total damage across the whole report (bosses AND
-        trash) - matches WCL's own "Overall" damage-done ranking view."""
+        trash) - matches WCL's own "Overall" damage-done ranking view,
+        including each entry's share of the raid's total damage."""
         if not damage_done:
             return ""
+        total_damage = sum(damage_done.values()) or 1
         top = sorted(damage_done.items(), key=lambda kv: -kv[1])[:5]
-        lines = [f"⚔️ **{name}** — {total:,} damage" for name, total in top]
-        return "**Top damage (bosses + trash)**\n" + "\n".join(lines)
+        lines = [
+            f"⚔️ **{name}** — {amount:,} damage ({amount / total_damage * 100:.1f}%)"
+            for name, amount in top
+        ]
+        return "**Top Overall Damage (bosses + trash)**\n" + "\n".join(lines)
 
     def _build_parses_block(self, parses: list, fights: list) -> str:
         if not parses:
@@ -547,26 +630,35 @@ class RaidSummaryCog(commands.Cog):
             return ""
         return "**Guild ranks this tier**\n" + "\n".join(lines)
 
+    def _build_links_block(self, report_code: str) -> str:
+        return (
+            "**Links**\n"
+            f"📜 [Full log](https://fresh.warcraftlogs.com/reports/{report_code})\n"
+            f"📊 [Wipefest analysis](https://www.wipefest.gg/report/{report_code}?gameVersion=warcraft-fresh)"
+        )
+
     # --- tldr / footer text (rebuilt fresh on every edit, see module docstring) --
 
     def _build_tldr_text(self, ctx: dict, note: str) -> str:
+        loot_clause = (
+            "loot pending" if ctx.get("loot_pending")
+            else f"**{ctx['loot_count']}** item{'s' if ctx['loot_count'] != 1 else ''} awarded"
+        )
         text = (
             f"## {ctx['clear_label']} — {ctx['tier_name']} ({ctx['report_date']})\n"
             f"**{ctx['killed_count']}/{ctx['attempted_count']}** bosses downed this raid "
-            f"({ctx['total_pulls']} total pulls) · **{ctx['loot_count']}** "
-            f"item{'s' if ctx['loot_count'] != 1 else ''} awarded · duration **{ctx['duration_text']}**"
+            f"({ctx['total_pulls']} total pulls) · {loot_clause}"
         )
-        if ctx.get("clear_time_line"):
-            text += f"\n{ctx['clear_time_line']}"
+        if ctx.get("duration_line"):
+            text += f"\n{ctx['duration_line']}"
+        for line in ctx.get("clear_time_lines") or []:
+            text += f"\n{line}"
         if note:
             text += f"\n\n*{note.strip()}*"
         return text
 
-    def _build_footer_text(self, ctx: dict, media_link: str) -> str:
-        lines = [f"📜 [Full log](https://fresh.warcraftlogs.com/reports/{ctx['report_code']})"]
-        if media_link:
-            lines.append(media_link.strip())
-        return "\n".join(lines)
+    def _build_footer_text(self, media_link: str) -> str:
+        return media_link.strip() if media_link else ""
 
     # --- block building / pagination ---------------------------------------
 
@@ -612,16 +704,21 @@ class RaidSummaryCog(commands.Cog):
             pages.append(current)
         return pages
 
-    def _add_edit_action_row(self, view: discord.ui.LayoutView):
+    def _add_action_buttons(self, view: discord.ui.LayoutView):
         action_row = discord.ui.ActionRow()
         edit_button = discord.ui.Button(
             label="✏️ Edit", style=discord.ButtonStyle.secondary, custom_id=EDIT_BUTTON_CUSTOM_ID
         )
         edit_button.callback = self._on_edit_click
         action_row.add_item(edit_button)
+        loot_button = discord.ui.Button(
+            label="🎁 Add/Update Loot", style=discord.ButtonStyle.secondary, custom_id=ADD_LOOT_BUTTON_CUSTOM_ID
+        )
+        loot_button.callback = self._on_add_loot_click
+        action_row.add_item(loot_button)
         view.add_item(action_row)
 
-    def _render_page(self, blocks: list, banner_source: str = None, with_edit_button: bool = False) -> discord.ui.LayoutView:
+    def _render_page(self, blocks: list, banner_source: str = None, with_action_buttons: bool = False) -> discord.ui.LayoutView:
         view = discord.ui.LayoutView(timeout=None)
         container = discord.ui.Container(accent_color=discord.Color.blurple())
 
@@ -636,30 +733,34 @@ class RaidSummaryCog(commands.Cog):
                 container.add_item(discord.ui.Separator())
 
         view.add_item(container)
-        if with_edit_button:
-            self._add_edit_action_row(view)
+        if with_action_buttons:
+            self._add_action_buttons(view)
         return view
 
-    def _render_pages(self, pre_loot_blocks: list, loot_blocks: list, header_ctx: dict, footer_ctx: dict,
+    def _render_pages(self, pre_loot_blocks: list, loot_blocks: list, header_ctx: dict,
                        note: str, media_link: str, banner_source: str) -> list:
         """Builds the full page list (LayoutViews) from frozen pre-loot/loot
-        blocks plus fresh tldr/footer text - used both for the initial post
-        and for every edit, so the two never drift apart. Loot (+ the
-        footer) is always paginated separately from the header content, so
-        it always starts on a fresh message rather than sharing space with
-        whatever's left on the last header page - normally message #2."""
+        blocks plus fresh tldr/footer content - used for the initial post
+        and every later edit/add-loot, so they never drift apart. Loot (+
+        the footer, if any) is always paginated separately from the header
+        content, so it always starts on a fresh message rather than sharing
+        space with whatever's left on the last header page - normally
+        message #2. pre_loot_blocks[0] is always the links block (WCL log +
+        Wipefest) - see the command handler, which builds it that way so it
+        stays anchored to the top post without needing its own parameter."""
         tldr_block = self._text_block(self._build_tldr_text(header_ctx, note))
-        footer_block = self._text_block(self._build_footer_text(footer_ctx, media_link))
+        footer_text = self._build_footer_text(media_link)
+        tail_extra = [self._text_block(footer_text)] if footer_text else []
 
         head_pages = self._paginate_blocks([tldr_block] + pre_loot_blocks)
-        tail_pages = self._paginate_blocks(loot_blocks + [footer_block])
+        tail_pages = self._paginate_blocks(loot_blocks + tail_extra) if (loot_blocks or tail_extra) else []
         all_pages = head_pages + tail_pages
 
         views = []
         for i, page in enumerate(all_pages):
             is_first, is_last = i == 0, i == len(all_pages) - 1
             views.append(
-                self._render_page(page, banner_source=banner_source if is_first else None, with_edit_button=is_last)
+                self._render_page(page, banner_source=banner_source if is_first else None, with_action_buttons=is_last)
             )
         return views
 
@@ -669,8 +770,8 @@ class RaidSummaryCog(commands.Cog):
     @app_commands.describe(
         tier="Which raid tier was raided",
         report="WCL report link (or bare report code)",
-        loot_export="Gargul loot export - the .csv/.txt file from /gargul export",
         clear_status="Full clear or still progressing?",
+        loot_export="Gargul loot export (.csv/.txt) - optional, add later with the Add Loot button if not ready yet",
         media_link="Optional: a YouTube/Twitch clip or image URL to feature",
         note="Optional short note/highlight for the top of the summary",
     )
@@ -689,8 +790,8 @@ class RaidSummaryCog(commands.Cog):
         interaction: discord.Interaction,
         tier: app_commands.Choice[str],
         report: str,
-        loot_export: discord.Attachment,
         clear_status: app_commands.Choice[str],
+        loot_export: discord.Attachment = None,
         media_link: str = None,
         note: str = None,
     ):
@@ -708,17 +809,19 @@ class RaidSummaryCog(commands.Cog):
 
         await interaction.response.defer(ephemeral=True, thinking=True)
 
-        # --- parse the loot export ---
-        try:
-            raw_bytes = await loot_export.read()
-            loot_rows = gargul_loot.parse_gargul_export(raw_bytes.decode("utf-8", errors="replace"))
-        except gargul_loot.GargulParseError as e:
-            await interaction.followup.send(f"Couldn't read the loot export: {e}", ephemeral=True)
-            return
-        except Exception:
-            log.exception("Failed to read/parse loot_export attachment")
-            await interaction.followup.send("Couldn't read the loot export file.", ephemeral=True)
-            return
+        # --- parse the loot export, if given now ---
+        loot_rows = []
+        if loot_export is not None:
+            try:
+                raw_bytes = await loot_export.read()
+                loot_rows = gargul_loot.parse_gargul_export(raw_bytes.decode("utf-8", errors="replace"))
+            except gargul_loot.GargulParseError as e:
+                await interaction.followup.send(f"Couldn't read the loot export: {e}", ephemeral=True)
+                return
+            except Exception:
+                log.exception("Failed to read/parse loot_export attachment")
+                await interaction.followup.send("Couldn't read the loot export file.", ephemeral=True)
+                return
 
         # --- fetch the WCL report (single cached fetch, shared with attendance) ---
         report_code = _extract_report_code(report)
@@ -754,29 +857,37 @@ class RaidSummaryCog(commands.Cog):
             (summary["end_time"] - summary["start_time"])
             if summary["start_time"] and summary["end_time"] else None
         )
-        duration_text = _format_duration(raid_duration_ms) if raid_duration_ms else "?"
         clear_label = "Full Clear!" if clear_status.value == "full_clear" else "Progress Raid"
 
         report_date = "?"
-        if summary["start_time"]:
+        duration_line = ""
+        if summary["start_time"] and summary["end_time"]:
             report_date = datetime.fromtimestamp(summary["start_time"] / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+            first_pull_clock = (
+                datetime.fromtimestamp(summary["start_time"] / 1000, tz=timezone.utc).astimezone(AMSTERDAM_TZ).strftime("%H:%M")
+            )
+            raid_end_clock = (
+                datetime.fromtimestamp(summary["end_time"] / 1000, tz=timezone.utc).astimezone(AMSTERDAM_TZ).strftime("%H:%M")
+            )
+            duration_line = (
+                f"🕐 First pull: **{first_pull_clock}** · Raid ended: **{raid_end_clock}** · "
+                f"Total duration: **{_format_duration_compact(raid_duration_ms)}**"
+            )
 
-        zone_name = (summary.get("zone") or {}).get("name")
-        clear_time_line, new_fastest_clear_ms = "", None
-        if clear_status.value == "full_clear" and raid_duration_ms:
-            clear_time_line, new_fastest_clear_ms = self._build_clear_time_line(zone_name, raid_duration_ms, records)
+        clear_time_lines, clear_time_updates = self._build_clear_time_lines(tier_data, fights_by_encounter, records)
 
         header_ctx = {
             "clear_label": clear_label, "tier_name": tier_data["name"], "report_date": report_date,
             "killed_count": killed_count, "attempted_count": attempted_count, "total_pulls": total_pulls,
-            "loot_count": len(resolved_loot), "duration_text": duration_text, "clear_time_line": clear_time_line,
+            "loot_count": len(resolved_loot), "loot_pending": loot_export is None,
+            "duration_line": duration_line, "clear_time_lines": clear_time_lines,
         }
-        footer_ctx = {"report_code": report_code}
 
-        pre_loot_blocks = []
-        comp_line = self._build_comp_line(summary["roster"])
-        if comp_line:
-            pre_loot_blocks.append(self._text_block(comp_line))
+        pre_loot_blocks = [self._text_block(self._build_links_block(report_code))]
+
+        comp_block = await self._build_comp_block(report_code)
+        if comp_block:
+            pre_loot_blocks.append(self._text_block(comp_block))
         if boss_lines:
             pre_loot_blocks.append(self._text_block("**Boss-by-boss**\n" + "\n".join(boss_lines)))
         parses_block = self._build_parses_block(summary["parses"], summary["fights"])
@@ -801,9 +912,7 @@ class RaidSummaryCog(commands.Cog):
         loot_blocks = self._build_loot_blocks(loot_lines)
 
         banner_source, banner_file = self._load_banner(tier_data["name"])
-        page_views = self._render_pages(
-            pre_loot_blocks, loot_blocks, header_ctx, footer_ctx, note, media_link, banner_source
-        )
+        page_views = self._render_pages(pre_loot_blocks, loot_blocks, header_ctx, note, media_link, banner_source)
 
         tag_names = {tier_data["name"].lower(), config.CLEAR_STATUS_TAG_NAMES[clear_status.value].lower()}
         applied_tags = [t for t in forum_channel.available_tags if t.name.lower() in tag_names]
@@ -828,7 +937,7 @@ class RaidSummaryCog(commands.Cog):
             return
 
         # Only commit kill/clear-time/parse records once the post actually succeeded.
-        if newly_killed_ids or new_fastest_kills or new_fastest_clear_ms is not None or parse_updates:
+        if newly_killed_ids or new_fastest_kills or clear_time_updates or parse_updates:
             for encounter_id in newly_killed_ids:
                 records["encounters"].setdefault(str(encounter_id), {})["first_seen_report"] = report_code
                 records["encounters"][str(encounter_id)]["first_seen_date"] = report_date
@@ -837,9 +946,9 @@ class RaidSummaryCog(commands.Cog):
                 entry["fastest_ms"] = duration_ms
                 entry["fastest_report"] = report_code
                 entry["fastest_date"] = report_date
-            if new_fastest_clear_ms is not None and zone_name:
-                records["clears"][zone_name] = {
-                    "fastest_ms": new_fastest_clear_ms, "fastest_report": report_code, "fastest_date": report_date,
+            for instance_name, new_fastest_ms in clear_time_updates.items():
+                records["clears"][instance_name] = {
+                    "fastest_ms": new_fastest_ms, "fastest_report": report_code, "fastest_date": report_date,
                 }
             for encounter_id, name_map in parse_updates.items():
                 boss_bests = records["parses"].setdefault(str(encounter_id), {})
@@ -847,9 +956,9 @@ class RaidSummaryCog(commands.Cog):
                     boss_bests[name] = {"best_percent": pct, "report_code": report_code, "date": report_date}
             self._save_records(records)
 
-        # Persisted so the ✏️ Edit button can rebuild just the tldr/footer
-        # text later without re-touching WCL/Wowhead or the records above -
-        # see the module docstring.
+        # Persisted so the ✏️ Edit / 🎁 Add Loot buttons can rebuild the
+        # summary later without re-touching WCL/Wowhead or the records
+        # above - see the module docstring.
         last_message = posted_messages[-1]
         self.bot.store.set(
             last_message.id,
@@ -858,7 +967,6 @@ class RaidSummaryCog(commands.Cog):
             pre_loot_blocks=pre_loot_blocks,
             loot_blocks=loot_blocks,
             header_ctx=header_ctx,
-            footer_ctx=footer_ctx,
             note=note,
             media_link=media_link,
             banner_url=banner_source,
@@ -866,39 +974,25 @@ class RaidSummaryCog(commands.Cog):
 
         await interaction.followup.send(f"Posted: {thread.mention}", ephemeral=True)
 
-    # --- editing (note + media link only - see module docstring) -----------
+    # --- editing / adding loot later ----------------------------------------
 
-    async def _on_edit_click(self, interaction: discord.Interaction):
-        if not await self._is_mod(interaction.guild, interaction.user.id):
-            await interaction.response.send_message("Only moderators can edit raid summaries.", ephemeral=True)
-            return
-        record = self.bot.store.get(interaction.message.id)
-        if record is None:
-            await interaction.response.send_message(
-                "Couldn't find this summary's saved data - it may predate the edit feature.", ephemeral=True
-            )
-            return
-        modal = RaidSummaryEditModal(self, interaction.message.id, record.get("note"), record.get("media_link"))
-        await interaction.response.send_modal(modal)
-
-    async def _apply_edit(self, interaction: discord.Interaction, last_message_id: int, note, media_link):
-        record = self.bot.store.get(last_message_id)
-        if record is None:
-            await interaction.followup.send("Couldn't find this summary's saved data.", ephemeral=True)
-            return
-
+    async def _reconcile_pages(self, interaction: discord.Interaction, last_message_id: int,
+                                record: dict, page_views: list) -> bool:
+        """
+        Shared by _apply_edit (note/media) and _on_add_loot_click (loot) -
+        edits existing thread messages page-by-page in place, sends new
+        ones if the update made the summary longer, deletes leftovers if
+        shorter, and re-persists the record under the (possibly new) last
+        message's ID. Returns True on success (caller sends its own
+        follow-up on success; this sends its own on failure).
+        """
         try:
             thread = self.bot.get_channel(record["thread_id"]) or await self.bot.fetch_channel(record["thread_id"])
         except (discord.NotFound, discord.Forbidden):
             await interaction.followup.send(
                 "Couldn't find the original thread - it may have been deleted.", ephemeral=True
             )
-            return
-
-        page_views = self._render_pages(
-            record["pre_loot_blocks"], record["loot_blocks"], record["header_ctx"], record["footer_ctx"],
-            note, media_link, record.get("banner_url"),
-        )
+            return False
 
         old_ids = record["page_message_ids"]
         new_ids = []
@@ -921,21 +1015,107 @@ class RaidSummaryCog(commands.Cog):
                 except (discord.NotFound, discord.Forbidden):
                     pass
         except Exception:
-            log.exception("Failed to apply raid summary edit")
+            log.exception("Failed to reconcile raid summary pages")
             await interaction.followup.send("Something went wrong updating the summary.", ephemeral=True)
-            return
+            return False
 
+        record["page_message_ids"] = new_ids
         if new_ids[-1] != last_message_id:
             self.bot.store.delete(last_message_id)
-        self.bot.store.set(
-            new_ids[-1],
-            thread_id=record["thread_id"], page_message_ids=new_ids,
-            pre_loot_blocks=record["pre_loot_blocks"], loot_blocks=record["loot_blocks"],
-            header_ctx=record["header_ctx"], footer_ctx=record["footer_ctx"],
-            note=note, media_link=media_link, banner_url=record.get("banner_url"),
+        self.bot.store.set(new_ids[-1], **record)
+        return True
+
+    async def _on_edit_click(self, interaction: discord.Interaction):
+        if not await self._is_mod(interaction.guild, interaction.user.id):
+            await interaction.response.send_message("Only moderators can edit raid summaries.", ephemeral=True)
+            return
+        record = self.bot.store.get(interaction.message.id)
+        if record is None:
+            await interaction.response.send_message(
+                "Couldn't find this summary's saved data - it may predate the edit feature.", ephemeral=True
+            )
+            return
+        modal = RaidSummaryEditModal(self, interaction.message.id, record.get("note"), record.get("media_link"))
+        await interaction.response.send_modal(modal)
+
+    async def _apply_edit(self, interaction: discord.Interaction, last_message_id: int, note, media_link):
+        record = self.bot.store.get(last_message_id)
+        if record is None:
+            await interaction.followup.send("Couldn't find this summary's saved data.", ephemeral=True)
+            return
+
+        record["note"] = note
+        record["media_link"] = media_link
+        page_views = self._render_pages(
+            record["pre_loot_blocks"], record["loot_blocks"], record["header_ctx"],
+            note, media_link, record.get("banner_url"),
+        )
+        if await self._reconcile_pages(interaction, last_message_id, record, page_views):
+            await interaction.followup.send("Summary updated.", ephemeral=True)
+
+    async def _on_add_loot_click(self, interaction: discord.Interaction):
+        if not await self._is_mod(interaction.guild, interaction.user.id):
+            await interaction.response.send_message("Only moderators can add loot.", ephemeral=True)
+            return
+        record = self.bot.store.get(interaction.message.id)
+        if record is None:
+            await interaction.response.send_message(
+                "Couldn't find this summary's saved data - it may predate the Add Loot feature.", ephemeral=True
+            )
+            return
+
+        last_message_id = interaction.message.id
+        channel_id = interaction.channel_id
+        user_id = interaction.user.id
+
+        await interaction.response.send_message(
+            f"Reply in this thread with the Gargul loot export (.csv/.txt attachment) within "
+            f"{ADD_LOOT_WAIT_SECONDS // 60} minutes.",
+            ephemeral=True,
         )
 
-        await interaction.followup.send("Summary updated.", ephemeral=True)
+        def check(m: discord.Message) -> bool:
+            return m.channel.id == channel_id and m.author.id == user_id and bool(m.attachments)
+
+        try:
+            upload_message = await self.bot.wait_for("message", check=check, timeout=ADD_LOOT_WAIT_SECONDS)
+        except asyncio.TimeoutError:
+            await interaction.followup.send(
+                "Timed out waiting for the loot export - click 🎁 Add/Update Loot again.", ephemeral=True
+            )
+            return
+
+        try:
+            raw_bytes = await upload_message.attachments[0].read()
+            loot_rows = gargul_loot.parse_gargul_export(raw_bytes.decode("utf-8", errors="replace"))
+        except gargul_loot.GargulParseError as e:
+            await interaction.followup.send(f"Couldn't read that loot export: {e}", ephemeral=True)
+            return
+        except Exception:
+            log.exception("Failed to read/parse loot export from the Add Loot flow")
+            await interaction.followup.send("Couldn't read that loot export file.", ephemeral=True)
+            return
+
+        resolved_loot = await self._resolve_loot(loot_rows)
+        loot_lines = await self._build_loot_lines(resolved_loot)
+
+        record["loot_blocks"] = self._build_loot_blocks(loot_lines)
+        record["header_ctx"]["loot_count"] = len(resolved_loot)
+        record["header_ctx"]["loot_pending"] = False
+
+        page_views = self._render_pages(
+            record["pre_loot_blocks"], record["loot_blocks"], record["header_ctx"],
+            record.get("note"), record.get("media_link"), record.get("banner_url"),
+        )
+        ok = await self._reconcile_pages(interaction, last_message_id, record, page_views)
+
+        try:
+            await upload_message.delete()
+        except (discord.NotFound, discord.Forbidden):
+            pass
+
+        if ok:
+            await interaction.followup.send(f"Added {len(resolved_loot)} loot item(s) to the summary.", ephemeral=True)
 
 
 async def setup(bot: commands.Bot):
