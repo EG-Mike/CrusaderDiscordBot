@@ -391,7 +391,7 @@ class ApplyCog(commands.Cog):
         pct_str = f"{pct:.0f}%" if pct is not None else "?"
         return f"`{pct_str}` **{name}** — `{kills} kills`"
 
-    def _build_current_tier_boss_list(self, tier_data) -> str:
+    def _build_boss_list(self, tier_data, bosses: dict) -> str:
         by_encounter_id = {}
         if tier_data:
             for b in tier_data.get("per_boss") or []:
@@ -399,7 +399,7 @@ class ApplyCog(commands.Cog):
                     by_encounter_id[b["encounter_id"]] = b
 
         lines = []
-        for boss_name, encounter_id in config.CURRENT_TIER["bosses"].items():
+        for boss_name, encounter_id in bosses.items():
             entry = by_encounter_id.get(encounter_id)
             kills = entry["kills"] if entry else 0
             pct = entry["best_percent"] if entry else None
@@ -476,12 +476,14 @@ class ApplyCog(commands.Cog):
         current_has_data = bool(
             current_tier_data and current_tier_data.get("best_performance_average") is not None
         )
-        low_kill_count = current_has_data and full_clears < config.NEW_TIER_LOG_THRESHOLD
-        no_current_data = not current_has_data
+        # Fewer than NEW_TIER_LOG_THRESHOLD full clears - including zero, i.e. no
+        # current-tier data at all - is what triggers the previous-tier fallback,
+        # not whether any current-tier data exists at all.
+        low_kill_count = full_clears < config.NEW_TIER_LOG_THRESHOLD
 
         prev_tier_data = None
         if (
-            (low_kill_count or no_current_data)
+            low_kill_count
             and character.get("id")
             and config.PREVIOUS_TIER
             and config.PREVIOUS_TIER.get("zone_id")
@@ -497,12 +499,17 @@ class ApplyCog(commands.Cog):
                 prev_tier_data = None
 
         tier_lines = []
-        if low_kill_count and prev_tier_data:
+        if low_kill_count:
+            clear_word = "clear" if full_clears == 1 else "clears"
+            note = (
+                f", so {config.PREVIOUS_TIER['name']} data is also included below."
+                if prev_tier_data else "."
+            )
             tier_lines.append(
                 f"⚠️ **Limited current-tier clears** - this character has only {full_clears} "
-                f"full clear(s) of {config.CURRENT_TIER['name']}, so {config.PREVIOUS_TIER['name']} "
-                "data is also included below."
+                f"full {clear_word} of {config.CURRENT_TIER['name']}{note}"
             )
+        if current_has_data:
             tier_lines.append(
                 f"**Best Avg ({config.CURRENT_TIER['name']}):** "
                 f"{current_tier_data['best_performance_average']:.1f}%"
@@ -511,6 +518,7 @@ class ApplyCog(commands.Cog):
                 f"**Median Avg ({config.CURRENT_TIER['name']}):** "
                 f"{current_tier_data['median_performance_average']:.1f}%"
             )
+        if prev_tier_data:
             tier_lines.append(
                 f"**Best Avg ({config.PREVIOUS_TIER['name']}):** "
                 f"{prev_tier_data['best_performance_average']:.1f}%"
@@ -518,31 +526,18 @@ class ApplyCog(commands.Cog):
             tier_lines.append(
                 f"**Median Avg ({config.PREVIOUS_TIER['name']}):** "
                 f"{prev_tier_data['median_performance_average']:.1f}%"
-            )
-        elif no_current_data and prev_tier_data:
-            tier_lines.append(
-                f"**Best Avg ({config.PREVIOUS_TIER['name']}):** "
-                f"{prev_tier_data['best_performance_average']:.1f}%"
-            )
-            tier_lines.append(
-                f"**Median Avg ({config.PREVIOUS_TIER['name']}):** "
-                f"{prev_tier_data['median_performance_average']:.1f}%"
-            )
-        elif current_has_data:
-            tier_lines.append(
-                f"**Best Avg ({config.CURRENT_TIER['name']}):** "
-                f"{current_tier_data['best_performance_average']:.1f}%"
-            )
-            tier_lines.append(
-                f"**Median Avg ({config.CURRENT_TIER['name']}):** "
-                f"{current_tier_data['median_performance_average']:.1f}%"
             )
 
         tier_block = "\n".join(tier_lines) if tier_lines else None
         boss_block = (
             f"**Per-boss best parse & kills ({config.CURRENT_TIER['name']})**\n"
-            + self._build_current_tier_boss_list(current_tier_data)
+            + self._build_boss_list(current_tier_data, config.CURRENT_TIER["bosses"])
         )
+        if prev_tier_data:
+            boss_block += (
+                f"\n\n**Per-boss best parse & kills ({config.PREVIOUS_TIER['name']})**\n"
+                + self._build_boss_list(prev_tier_data, config.PREVIOUS_TIER["bosses"])
+            )
         hidden_block = None
         if character.get("hidden"):
             hidden_block = "⚠️ **Note:** This character's logs are marked hidden/private on WarcraftLogs."
