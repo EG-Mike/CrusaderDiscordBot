@@ -62,6 +62,52 @@ def resolve_spec_icon(class_name: str, spec_name: str) -> str:
     return _resolve_app_emoji(f"spec:{class_name}:{spec_name}")
 
 
+async def ensure_item_emoji(client: discord.Client, existing_by_name: dict, item_id: int, icon_url: str) -> str:
+    """
+    Lazily provisions (or reuses) a bot-owned application emoji for a WoW
+    item's icon, keyed by item ID - used by cogs/raid_summary.py to prefix
+    loot lines with a real icon instead of a generic colored square. Same
+    underlying mechanism as /add-emoji (cogs/emoji_admin.py) and
+    provision_app_emojis() below, just provisioned on demand per item
+    instead of all at once at startup (the class/role/spec set is small and
+    fixed; the set of items that drop is not).
+
+    `existing_by_name` should be fetched ONCE per command run (via
+    `await client.fetch_application_emojis()`) and passed in for every item
+    looked up in that run - avoids one full application-emoji-list fetch per
+    item. This function keeps it updated as it creates new emoji, so a
+    second lookup in the same run (e.g. the same trinket won by two people)
+    never re-creates one already made earlier in that same run.
+
+    Returns the emoji as an inline-usable string (e.g. "<:item_30023:123...>"),
+    or '' if it couldn't be created - never raises, a missing icon just
+    means that loot line has no emoji prefix.
+    """
+    key = f"item:{item_id}"
+    cached = _app_emoji_cache.get(key)
+    if cached:
+        return str(cached)
+
+    emoji_name = _emoji_safe_name(key)
+    if emoji_name in existing_by_name:
+        _app_emoji_cache[key] = existing_by_name[emoji_name]
+        return str(existing_by_name[emoji_name])
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(icon_url) as resp:
+                resp.raise_for_status()
+                image_bytes = await resp.read()
+        emoji = await client.create_application_emoji(name=emoji_name, image=image_bytes)
+    except Exception:
+        log.warning("Couldn't provision item emoji for item %s", item_id, exc_info=True)
+        return ""
+
+    _app_emoji_cache[key] = emoji
+    existing_by_name[emoji_name] = emoji
+    return str(emoji)
+
+
 async def provision_app_emojis(client: discord.Client):
     """
     Call once from on_ready. For every configured icon URL across

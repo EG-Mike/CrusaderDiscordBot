@@ -1,9 +1,10 @@
 """
-Raid summary feature - posts a presentable per-raid recap (banner, loot with
-Wowhead links/icons, boss-by-boss pulls with kill time + fastest-kill
-tracking, elite parses, guild rank, "fun stats", and a link to the full log)
-as a new thread in a Discord forum channel, so raiders have somewhere to
-discuss each raid night.
+Raid summary feature - posts a presentable per-raid recap (banner, a
+compact loot list with real item icons/Wowhead links, boss-by-boss pulls
+with kill time + fastest-kill tracking, elite parses, personal bests, top
+damage, guild rank, "fun stats", and a link to the full log) as a new
+thread in a Discord forum channel, so raiders have somewhere to discuss
+each raid night.
 
 Design, per discussion:
   - A moderator runs /raidsummary once per raid, giving it: which tier was
@@ -13,17 +14,31 @@ Design, per discussion:
     still progress, and optionally a note + a media link (YouTube/Twitch
     clip or an image) to feature.
   - All WCL data for the report (fights/pulls, parse rankings, deaths,
-    roster/comp) comes from ONE cached fetch - wcl_client.WarcraftLogsClient.
-    get_report_summary() - shared with cogs/attendance.py's attendance
-    check. If a log's already been parsed for attendance (or vice versa),
-    generating its raid summary costs zero extra WCL requests for anything
-    that fetch already covers.
+    damage done, roster/comp) comes from ONE cached fetch -
+    wcl_client.WarcraftLogsClient.get_report_summary() - shared with
+    cogs/attendance.py's attendance check. If a log's already been parsed
+    for attendance (or vice versa), generating its raid summary costs zero
+    extra WCL requests for anything that fetch already covers.
   - Gargul's export gives itemID + winner only (no item name/icon/boss) -
     see gargul_loot.py. Item name/icon/Wowhead link are resolved via
     wowhead.py (permanently cached locally, itemID -> name never changes).
     Boss attribution is NOT attempted (no reliable source for it - see
-    gargul_loot.py's docstring), so loot is shown as one chronological list
-    in award order, not grouped per boss.
+    gargul_loot.py's docstring), so loot is shown as one flat list in
+    award order, not grouped per boss.
+  - Loot rendering: one compact line per item ("<icon> [Name](wowhead) →
+    **Winner**"), not one Discord component per item - the icon is a real
+    bot-owned emoji for that item (provisioned on demand via
+    icons.ensure_item_emoji(), the same "download the icon, upload it as an
+    application emoji" mechanism /add-emoji in cogs/emoji_admin.py already
+    uses), falling back to a colored quality-square emoji if that couldn't
+    be created. Loot always starts on its own fresh page (see
+    _render_pages()) rather than sharing space with whatever's left on the
+    last header page - normally the summary's 2nd message.
+  - Banner: config.RAID_TIER_BANNERS maps a tier name to either a plain
+    http(s) URL, or a local file path - Components V2 has no "image URL"
+    field, so a local file gets attached to the summary's first message and
+    referenced via Discord's attachment:// scheme (see _load_banner()). A
+    missing/unconfigured banner just means no banner, never blocks posting.
   - Kill-time/clear-time/parse records: self._get_records() persists three
     things across raids - see RECORDS_KEY: (1) per encounter, the fastest
     kill time we've ever recorded; (2) per raid zone, the fastest full
@@ -39,8 +54,8 @@ Design, per discussion:
     never by editing one.
   - Editing: only the note and media link are editable after posting (via
     the persistent ✏️ Edit button on the summary's last message) -
-    everything else (boss lines, parses, personal bests, loot, deaths,
-    guild rank) is computed ONCE at post time and frozen. This is
+    everything else (boss lines, parses, personal bests, loot, damage,
+    deaths, guild rank) is computed ONCE at post time and frozen. This is
     deliberate, not a shortcut: those sections read from the fastest-kill/
     first-kill/personal-best records, which get UPDATED at post time -
     recomputing them on every edit would make an already-posted "first
@@ -51,20 +66,21 @@ Design, per discussion:
   - Discord's Components V2 caps a single message at ~4000 chars of text
     across all TextDisplay components (and a component-count budget) - loot
     especially can blow past that for a big clear, so the whole summary is
-    built as a list of small "blocks" (banner/text/loot-row) which get
-    packed into as many separate forum-thread messages as needed - see
-    _paginate_blocks(). The first message becomes the thread's OP (with the
-    tier + clear-status forum tags applied); the rest are follow-up posts
-    in the same thread. Editing re-paginates from the frozen middle blocks +
-    fresh tldr/footer text, and reconciles against however many messages
-    existed before (edits messages in place, sends new ones if the edit
-    made the summary longer, deletes leftovers if it made it shorter).
+    built as a list of small "blocks" which get packed into as many
+    separate forum-thread messages as needed - see _paginate_blocks(). The
+    first message becomes the thread's OP (with the tier + clear-status
+    forum tags applied, and the banner attached if any); the rest are
+    follow-up posts in the same thread. Editing re-paginates from the
+    frozen blocks + fresh tldr/footer text, and reconciles against however
+    many messages existed before (edits messages in place, sends new ones
+    if the edit made the summary longer, deletes leftovers if shorter).
   - Self-contained like every other cog here - a future feature is a new
     cog file, not changes to this one.
 """
 
 import os
 import re
+import asyncio
 import logging
 from collections import Counter
 from datetime import datetime, timezone
@@ -74,6 +90,7 @@ from discord import app_commands
 from discord.ext import commands
 
 import config
+import icons
 import gargul_loot
 
 log = logging.getLogger("wow-apply-bot.raidsummary")
@@ -88,11 +105,8 @@ DEFAULT_QUALITY_EMOJI = "⬜"
 
 ROLE_DISPLAY = {"dps": "DPS", "healers": "Healers", "tanks": "Tanks"}
 
-# Conservative budgets per forum-thread message - see the module docstring's
-# note on Components V2's ~4000-char/40-component caps. Kept comfortably
-# under both since the exact component-counting rules for nested
-# Section/Thumbnail accessories aren't documented precisely enough to cut it
-# close.
+# Conservative budget per forum-thread message - see the module docstring's
+# note on Components V2's ~4000-char/40-component caps.
 MAX_CHARS_PER_PAGE = 3500
 MAX_UNITS_PER_PAGE = 24
 
@@ -102,6 +116,14 @@ def _extract_report_code(link: str) -> str:
     link = link.strip().rstrip("/")
     match = REPORT_LINK_RE.search(link)
     return match.group(1) if match else link
+
+
+def _boss_name(p: dict, fight_names: dict) -> str:
+    """A parse's boss name, preferring whatever WCL's rankings JSON embeds
+    directly on the entry, falling back to joining fight_id against the
+    report's own fight list. See wcl_client._parse_rankings' docstring for
+    why both exist."""
+    return p.get("boss_name") or fight_names.get(p.get("fight_id"), "Unknown boss")
 
 
 def _format_duration(ms) -> str:
@@ -158,10 +180,6 @@ def _format_delta(delta_ms) -> str:
     return f"{sign}{', '.join(parts)}"
 
 
-def _has_section_thumbnail() -> bool:
-    return hasattr(discord.ui, "Section") and hasattr(discord.ui, "Thumbnail")
-
-
 class RaidSummaryEditModal(discord.ui.Modal, title="Edit Raid Summary"):
     note = discord.ui.TextInput(
         label="Note/highlight (optional)", style=discord.TextStyle.paragraph,
@@ -216,7 +234,7 @@ class RaidSummaryCog(commands.Cog):
             return True
         return any(role.id == self.mod_role_id for role in member.roles)
 
-    # --- kill/clear-time records ("first kill" + "fastest" badges) -------
+    # --- kill/clear-time/parse records -------------------------------------
 
     def _get_records(self) -> dict:
         record = self.bot.store.get(RECORDS_KEY)
@@ -233,13 +251,30 @@ class RaidSummaryCog(commands.Cog):
             RECORDS_KEY, encounters=records["encounters"], clears=records["clears"], parses=records["parses"]
         )
 
-    # --- tier resolution ---------------------------------------------------
+    # --- tier / banner resolution -------------------------------------------
 
     def _resolve_tier(self, tier_name: str) -> dict:
         for tier in (config.CURRENT_TIER, config.PREVIOUS_TIER):
             if tier["name"] == tier_name:
                 return tier
         raise ValueError(f"Unknown tier '{tier_name}'.")
+
+    def _load_banner(self, tier_name: str):
+        """Returns (media_source, file_or_None) for the tier's banner, per
+        config.RAID_TIER_BANNERS. A plain http(s) URL is used as-is; a local
+        path is attached to the message and referenced via attachment://
+        (see the module docstring). A missing/unreadable local file just
+        means no banner - logged, never raises."""
+        path = config.RAID_TIER_BANNERS.get(tier_name)
+        if not path:
+            return None, None
+        if path.startswith("http://") or path.startswith("https://"):
+            return path, None
+        if not os.path.isfile(path):
+            log.warning("Configured banner for tier '%s' not found: %s", tier_name, path)
+            return None, None
+        filename = os.path.basename(path)
+        return f"attachment://{filename}", discord.File(path, filename=filename)
 
     # --- data assembly -----------------------------------------------------
 
@@ -253,6 +288,45 @@ class RaidSummaryCog(commands.Cog):
                 item_cache[item_id] = await self.bot.wowhead.get_item(item_id)
             resolved.append({**row, "item": item_cache[item_id]})
         return resolved
+
+    async def _build_loot_lines(self, resolved_loot: list) -> list:
+        """
+        One compact line per loot row: "<icon> [Item](wowhead) →
+        **Winner** *(OS)*". The icon is a real bot-owned emoji for that
+        item, provisioned on demand and cached forever (see
+        icons.ensure_item_emoji) - reuses the exact same "download the icon,
+        upload as an application emoji" mechanism /add-emoji already uses,
+        just triggered automatically per unique item in this loot list
+        instead of by a moderator pasting links. Falls back to a colored
+        quality-square emoji if an item's icon couldn't be provisioned.
+        """
+        if not resolved_loot:
+            return []
+
+        try:
+            existing_by_name = {e.name: e for e in await self.bot.fetch_application_emojis()}
+        except Exception:
+            log.warning("Couldn't fetch application emojis for loot icons", exc_info=True)
+            existing_by_name = {}
+
+        icon_cache = {}
+        lines = []
+        for row in resolved_loot:
+            item = row["item"]
+            item_id = row["item_id"]
+            if item_id not in icon_cache:
+                icon = ""
+                if item.get("icon_url"):
+                    icon = await icons.ensure_item_emoji(self.bot, existing_by_name, item_id, item["icon_url"])
+                    await asyncio.sleep(0.3)  # pacing - a big loot night can provision many new emoji in a row
+                icon_cache[item_id] = icon or QUALITY_EMOJI.get(item.get("quality"), DEFAULT_QUALITY_EMOJI)
+
+            offspec_tag = " *(OS)*" if row["offspec"] else ""
+            lines.append(
+                f"{icon_cache[item_id]} [{item['name']}]({item['wowhead_url']}) → "
+                f"**{row['character']}**{offspec_tag}"
+            )
+        return lines
 
     def _group_fights_by_encounter(self, fights: list) -> dict:
         groups = {}
@@ -356,6 +430,15 @@ class RaidSummaryCog(commands.Cog):
         lines = [f"💀 **{name}** — {count} death{'s' if count != 1 else ''}" for name, count in top]
         return f"**Fun stats** — {total} total death{'s' if total != 1 else ''}\n" + "\n".join(lines)
 
+    def _build_damage_block(self, damage_done: dict) -> str:
+        """Top 5 by total damage across the whole report (bosses AND
+        trash) - matches WCL's own "Overall" damage-done ranking view."""
+        if not damage_done:
+            return ""
+        top = sorted(damage_done.items(), key=lambda kv: -kv[1])[:5]
+        lines = [f"⚔️ **{name}** — {total:,} damage" for name, total in top]
+        return "**Top damage (bosses + trash)**\n" + "\n".join(lines)
+
     def _build_parses_block(self, parses: list, fights: list) -> str:
         if not parses:
             return ""
@@ -367,8 +450,7 @@ class RaidSummaryCog(commands.Cog):
         lines = []
         mvp = max(with_pct, key=lambda p: p["rank_percent"])
         lines.append(
-            f"🏆 **Raid MVP:** {mvp['name']} — {mvp['rank_percent']:.1f}% on "
-            f"{fight_names.get(mvp['fight_id'], 'Unknown boss')}"
+            f"🏆 **Raid MVP:** {mvp['name']} — {mvp['rank_percent']:.1f}% on {_boss_name(mvp, fight_names)}"
         )
 
         elite = sorted(
@@ -378,10 +460,7 @@ class RaidSummaryCog(commands.Cog):
         for p in elite[:20]:
             spec_class = " ".join(x for x in (p.get("spec"), p.get("class")) if x)
             suffix = f" ({spec_class})" if spec_class else ""
-            lines.append(
-                f"🌟 **{p['name']}** — {p['rank_percent']:.1f}% on "
-                f"{fight_names.get(p['fight_id'], 'Unknown boss')}{suffix}"
-            )
+            lines.append(f"🌟 **{p['name']}** — {p['rank_percent']:.1f}% on {_boss_name(p, fight_names)}{suffix}")
         return "\n".join(lines)
 
     def _build_personal_bests_block(self, parses: list, fights: list, records: dict) -> tuple:
@@ -426,7 +505,7 @@ class RaidSummaryCog(commands.Cog):
             if pct > prior_best:
                 lines.append(
                     f"📈 **{name}** — {prior_best:.1f}% → {pct:.1f}% on "
-                    f"{fight_names.get(fight_id, 'Unknown boss')} (+{pct - prior_best:.1f})"
+                    f"{_boss_name(p, fight_names)} (+{pct - prior_best:.1f})"
                 )
                 updates.setdefault(encounter_id, {})[name] = pct
 
@@ -492,16 +571,32 @@ class RaidSummaryCog(commands.Cog):
     # --- block building / pagination ---------------------------------------
 
     def _text_block(self, content: str) -> dict:
-        return {"kind": "text", "content": content, "chars": len(content), "units": 2}
+        return {"content": content, "chars": len(content), "units": 2}
 
-    def _loot_row_block(self, resolved_row: dict) -> dict:
-        item = resolved_row["item"]
-        quality_emoji = QUALITY_EMOJI.get(item.get("quality"), DEFAULT_QUALITY_EMOJI)
-        offspec_tag = " *(OS)*" if resolved_row["offspec"] else ""
-        line = f"{quality_emoji} [{item['name']}]({item['wowhead_url']}) → **{resolved_row['character']}**{offspec_tag}"
-        if _has_section_thumbnail():
-            return {"kind": "loot_row_thumb", "content": line, "icon_url": item["icon_url"], "chars": len(line), "units": 3}
-        return {"kind": "text", "content": line, "chars": len(line), "units": 2}
+    def _chunk_lines(self, lines: list, max_chars: int) -> list:
+        """Joins lines into as few chunks as possible, each under
+        max_chars - used to keep the loot list compact (several items per
+        message instead of one component per item)."""
+        chunks, current, current_len = [], [], 0
+        for line in lines:
+            line_len = len(line) + 1  # +1 for the joining newline
+            if current and current_len + line_len > max_chars:
+                chunks.append("\n".join(current))
+                current, current_len = [], 0
+            current.append(line)
+            current_len += line_len
+        if current:
+            chunks.append("\n".join(current))
+        return chunks
+
+    def _build_loot_blocks(self, loot_lines: list) -> list:
+        if not loot_lines:
+            return []
+        chunks = self._chunk_lines(loot_lines, MAX_CHARS_PER_PAGE - 20)
+        return [
+            self._text_block(("**Loot**\n" if i == 0 else "") + chunk)
+            for i, chunk in enumerate(chunks)
+        ]
 
     def _paginate_blocks(self, blocks: list) -> list:
         pages = []
@@ -526,22 +621,17 @@ class RaidSummaryCog(commands.Cog):
         action_row.add_item(edit_button)
         view.add_item(action_row)
 
-    def _render_page(self, blocks: list, banner_url: str = None, with_edit_button: bool = False) -> discord.ui.LayoutView:
+    def _render_page(self, blocks: list, banner_source: str = None, with_edit_button: bool = False) -> discord.ui.LayoutView:
         view = discord.ui.LayoutView(timeout=None)
         container = discord.ui.Container(accent_color=discord.Color.blurple())
 
-        if banner_url:
-            gallery = discord.ui.MediaGallery(discord.MediaGalleryItem(banner_url))
+        if banner_source:
+            gallery = discord.ui.MediaGallery(discord.MediaGalleryItem(banner_source))
             container.add_item(gallery)
             container.add_item(discord.ui.Separator())
 
         for i, block in enumerate(blocks):
-            if block["kind"] == "loot_row_thumb":
-                section = discord.ui.Section(accessory=discord.ui.Thumbnail(block["icon_url"]))
-                section.add_item(discord.ui.TextDisplay(block["content"]))
-                container.add_item(section)
-            else:
-                container.add_item(discord.ui.TextDisplay(block["content"]))
+            container.add_item(discord.ui.TextDisplay(block["content"]))
             if i < len(blocks) - 1:
                 container.add_item(discord.ui.Separator())
 
@@ -550,21 +640,27 @@ class RaidSummaryCog(commands.Cog):
             self._add_edit_action_row(view)
         return view
 
-    def _render_pages(self, middle_blocks: list, header_ctx: dict, footer_ctx: dict, note: str,
-                       media_link: str, banner_url: str) -> list:
-        """Builds the full page list (LayoutViews) from frozen middle blocks
-        plus fresh tldr/footer text - used both for the initial post and for
-        every edit, so the two never drift apart."""
-        blocks = (
-            [self._text_block(self._build_tldr_text(header_ctx, note))]
-            + middle_blocks
-            + [self._text_block(self._build_footer_text(footer_ctx, media_link))]
-        )
-        pages = self._paginate_blocks(blocks)
+    def _render_pages(self, pre_loot_blocks: list, loot_blocks: list, header_ctx: dict, footer_ctx: dict,
+                       note: str, media_link: str, banner_source: str) -> list:
+        """Builds the full page list (LayoutViews) from frozen pre-loot/loot
+        blocks plus fresh tldr/footer text - used both for the initial post
+        and for every edit, so the two never drift apart. Loot (+ the
+        footer) is always paginated separately from the header content, so
+        it always starts on a fresh message rather than sharing space with
+        whatever's left on the last header page - normally message #2."""
+        tldr_block = self._text_block(self._build_tldr_text(header_ctx, note))
+        footer_block = self._text_block(self._build_footer_text(footer_ctx, media_link))
+
+        head_pages = self._paginate_blocks([tldr_block] + pre_loot_blocks)
+        tail_pages = self._paginate_blocks(loot_blocks + [footer_block])
+        all_pages = head_pages + tail_pages
+
         views = []
-        for i, page in enumerate(pages):
-            is_first, is_last = i == 0, i == len(pages) - 1
-            views.append(self._render_page(page, banner_url=banner_url if is_first else None, with_edit_button=is_last))
+        for i, page in enumerate(all_pages):
+            is_first, is_last = i == 0, i == len(all_pages) - 1
+            views.append(
+                self._render_page(page, banner_source=banner_source if is_first else None, with_edit_button=is_last)
+            )
         return views
 
     # --- the command ---------------------------------------------------
@@ -659,7 +755,7 @@ class RaidSummaryCog(commands.Cog):
             if summary["start_time"] and summary["end_time"] else None
         )
         duration_text = _format_duration(raid_duration_ms) if raid_duration_ms else "?"
-        clear_label = "🎉 Full Clear!" if clear_status.value == "full_clear" else "Progress Raid"
+        clear_label = "Full Clear!" if clear_status.value == "full_clear" else "Progress Raid"
 
         report_date = "?"
         if summary["start_time"]:
@@ -677,42 +773,47 @@ class RaidSummaryCog(commands.Cog):
         }
         footer_ctx = {"report_code": report_code}
 
-        middle_blocks = []
+        pre_loot_blocks = []
         comp_line = self._build_comp_line(summary["roster"])
         if comp_line:
-            middle_blocks.append(self._text_block(comp_line))
+            pre_loot_blocks.append(self._text_block(comp_line))
         if boss_lines:
-            middle_blocks.append(self._text_block("**Boss-by-boss**\n" + "\n".join(boss_lines)))
+            pre_loot_blocks.append(self._text_block("**Boss-by-boss**\n" + "\n".join(boss_lines)))
         parses_block = self._build_parses_block(summary["parses"], summary["fights"])
         if parses_block:
-            middle_blocks.append(self._text_block(parses_block))
+            pre_loot_blocks.append(self._text_block(parses_block))
         personal_bests_block, parse_updates = self._build_personal_bests_block(
             summary["parses"], summary["fights"], records
         )
         if personal_bests_block:
-            middle_blocks.append(self._text_block(personal_bests_block))
+            pre_loot_blocks.append(self._text_block(personal_bests_block))
         guild_rank_block = await self._build_guild_rank_block(tier_data, fights_by_encounter)
         if guild_rank_block:
-            middle_blocks.append(self._text_block(guild_rank_block))
+            pre_loot_blocks.append(self._text_block(guild_rank_block))
+        damage_block = self._build_damage_block(summary["damage_done"])
+        if damage_block:
+            pre_loot_blocks.append(self._text_block(damage_block))
         deaths_block = self._build_deaths_block(summary["deaths"])
         if deaths_block:
-            middle_blocks.append(self._text_block(deaths_block))
-        if resolved_loot:
-            middle_blocks.append(self._text_block("**Loot**"))
-            for row in resolved_loot:
-                middle_blocks.append(self._loot_row_block(row))
+            pre_loot_blocks.append(self._text_block(deaths_block))
 
-        banner_url = config.RAID_TIER_BANNERS.get(tier_data["name"]) or None
-        page_views = self._render_pages(middle_blocks, header_ctx, footer_ctx, note, media_link, banner_url)
+        loot_lines = await self._build_loot_lines(resolved_loot)
+        loot_blocks = self._build_loot_blocks(loot_lines)
+
+        banner_source, banner_file = self._load_banner(tier_data["name"])
+        page_views = self._render_pages(
+            pre_loot_blocks, loot_blocks, header_ctx, footer_ctx, note, media_link, banner_source
+        )
 
         tag_names = {tier_data["name"].lower(), config.CLEAR_STATUS_TAG_NAMES[clear_status.value].lower()}
         applied_tags = [t for t in forum_channel.available_tags if t.name.lower() in tag_names]
 
         thread_name = f"{tier_data['name']} — {report_date}"
         try:
-            thread_result = await forum_channel.create_thread(
-                name=thread_name, view=page_views[0], applied_tags=applied_tags,
-            )
+            create_kwargs = {"name": thread_name, "view": page_views[0], "applied_tags": applied_tags}
+            if banner_file:
+                create_kwargs["file"] = banner_file
+            thread_result = await forum_channel.create_thread(**create_kwargs)
             thread = thread_result.thread
             posted_messages = [thread_result.message]
             for view in page_views[1:]:
@@ -754,12 +855,13 @@ class RaidSummaryCog(commands.Cog):
             last_message.id,
             thread_id=thread.id,
             page_message_ids=[m.id for m in posted_messages],
-            middle_blocks=middle_blocks,
+            pre_loot_blocks=pre_loot_blocks,
+            loot_blocks=loot_blocks,
             header_ctx=header_ctx,
             footer_ctx=footer_ctx,
             note=note,
             media_link=media_link,
-            banner_url=banner_url,
+            banner_url=banner_source,
         )
 
         await interaction.followup.send(f"Posted: {thread.mention}", ephemeral=True)
@@ -794,7 +896,7 @@ class RaidSummaryCog(commands.Cog):
             return
 
         page_views = self._render_pages(
-            record["middle_blocks"], record["header_ctx"], record["footer_ctx"],
+            record["pre_loot_blocks"], record["loot_blocks"], record["header_ctx"], record["footer_ctx"],
             note, media_link, record.get("banner_url"),
         )
 
@@ -828,7 +930,8 @@ class RaidSummaryCog(commands.Cog):
         self.bot.store.set(
             new_ids[-1],
             thread_id=record["thread_id"], page_message_ids=new_ids,
-            middle_blocks=record["middle_blocks"], header_ctx=record["header_ctx"], footer_ctx=record["footer_ctx"],
+            pre_loot_blocks=record["pre_loot_blocks"], loot_blocks=record["loot_blocks"],
+            header_ctx=record["header_ctx"], footer_ctx=record["footer_ctx"],
             note=note, media_link=media_link, banner_url=record.get("banner_url"),
         )
 

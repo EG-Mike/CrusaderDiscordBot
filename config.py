@@ -272,14 +272,6 @@ def color_for_percentile(pct) -> int:
 # summary's "elite parses" section.
 PARSE_HIGHLIGHT_THRESHOLD = 99
 
-# Wowhead's tooltip API pulls from a specific game-version dataset, selected
-# via this ?dataEnv= param - see the big warning at the top of wowhead.py.
-# None = Wowhead's retail/default dataset, which will show the WRONG (retail)
-# item data for a Classic/TBC/Fresh realm. This MUST be verified/set once
-# real item lookups can be tested - it could not be confirmed from this
-# sandbox (wowhead.com isn't reachable from here).
-WOWHEAD_DATA_ENV = None
-
 # WoW item quality (as returned by Wowhead) -> embed/accent color.
 ITEM_QUALITY_COLORS = {
     0: 0x9D9D9D,  # poor (grey)
@@ -298,14 +290,17 @@ def color_for_item_quality(quality) -> int:
     return ITEM_QUALITY_COLORS.get(quality, ITEM_QUALITY_COLORS[1])
 
 
-# Banner image shown at the top of each raid summary, keyed by the same
-# tier "name" string used in CURRENT_TIER/PREVIOUS_TIER above (e.g.
-# "BT/Hyjal"). Fill in a real image URL per tier you want to summarize -
-# your own uploaded banner art, or a Wowhead zone-splash URL. A tier with no
-# entry here just posts without a banner image (never blocks the summary).
+# Banner image shown below the title of each raid summary, keyed by the
+# same tier "name" string used in CURRENT_TIER/PREVIOUS_TIER above. Value is
+# a path (relative to the bot's working directory) to a local image file -
+# it's attached to the summary's first message and referenced via Discord's
+# attachment:// scheme, since Components V2 has no plain "image URL" field.
+# A plain http(s):// URL also works here if you'd rather host it externally.
+# A tier with a missing/unreadable file just posts without a banner (never
+# blocks the summary) - a warning is logged so it's easy to spot.
 RAID_TIER_BANNERS = {
-    "BT/Hyjal": "",
-    "SSC/TK": "",
+    "BT/Hyjal": "images/banner-bt.jpg",
+    "SSC/TK": "images/banner-ssctk.jpg",
 }
 
 # Forum tag names the bot looks for (by exact name, case-insensitive) on the

@@ -127,6 +127,19 @@ query ReportDeaths($code: String!, $fightIDs: [Int]!) {
 }
 """
 
+# dataType: DamageDone, across every fight at once (bosses AND trash, same
+# as WCL's own "Overall" damage-done ranking view) - the "top damage"
+# section.
+REPORT_DAMAGE_DONE_QUERY = """
+query ReportDamageDone($code: String!, $fightIDs: [Int]!) {
+  reportData {
+    report(code: $code) {
+      table(fightIDs: $fightIDs, dataType: DamageDone)
+    }
+  }
+}
+"""
+
 # Guild-level (not report-level) - a guild's speed/execution rankings across
 # every boss in a zone, i.e. "how does our kill of Boss X compare to other
 # guilds on the server/region". Best-effort: this JSON shape could not be
@@ -389,19 +402,31 @@ class WarcraftLogsClient:
     def _parse_rankings(self, raw) -> list:
         """
         Best-effort parse of Report.rankings' JSON blob into a flat list of
-        {name, class, spec, rank_percent, fight_id, role}. This JSON shape
-        could not be verified against a live report from this sandbox (see
-        the module docstring) - on any structural surprise this logs a
-        warning and returns [] rather than raising, so an unexpected WCL
-        response degrades the summary's parse-highlight section to "no data"
-        instead of breaking the whole report fetch.
+        {name, class, spec, rank_percent, fight_id, boss_name, role}. This
+        JSON shape could not be verified against a live report from this
+        sandbox (see the module docstring) - on any structural surprise this
+        logs a warning and returns [] rather than raising, so an unexpected
+        WCL response degrades the summary's parse-highlight section to "no
+        data" instead of breaking the whole report fetch.
+
+        Two independent sources for which boss an entry belongs to, since
+        the original guess (entry["fight"] joined against fights[].id) was
+        confirmed wrong in practice (every entry came back "Unknown boss"):
+        entry["encounter"]["name"] if the entry carries it directly (which
+        WCL's own Rankings tab groups by, so it's the more likely field to
+        actually be there), AND a fight-id join as a fallback, now trying
+        both a "fightID" and "fight" key rather than assuming one. Callers
+        should prefer boss_name and only fall back to joining fight_id
+        against their own fights list if boss_name is empty.
         """
         if not isinstance(raw, dict):
             return []
         parses = []
         try:
             for entry in raw.get("data") or []:
-                fight_id = entry.get("fight")
+                fight_id = entry.get("fightID", entry.get("fight"))
+                encounter = entry.get("encounter") or {}
+                boss_name = encounter.get("name")
                 roles = entry.get("roles") or {}
                 for role_name, role_data in roles.items():
                     if not isinstance(role_data, dict):
@@ -413,6 +438,7 @@ class WarcraftLogsClient:
                             "spec": char.get("spec"),
                             "rank_percent": char.get("rankPercent"),
                             "fight_id": fight_id,
+                            "boss_name": boss_name,
                             "role": role_name,
                         })
         except Exception:
@@ -420,48 +446,66 @@ class WarcraftLogsClient:
             return []
         return parses
 
-    async def _fetch_deaths(self, session, headers, report_code: str, fight_ids: list) -> dict:
-        """Best-effort {character_name: death_count} across the whole
-        report, one request total (not per-fight). Returns {} on any
-        failure/unexpected shape - see _parse_rankings' docstring, same
-        reasoning applies here."""
+    async def _fetch_table_entries(self, session, headers, report_code: str, fight_ids: list, query: str) -> list:
+        """
+        Shared HTTP + unwrap for report table() queries (Deaths,
+        DamageDone, ...) - one request across the given fight IDs, not one
+        per fight. Returns the raw `entries` list, or [] on any failure/
+        unexpected shape - see _parse_rankings' docstring, same best-effort
+        reasoning applies to table() shapes too.
+        """
         if not fight_ids:
-            return {}
+            return []
         try:
             async with session.post(
                 API_URL,
-                json={
-                    "query": REPORT_DEATHS_QUERY,
-                    "variables": {"code": report_code, "fightIDs": fight_ids},
-                },
+                json={"query": query, "variables": {"code": report_code, "fightIDs": fight_ids}},
                 headers=headers,
             ) as resp:
                 resp.raise_for_status()
                 payload = await resp.json()
         except Exception:
-            log.warning("Failed to fetch deaths table for report %s", report_code, exc_info=True)
-            return {}
+            log.warning("Failed to fetch report table for %s", report_code, exc_info=True)
+            return []
 
         if "errors" in payload:
-            log.warning("WCL error fetching deaths table for report %s: %s", report_code, payload["errors"])
-            return {}
+            log.warning("WCL error fetching report table for %s: %s", report_code, payload["errors"])
+            return []
 
         report_data = payload.get("data", {}).get("reportData", {}).get("report") or {}
         table = report_data.get("table") or {}
         inner = table.get("data") if isinstance(table.get("data"), dict) else table
-        entries = (inner or {}).get("entries") or []
+        return (inner or {}).get("entries") or []
 
+    async def _fetch_deaths(self, session, headers, report_code: str, fight_ids: list) -> dict:
+        """Best-effort {character_name: death_count} across the whole report."""
+        entries = await self._fetch_table_entries(session, headers, report_code, fight_ids, REPORT_DEATHS_QUERY)
         counts = Counter()
         try:
             for entry in entries:
                 name = entry.get("name")
-                if not name:
-                    continue
-                counts[name] += entry.get("total") or entry.get("count") or 1
+                if name:
+                    counts[name] += entry.get("total") or entry.get("count") or 1
         except Exception:
             log.warning("Unexpected shape for deaths table - skipping", exc_info=True)
             return {}
         return dict(counts)
+
+    async def _fetch_damage_done(self, session, headers, report_code: str, fight_ids: list) -> dict:
+        """Best-effort {character_name: total_damage} across the whole
+        report (bosses AND trash - same fight_ids as everything else here,
+        matching WCL's own "Overall" damage-done ranking view)."""
+        entries = await self._fetch_table_entries(session, headers, report_code, fight_ids, REPORT_DAMAGE_DONE_QUERY)
+        totals = Counter()
+        try:
+            for entry in entries:
+                name = entry.get("name")
+                if name:
+                    totals[name] += entry.get("total") or 0
+        except Exception:
+            log.warning("Unexpected shape for damage-done table - skipping", exc_info=True)
+            return {}
+        return dict(totals)
 
     async def get_report_summary(self, report_code: str) -> dict:
         """
@@ -483,8 +527,9 @@ class WarcraftLogsClient:
                         "start_time","end_time","boss_percentage","fight_percentage"}, ...],
             "kill_counts": {name: kill_fight_count},        # attendance - verified shape
             "roster": {name: {"class", "role"}},             # best-effort
-            "parses": [{"name","class","spec","rank_percent","fight_id","role"}, ...],  # best-effort
+            "parses": [{"name","class","spec","rank_percent","fight_id","boss_name","role"}, ...],  # best-effort
             "deaths": {name: death_count},                   # best-effort
+            "damage_done": {name: total_damage},              # best-effort
           }
         """
         cached = self._report_cache.get(report_code)
@@ -510,7 +555,7 @@ class WarcraftLogsClient:
             if not report:
                 empty = {
                     "zone": None, "start_time": None, "end_time": None, "fights": [],
-                    "kill_counts": {}, "roster": {}, "parses": [], "deaths": {},
+                    "kill_counts": {}, "roster": {}, "parses": [], "deaths": {}, "damage_done": {},
                 }
                 self._report_cache.set(report_code, **empty)
                 return empty
@@ -535,6 +580,7 @@ class WarcraftLogsClient:
             kill_counts, roster = await self._fetch_player_details(session, headers, report_code, kill_fight_ids)
             parses = self._parse_rankings(report.get("rankings"))
             deaths = await self._fetch_deaths(session, headers, report_code, all_fight_ids)
+            damage_done = await self._fetch_damage_done(session, headers, report_code, all_fight_ids)
 
             zone = report.get("zone")
             summary = {
@@ -546,6 +592,7 @@ class WarcraftLogsClient:
                 "roster": roster,
                 "parses": parses,
                 "deaths": deaths,
+                "damage_done": damage_done,
             }
 
         self._report_cache.set(report_code, **summary)

@@ -3,33 +3,39 @@ Minimal Wowhead item lookup client - resolves an itemID (all Gargul's loot
 export gives us) into a display name, icon, and quality, so loot can be
 shown with real names/icons/links instead of bare numbers.
 
-*** NEEDS A ONE-TIME LIVE VERIFICATION PASS ***
-This sandbox's network egress is locked down to an allowlist that doesn't
-include wowhead.com, so the tooltip endpoint/params below could NOT be
-tested against a live response while writing this file. The endpoint and
-JSON shape (nether.wowhead.com/tooltip/item/<id>, keys "name"/"icon"/
-"quality") are the long-standing convention used by many WoW addons/bots,
-but config.WOWHEAD_DATA_ENV in particular (which dataset - retail vs a
-Classic version - the tooltip is pulled from) is a best guess and MUST be
-checked once the bot is actually running: post a summary, and if item names/
-icons come back wrong (or as "Item #NNNNN" fallbacks) for your Fresh/TBC
-realm, open a real item page on wowhead.com, check its tooltip widget's
-network request in devtools, and copy the dataEnv value it actually uses
-into config.py.
+Uses Wowhead's `&xml` data feed (e.g. wowhead.com/item=12345&xml) - the
+same mechanism cogs/emoji_admin.py's /add-emoji command already uses to
+resolve an item/spell link into an icon (see that file's docstring: this
+isn't scraping the regular page - its og:image meta tag is a user-submitted
+screenshot, not the icon - it's a long-standing data endpoint many
+third-party WoW tools rely on for exactly this). This file is now the one
+place that talks to Wowhead for item data; /add-emoji still has its own
+separate resolution for spell links (which this client doesn't handle) and
+its own emoji-creation step, but its item-link path could be pointed at
+get_item() below instead of re-fetching independently.
+
+Caveat: this wasn't independently re-verified against a live request while
+building this (this sandbox can't reach wowhead.com) - only confirmed via
+documented third-party usage, same caveat /add-emoji already carries. If
+item lookups keep coming back as "Item #NNNNN" placeholders, that's the
+first thing to test with a single known item ID.
 
 Nothing here ever raises - a failed/unexpected lookup just falls back to a
 plain "Item #<id>" with no icon, same philosophy as icons.py.
 """
 
+import re
 import logging
 import aiohttp
 
-import config
 from storage import ApplicationStore
 
 log = logging.getLogger("wow-apply-bot.wowhead")
 
-TOOLTIP_URL = "https://nether.wowhead.com/tooltip/item/{item_id}"
+ITEM_XML_URL = "https://www.wowhead.com/item={item_id}&xml"
+ICON_TAG_RE = re.compile(r"<icon[^>]*>([^<]+)</icon>", re.IGNORECASE)
+NAME_TAG_RE = re.compile(r"<name[^>]*>([^<]+)</name>", re.IGNORECASE)
+QUALITY_TAG_RE = re.compile(r'<quality id="(\d+)"', re.IGNORECASE)
 
 # Wowhead's own convention for "no icon" - used as a last-resort fallback so
 # callers always get a usable icon URL.
@@ -39,13 +45,13 @@ FALLBACK_ICON = "inv_misc_questionmark"
 def item_wowhead_url(item_id: int) -> str:
     """Wowhead's plain (non-expansion-specific) item URL - always resolves,
     unlike the versioned /tbc/, /classic/, /wotlk/ paths which would need
-    the same kind of live verification called out above."""
+    their own verification."""
     return f"https://www.wowhead.com/item={item_id}"
 
 
 def item_icon_url(icon_slug: str | None) -> str:
     # Same wow.zamimg.com CDN convention already relied on elsewhere in this
-    # repo (see config.py's CLASS_ICON_URLS etc.) - proven to work.
+    # repo (see config.py's CLASS_ICON_URLS and emoji_admin.py) - proven to work.
     return f"https://wow.zamimg.com/images/wow/icons/large/{icon_slug or FALLBACK_ICON}.jpg"
 
 
@@ -78,34 +84,29 @@ class WowheadClient:
             "quality": None,
         }
 
-        params = {"locale": "0"}
-        if config.WOWHEAD_DATA_ENV is not None:
-            params["dataEnv"] = str(config.WOWHEAD_DATA_ENV)
-
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    TOOLTIP_URL.format(item_id=item_id),
-                    params=params,
-                    headers={"User-Agent": "Mozilla/5.0"},
-                ) as resp:
+                async with session.get(ITEM_XML_URL.format(item_id=item_id)) as resp:
                     resp.raise_for_status()
-                    data = await resp.json(content_type=None)
+                    text = await resp.text()
         except Exception:
             log.warning("Wowhead lookup failed for item %s - using placeholder", item_id, exc_info=True)
             return fallback
 
-        name = data.get("name")
-        if not name:
-            log.warning("Wowhead lookup for item %s returned no name - using placeholder", item_id)
+        icon_match = ICON_TAG_RE.search(text)
+        if not icon_match:
+            log.warning("Wowhead lookup for item %s returned no <icon> tag - using placeholder", item_id)
             return fallback
 
-        icon_slug = data.get("icon")
+        name_match = NAME_TAG_RE.search(text)
+        quality_match = QUALITY_TAG_RE.search(text)
+        icon_slug = icon_match.group(1).strip()
+
         return {
             "id": item_id,
-            "name": name,
+            "name": name_match.group(1).strip() if name_match else f"Item #{item_id}",
             "icon_slug": icon_slug,
             "icon_url": item_icon_url(icon_slug),
             "wowhead_url": item_wowhead_url(item_id),
-            "quality": data.get("quality"),
+            "quality": int(quality_match.group(1)) if quality_match else None,
         }
