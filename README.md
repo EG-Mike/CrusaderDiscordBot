@@ -80,14 +80,16 @@ moderator-driven announcement system.
    clear time), a boss-by-boss breakdown (pull count, kill time, and its
    difference from our fastest-ever kill of that boss, with a ⚡ badge on a
    new/tied record), roster composition, elite (99%+) parses and the raid
-   MVP, guild rank vs. other guilds (if `GUILD_NAME` is set), a "fun stats"
-   death count, the full loot list (Wowhead-linked, with item icons and
-   quality colors), and a link to the full log. It auto-applies the tier +
+   MVP, who broke their own personal-best parse on a boss tonight, guild
+   rank vs. other guilds (if `GUILD_NAME` is set), a "fun stats" death
+   count, the full loot list (Wowhead-linked, with item icons and quality
+   colors), and a link to the full log. It auto-applies the tier +
    clear-status forum tags.
-3. Fastest-kill and fastest-clear records persist across raids (per boss,
-   and per raid zone for full clears) - each new summary compares against
-   whatever's on record and only updates it if this run matched or beat it.
-   Records are only ever set by posting a new summary, never by editing one.
+3. Fastest-kill, fastest-clear, and personal-best-parse records persist
+   across raids (per boss; per raid zone for full clears; per boss+character
+   for parses) - each new summary compares against whatever's on record and
+   only updates it if this run matched or beat it. Records are only ever
+   set by posting a new summary, never by editing one.
 4. Every summary's last message has a persistent **✏️ Edit** button (any
    moderator) to update the note or the media link after the fact - e.g.
    adding a clip once someone uploads it. Nothing else is editable: the

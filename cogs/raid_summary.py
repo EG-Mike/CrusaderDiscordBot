@@ -24,23 +24,30 @@ Design, per discussion:
     Boss attribution is NOT attempted (no reliable source for it - see
     gargul_loot.py's docstring), so loot is shown as one chronological list
     in award order, not grouped per boss.
-  - Kill-time/clear-time records: self._get_records() persists, per
-    encounter and per raid zone, the fastest time we've ever recorded (plus
-    the report/date it happened) - see RECORDS_KEY. Every posted summary
-    compares against that record and shows the delta + a ⚡ badge if it's a
-    new (or tied) fastest; a boss/zone with no prior record just gets its
-    time recorded silently (nothing to compare against yet). Records are
-    only ever updated by a fresh /raidsummary post, never by editing one.
+  - Kill-time/clear-time/parse records: self._get_records() persists three
+    things across raids - see RECORDS_KEY: (1) per encounter, the fastest
+    kill time we've ever recorded; (2) per raid zone, the fastest full
+    clear; (3) per (encounter, character), that character's own best parse
+    on that boss. Every posted summary compares against whatever's on
+    record: kill/clear times get the delta + a ⚡ badge on a new (or tied)
+    fastest, and any parse that beats a character's own prior best gets
+    called out in "Personal bests broken tonight" (a parse merely equal to
+    their prior best isn't shown - "improved" means strictly better). A
+    boss/zone/character with nothing on record yet just gets this raid's
+    number recorded silently as the new baseline, nothing to compare
+    against. Records are only ever updated by a fresh /raidsummary post,
+    never by editing one.
   - Editing: only the note and media link are editable after posting (via
     the persistent ✏️ Edit button on the summary's last message) -
-    everything else (boss lines, parses, loot, deaths, guild rank) is
-    computed ONCE at post time and frozen. This is deliberate, not a
-    shortcut: those sections read from the fastest-kill/first-kill records,
-    which get UPDATED at post time - recomputing them on every edit would
-    make an already-posted "first kill!"/"fastest!" badge silently change
-    (or disappear) later, since by then the record equals itself. Freezing
-    them avoids that whole class of bug, and it's cheap since it's exactly
-    what needed editing per the ask ("add a clip/screenshot later").
+    everything else (boss lines, parses, personal bests, loot, deaths,
+    guild rank) is computed ONCE at post time and frozen. This is
+    deliberate, not a shortcut: those sections read from the fastest-kill/
+    first-kill/personal-best records, which get UPDATED at post time -
+    recomputing them on every edit would make an already-posted "first
+    kill!"/"fastest!"/personal-best line silently change (or disappear)
+    later, since by then the record equals itself. Freezing them avoids
+    that whole class of bug, and it's cheap since it's exactly what needed
+    editing per the ask ("add a clip/screenshot later").
   - Discord's Components V2 caps a single message at ~4000 chars of text
     across all TextDisplay components (and a component-count budget) - loot
     especially can blow past that for a big clear, so the whole summary is
@@ -214,11 +221,17 @@ class RaidSummaryCog(commands.Cog):
     def _get_records(self) -> dict:
         record = self.bot.store.get(RECORDS_KEY)
         if record is None:
-            return {"encounters": {}, "clears": {}}
-        return {"encounters": record.get("encounters", {}), "clears": record.get("clears", {})}
+            return {"encounters": {}, "clears": {}, "parses": {}}
+        return {
+            "encounters": record.get("encounters", {}),
+            "clears": record.get("clears", {}),
+            "parses": record.get("parses", {}),
+        }
 
     def _save_records(self, records: dict):
-        self.bot.store.set(RECORDS_KEY, encounters=records["encounters"], clears=records["clears"])
+        self.bot.store.set(
+            RECORDS_KEY, encounters=records["encounters"], clears=records["clears"], parses=records["parses"]
+        )
 
     # --- tier resolution ---------------------------------------------------
 
@@ -370,6 +383,60 @@ class RaidSummaryCog(commands.Cog):
                 f"{fight_names.get(p['fight_id'], 'Unknown boss')}{suffix}"
             )
         return "\n".join(lines)
+
+    def _build_personal_bests_block(self, parses: list, fights: list, records: dict) -> tuple:
+        """
+        Returns (block_text, updates) where updates is
+        {encounter_id: {character_name: new_best_percent}} for every parse
+        that beat that character's own prior-best on that boss - the caller
+        persists these after a successful post, same as the fastest-kill
+        records (see _build_boss_lines). A character with no prior-best on
+        record just gets their first parse silently recorded as the
+        baseline (nothing to compare against yet, so no line shown) -
+        mirrors how a boss with no fastest-kill record on file behaves.
+
+        If a character has multiple parses of the same boss in this report
+        (rare - e.g. a wipe recovery re-kill), each is compared against the
+        best seen SO FAR TONIGHT (not just the stored record), so a double
+        improvement in one raid doesn't get reported as two separate jumps
+        from the old number.
+        """
+        fight_encounter = {f["id"]: f.get("encounter_id") for f in fights}
+        fight_names = {f["id"]: f["name"] for f in fights}
+        stored = records["parses"]
+        updates = {}
+
+        lines = []
+        for p in parses:
+            pct = p.get("rank_percent")
+            name = p.get("name")
+            fight_id = p.get("fight_id")
+            encounter_id = fight_encounter.get(fight_id)
+            if pct is None or not name or encounter_id is None:
+                continue
+
+            tonight_best = updates.get(encounter_id, {}).get(name)
+            prior_best = tonight_best if tonight_best is not None else (
+                stored.get(str(encounter_id), {}).get(name, {}).get("best_percent")
+            )
+
+            if prior_best is None:
+                updates.setdefault(encounter_id, {})[name] = pct
+                continue
+            if pct > prior_best:
+                lines.append(
+                    f"📈 **{name}** — {prior_best:.1f}% → {pct:.1f}% on "
+                    f"{fight_names.get(fight_id, 'Unknown boss')} (+{pct - prior_best:.1f})"
+                )
+                updates.setdefault(encounter_id, {})[name] = pct
+
+        block = ""
+        if lines:
+            shown = lines[:20]
+            block = "**Personal bests broken tonight**\n" + "\n".join(shown)
+            if len(lines) > len(shown):
+                block += f"\n… +{len(lines) - len(shown)} more"
+        return block, updates
 
     async def _build_guild_rank_block(self, tier: dict, fights_by_encounter: dict) -> str:
         if not self.guild_name:
@@ -619,6 +686,11 @@ class RaidSummaryCog(commands.Cog):
         parses_block = self._build_parses_block(summary["parses"], summary["fights"])
         if parses_block:
             middle_blocks.append(self._text_block(parses_block))
+        personal_bests_block, parse_updates = self._build_personal_bests_block(
+            summary["parses"], summary["fights"], records
+        )
+        if personal_bests_block:
+            middle_blocks.append(self._text_block(personal_bests_block))
         guild_rank_block = await self._build_guild_rank_block(tier_data, fights_by_encounter)
         if guild_rank_block:
             middle_blocks.append(self._text_block(guild_rank_block))
@@ -654,8 +726,8 @@ class RaidSummaryCog(commands.Cog):
             )
             return
 
-        # Only commit kill/clear-time records once the post actually succeeded.
-        if newly_killed_ids or new_fastest_kills or new_fastest_clear_ms is not None:
+        # Only commit kill/clear-time/parse records once the post actually succeeded.
+        if newly_killed_ids or new_fastest_kills or new_fastest_clear_ms is not None or parse_updates:
             for encounter_id in newly_killed_ids:
                 records["encounters"].setdefault(str(encounter_id), {})["first_seen_report"] = report_code
                 records["encounters"][str(encounter_id)]["first_seen_date"] = report_date
@@ -668,6 +740,10 @@ class RaidSummaryCog(commands.Cog):
                 records["clears"][zone_name] = {
                     "fastest_ms": new_fastest_clear_ms, "fastest_report": report_code, "fastest_date": report_date,
                 }
+            for encounter_id, name_map in parse_updates.items():
+                boss_bests = records["parses"].setdefault(str(encounter_id), {})
+                for name, pct in name_map.items():
+                    boss_bests[name] = {"best_percent": pct, "report_code": report_code, "date": report_date}
             self._save_records(records)
 
         # Persisted so the ✏️ Edit button can rebuild just the tldr/footer
