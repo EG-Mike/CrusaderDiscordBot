@@ -403,6 +403,15 @@ class AttendanceCog(commands.Cog):
         self.server_slug = os.environ["SERVER_SLUG"]
         self.server_region = os.environ.get("SERVER_REGION", "us")
 
+        # Optional - every overview refresh that has a real acting user/
+        # label (button click, /checkattendance run, or cogs/raid_logs.py's
+        # Summarize automation - never the silent startup reconciliation
+        # pass) also mirrors the overview into this channel, since
+        # #attendance-check itself is easy to miss unless a mod happens to
+        # already be looking at it. See _refresh_overview_message.
+        moderator_channel_id = os.environ.get("MODERATOR_CHANNEL_ID")
+        self.moderator_channel_id = int(moderator_channel_id) if moderator_channel_id else None
+
         self.log_list_view = LogListView(self)
         self.roster_view = RosterView(self)
         self.overview_view = OverviewView(self)
@@ -1053,10 +1062,13 @@ class AttendanceCog(commands.Cog):
 
     async def _refresh_overview_message(self, guild: discord.Guild, updated_by: str = None):
         """Returns the rendered overview Embed on success (or None on
-        failure) so a caller that needs to mirror the just-refreshed
-        overview elsewhere (e.g. RaidLogsCog's moderator-channel notice)
-        can reuse it directly instead of paying for a second
-        _compute_attendance pass (a sequential per-log WCL fetch)."""
+        failure) - callers that don't need it just ignore the return value.
+        Every refresh that has a real updated_by (i.e. not the silent
+        startup reconciliation pass) also mirrors the result to
+        MODERATOR_CHANNEL_ID if configured - see _notify_moderator_channel -
+        regardless of whether it came from the button, /checkattendance run,
+        or cogs/raid_logs.py's Summarize automation, since they all funnel
+        through this one method."""
         channel = self.bot.get_channel(self.attendance_channel_id)
         if channel is None:
             return None
@@ -1065,21 +1077,39 @@ class AttendanceCog(commands.Cog):
         embed = self._render_overview_embed(results, updated_by=updated_by)
 
         record = self.bot.store.get(OVERVIEW_MESSAGE_KEY)
+        posted = False
         if record and record.get("message_id"):
             try:
                 message = await channel.fetch_message(record["message_id"])
                 await message.edit(embed=embed, view=self.overview_view)
-                return embed
+                posted = True
             except (discord.NotFound, discord.Forbidden):
                 pass
 
+        if not posted:
+            try:
+                message = await channel.send(embed=embed, view=self.overview_view)
+                self.bot.store.set(OVERVIEW_MESSAGE_KEY, message_id=message.id)
+                posted = True
+            except Exception:
+                log.exception("Failed to post the attendance overview message")
+                return None
+
+        if updated_by:
+            await self._notify_moderator_channel(embed, updated_by)
+        return embed
+
+    async def _notify_moderator_channel(self, overview_embed: discord.Embed, updated_by: str):
+        if not self.moderator_channel_id:
+            return
+        channel = self.bot.get_channel(self.moderator_channel_id)
+        if channel is None:
+            log.warning("MODERATOR_CHANNEL_ID set but channel not found/visible")
+            return
         try:
-            message = await channel.send(embed=embed, view=self.overview_view)
-            self.bot.store.set(OVERVIEW_MESSAGE_KEY, message_id=message.id)
-            return embed
+            await channel.send(f"📊 **Attendance overview refreshed** by {updated_by}.", embed=overview_embed)
         except Exception:
-            log.exception("Failed to post the attendance overview message")
-            return None
+            log.exception("Failed to post the attendance overview notice to MODERATOR_CHANNEL_ID")
 
     # --- slash commands (same actions as the buttons above) --------------
 
