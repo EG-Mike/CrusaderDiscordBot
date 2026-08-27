@@ -918,7 +918,9 @@ class RaidSummaryCog(commands.Cog):
         rankings column - DPS-role parses only, since healers/tanks use
         their own separate WCL metrics, not comparable on the same
         percentile scale), highest overall damage done, and highest
-        overall healing done. Followed by "Noteworthy parses" - the elite
+        overall healing done - the latter two each also show that
+        amount's share of the raid's total damage/healing, same % done
+        in _build_damage_block. Followed by "Noteworthy parses" - the elite
         (>= config.PARSE_HIGHLIGHT_THRESHOLD) individual-boss parse
         callouts, any role, tagged as a personal best where applicable
         (personal_best_updates - see _build_personal_bests_block, computed
@@ -947,15 +949,17 @@ class RaidSummaryCog(commands.Cog):
             )
         if damage_done:
             name, amount = max(damage_done.items(), key=lambda kv: kv[1])
+            total_damage = sum(damage_done.values()) or 1
             mvp_lines.append(
                 f"🏆 {self._name_icon(guild, classes_map.get(name))}**{name}** — "
-                f"highest damage done ({amount:,})"
+                f"highest damage done ({amount:,}, {amount / total_damage * 100:.2f}% of raid total)"
             )
         if healing_done:
             name, amount = max(healing_done.items(), key=lambda kv: kv[1])
+            total_healing = sum(healing_done.values()) or 1
             mvp_lines.append(
                 f"🏆 {self._name_icon(guild, classes_map.get(name))}**{name}** — "
-                f"highest healing done ({amount:,})"
+                f"highest healing done ({amount:,}, {amount / total_healing * 100:.2f}% of raid total)"
             )
 
         lines = []

@@ -189,13 +189,35 @@ query ReportHealing($code: String!, $fightIDs: [Int]!) {
 # verified live (see wcl_client's module docstring), so get_guild_zone_rankings()
 # below parses it defensively and returns None on anything unexpected rather
 # than raising.
+#
+# zoneRanking (unlike Character.zoneRankings above, a JSON scalar that
+# needs no sub-selection) is a typed GuildZoneRankings! object - querying
+# it bare 400'd live with "must have a sub selection". The sub-selection
+# below picks the same field names get_guild_zone_rankings() already
+# parses (bestPerformanceAverage / rankings[].rank/serverRank/regionRank/
+# rankPercent/encounter.id/encounter.name) - those were themselves copied
+# from the confirmed-working Character.zoneRankings JSON shape used
+# elsewhere in this file, so it's an educated guess rather than a
+# confirmed schema, same caveat as before.
 GUILD_ZONE_RANKINGS_QUERY = """
 query GuildZoneRankings($name: String!, $serverSlug: String!, $serverRegion: String!, $zoneId: Int!) {
   guildData {
     guild(name: $name, serverSlug: $serverSlug, serverRegion: $serverRegion) {
       id
       name
-      zoneRanking(zoneId: $zoneId)
+      zoneRanking(zoneId: $zoneId) {
+        bestPerformanceAverage
+        rankings {
+          rank
+          serverRank
+          regionRank
+          rankPercent
+          encounter {
+            id
+            name
+          }
+        }
+      }
     }
   }
 }
@@ -788,11 +810,16 @@ class WarcraftLogsClient:
 
         Returns None (never raises) if the guild/zone can't be found or the
         response shape is unexpected - see get_report_summary's parse
-        helpers for the same reasoning; this JSON shape is likewise
-        unverified from this sandbox. The field name itself (Guild.zoneRanking,
-        singular) WAS confirmed live: the original guess "zoneRankings" got a
-        clear WCL error naming the correct field, so that part is solid -
-        only the shape of what it returns is still a guess.
+        helpers for the same reasoning; this shape is likewise unverified
+        from this sandbox. The field name itself (Guild.zoneRanking,
+        singular) WAS confirmed live: the original guess "zoneRankings" got
+        a clear WCL error naming the correct field. Its sub-selection
+        (see GUILD_ZONE_RANKINGS_QUERY) was also confirmed live to be
+        REQUIRED - zoneRanking is a typed GuildZoneRankings! object, not a
+        JSON scalar like Character.zoneRankings - but the exact field
+        names inside it are still a guess (borrowed from the confirmed
+        Character.zoneRankings shape), so this can still return None on a
+        shape mismatch even with no errors reported.
         """
         token = await self._get_token()
         headers = {"Authorization": f"Bearer {token}"}
