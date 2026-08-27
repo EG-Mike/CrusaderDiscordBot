@@ -393,8 +393,25 @@ class RaidSummaryOptionsView(discord.ui.View):
     def _ready(self) -> bool:
         return self.tier is not None and self.clear_status is not None and self.raid_type is not None
 
+    def _sync_selected_defaults(self):
+        """Keeps each dropdown showing its picked value (instead of
+        reverting to its placeholder) after a refresh - edit_message
+        resends every component fresh, and Discord only displays a
+        selection in place of the placeholder for whichever SelectOption
+        currently has default=True, which isn't tracked automatically."""
+        for opt in self.tier_select.options:
+            opt.default = opt.value == self.tier
+        for opt in self.clear_status_select.options:
+            opt.default = opt.value == self.clear_status
+        for opt in self.raid_type_select.options:
+            opt.default = opt.value == self.raid_type
+        if self.report_select:
+            for opt in self.report_select.options:
+                opt.default = opt.value == self.report_code
+
     async def _refresh(self, interaction: discord.Interaction):
         self.continue_button.disabled = not self._ready()
+        self._sync_selected_defaults()
         await interaction.response.edit_message(view=self)
 
     async def _on_tier_select(self, interaction: discord.Interaction):
