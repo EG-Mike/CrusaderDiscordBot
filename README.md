@@ -61,9 +61,18 @@ moderator-driven announcement system.
    times as needed, see the actual rendered result immediately each time.
 3. **Publish** opens a native channel picker, then reconstructs the
    announcement in its final form in the chosen channel. The sandbox draft
-   gets marked "Published to #channel by [mod]" and loses its buttons.
-4. Every published announcement keeps its own persistent Edit button - any
-   moderator, not just whoever posted it, can tweak it afterward.
+   gets marked "Published to #channel by [mod]" - its Publish button is
+   gone, but its Edit button stays, now retargeted at the published
+   message.
+4. The published message itself has no Edit button - only the sandbox
+   draft does, so editing an announcement always happens from the
+   mod-only sandbox channel, never a button visible to the whole audience
+   of the published message. `/announce-edit-published <message_id>` is a
+   fallback for editing one with no working button at all (e.g. one
+   published before this existed); `/announce-fix-legacy-buttons` is a
+   one-time cleanup that strips the old public Edit button from
+   already-published announcements from before this changed - safe to run
+   more than once, never touches reactions or the message's history.
 5. Formatting: `## Header text 🎉` and any emoji work directly (standard
    Discord message markdown - no special handling needed). A line
    containing just `---` splits the message into separate sections, each
@@ -190,6 +199,8 @@ moderator-driven announcement system.
 | Command | Description |
 |---|---|
 | `/announce` | Draft an announcement in the sandbox channel, with Edit/Publish buttons. |
+| `/announce-edit-published <message_id>` | Edit a published announcement by message ID - fallback for one with no working Edit button. |
+| `/announce-fix-legacy-buttons` | One-time cleanup: strip the old public Edit button from announcements published before it moved to the sandbox. |
 | `/add-emoji <wowhead_links>` | Add custom emoji from one or more Wowhead item/spell links. |
 | `/gearcheck archive` | Move all approved/denied applications to the archive channel. |
 | `/checkattendance run` | Generate/refresh the attendance overview (no cooldown). |

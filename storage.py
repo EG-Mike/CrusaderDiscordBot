@@ -68,6 +68,17 @@ class ApplicationStore:
             self._data.pop(str(message_id), None)
             self._save()
 
+    def items(self):
+        """
+        Every (key, record) pair currently in the store, as a read-only
+        snapshot - e.g. for a one-off migration/cleanup pass over every
+        record (see cogs/announcements.py's announce-fix-legacy-buttons).
+        Keys come back exactly as stored (string form) - callers that need
+        the numeric Discord message ID should int() them.
+        """
+        with _LOCK:
+            return list(self._data.items())
+
     def find_latest_by_applicant(self, applicant_id: int):
         """
         Returns (message_id, record) for the most recent application by this

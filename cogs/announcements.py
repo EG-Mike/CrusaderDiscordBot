@@ -506,6 +506,97 @@ class AnnouncementsCog(commands.Cog):
             )
         )
 
+    # --- one-time cleanup / fallback for announcements published before
+    # the sandbox-side Edit button existed -------------------------------
+
+    async def _do_fix_legacy_buttons(self) -> tuple:
+        """
+        One-time cleanup for announcements published before the public Edit
+        button was removed - re-renders every published (non-draft) record
+        with _render_posted_announcement, which no longer attaches a
+        button. Only edits message content/components - never touches
+        reactions or the message's ID/history, so nothing about the
+        announcement itself is lost. Safe to run more than once (a message
+        that's already button-free just gets a harmless identical edit).
+        Returns (updated_count, [unreachable description, ...]).
+        """
+        updated = 0
+        unreachable = []
+        for key, record in self.store.items():
+            if record.get("is_draft") or not record.get("channel_id"):
+                continue  # only published (non-draft) announcement records
+            try:
+                message_id = int(key)
+            except ValueError:
+                continue
+            channel = self.bot.get_channel(record["channel_id"])
+            if channel is None:
+                unreachable.append(f"`{message_id}` (channel not found)")
+                continue
+            try:
+                message = await channel.fetch_message(message_id)
+            except (discord.NotFound, discord.Forbidden):
+                unreachable.append(f"`{message_id}` (message not found)")
+                continue
+            await message.edit(view=self._render_posted_announcement(record))
+            updated += 1
+        return updated, unreachable
+
+    @app_commands.command(
+        name="announce-fix-legacy-buttons",
+        description="Remove the old public Edit button from already-published announcements (moderator only)",
+    )
+    async def announce_fix_legacy_buttons(self, interaction: discord.Interaction):
+        if not await self._is_mod(interaction.guild, interaction.user.id):
+            await interaction.response.send_message("Only moderators can run this.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        updated, unreachable = await self._do_fix_legacy_buttons()
+
+        summary = f"Done - re-rendered **{updated}** published announcement(s) with no Edit button."
+        if unreachable:
+            shown = unreachable[:10]
+            summary += f"\nCouldn't reach {len(unreachable)}: {', '.join(shown)}" + (" ..." if len(unreachable) > len(shown) else "")
+        await interaction.followup.send(summary, ephemeral=True)
+
+    @app_commands.command(
+        name="announce-edit-published",
+        description="Edit an already-published announcement by its message ID (moderator only)",
+    )
+    @app_commands.describe(
+        message_id="The announcement's message ID (enable Developer Mode, right-click the message, Copy Message ID)"
+    )
+    async def announce_edit_published(self, interaction: discord.Interaction, message_id: str):
+        """
+        Escape hatch for editing a published announcement with no working
+        button at all - e.g. one published before the draft<->published
+        link existed (so its sandbox draft, if it even still exists, has no
+        way to find it) and had its old public Edit button removed by
+        announce-fix-legacy-buttons above. Anything WITH a working Edit
+        button should just use that instead; this is only needed for the
+        gap those leave behind.
+        """
+        if not await self._is_mod(interaction.guild, interaction.user.id):
+            await interaction.response.send_message("Only moderators can edit announcements.", ephemeral=True)
+            return
+        try:
+            mid = int(message_id.strip())
+        except ValueError:
+            await interaction.response.send_message("That's not a valid message ID.", ephemeral=True)
+            return
+        record = self.store.get(mid)
+        if record is None or record.get("is_draft"):
+            await interaction.response.send_message(
+                "Couldn't find a published announcement with that message ID.", ephemeral=True
+            )
+            return
+        modal = AnnouncementModal(
+            self, mode="edit_published", message_id=mid,
+            prefill_title=record.get("title"), prefill_body=record.get("body"),
+        )
+        await interaction.response.send_modal(modal)
+
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(AnnouncementsCog(bot))
