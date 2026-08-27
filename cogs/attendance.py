@@ -1009,6 +1009,7 @@ class AttendanceCog(commands.Cog):
         embed = discord.Embed(
             title="📊 Attendance Overview",
             description=(
+                "⚠️ **Role changes are manual** - this is a discussion aid, not an automatic action.\n\n"
                 f"Based on the '{results['window_size']}'' most recent tagged main-raid log(s)\n"
                 f"Players need {config.ATTENDANCE_MIN_ATTENDED}/{config.ATTENDANCE_WINDOW} to be Regular-eligible)."
             ),
@@ -1045,17 +1046,20 @@ class AttendanceCog(commands.Cog):
             inline=False,
         )
         embed.add_field(name="🚫 Excluded", value=", ".join(results["excluded"]) or "None", inline=False)
-        footer = "Role changes are manual - this is a discussion aid, not an automatic action."
         if updated_by:
             when = datetime.now(timezone.utc).astimezone(AMSTERDAM_TZ).strftime("%Y-%m-%d %H:%M")
-            footer += f" · Last updated by {updated_by} · {when}"
-        embed.set_footer(text=footer)
+            embed.set_footer(text=f"Last updated by {updated_by} · {when}")
         return embed
 
     async def _refresh_overview_message(self, guild: discord.Guild, updated_by: str = None):
+        """Returns the rendered overview Embed on success (or None on
+        failure) so a caller that needs to mirror the just-refreshed
+        overview elsewhere (e.g. RaidLogsCog's moderator-channel notice)
+        can reuse it directly instead of paying for a second
+        _compute_attendance pass (a sequential per-log WCL fetch)."""
         channel = self.bot.get_channel(self.attendance_channel_id)
         if channel is None:
-            return
+            return None
 
         results = await self._compute_attendance(guild)
         embed = self._render_overview_embed(results, updated_by=updated_by)
@@ -1065,15 +1069,17 @@ class AttendanceCog(commands.Cog):
             try:
                 message = await channel.fetch_message(record["message_id"])
                 await message.edit(embed=embed, view=self.overview_view)
-                return
+                return embed
             except (discord.NotFound, discord.Forbidden):
                 pass
 
         try:
             message = await channel.send(embed=embed, view=self.overview_view)
             self.bot.store.set(OVERVIEW_MESSAGE_KEY, message_id=message.id)
+            return embed
         except Exception:
             log.exception("Failed to post the attendance overview message")
+            return None
 
     # --- slash commands (same actions as the buttons above) --------------
 

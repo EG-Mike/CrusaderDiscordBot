@@ -376,7 +376,13 @@ above) AND a second channel:
    tagging a log (Main Raid/Alt Raid/Other) and Reset are Organizer-only;
    Summarize (manual or the daily auto-complete) stays moderator-only, same
    gate as everything else in this bot.
-5. `config.RAID_LOG_AUTO_SUMMARIZE_TIME` (default `"23:59"`, Europe/
+5. Optionally set `MODERATOR_CHANNEL_ID` in `.env` to your general
+   moderator chat - a Main Raid Summarize then also mirrors the just-
+   refreshed Attendance Overview there (on top of the notification already
+   posted in `ATTENDANCE_CHANNEL_ID`), since that channel is easy to miss
+   unless a mod happens to already be looking at it. Leave it blank to
+   skip this extra post.
+6. `config.RAID_LOG_AUTO_SUMMARIZE_TIME` (default `"23:59"`, Europe/
    Amsterdam) is the daily cutoff past which a tagged-but-not-yet-
    Summarized log auto-runs the automatable part of Summarize (attendance
    attach/refresh/notify for a Main Raid tag - the Gargul loot paste always
@@ -388,7 +394,7 @@ above) AND a second channel:
    docstring for why this exists (multiple people starting a live log for
    the same raid at once) and how it degrades (never silently discarded -
    folded into the existing message as "also started by X").
-6. **Before relying on it**, watch the first real log come through: the
+7. **Before relying on it**, watch the first real log come through: the
    #logs embed parsing (`_parse_source_embed` in `cogs/raid_logs.py`) was
    written against one real example post, not verified against every
    layout your specific webhook/app might use - see that function's
