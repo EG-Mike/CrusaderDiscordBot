@@ -15,6 +15,7 @@ import logging
 from collections import Counter
 import aiohttp
 
+import config
 from storage import ApplicationStore
 
 log = logging.getLogger("wow-apply-bot.wcl")
@@ -28,7 +29,15 @@ API_URL = "https://fresh.warcraftlogs.com/api/v2/client"
 # otherwise they're counted as DPS.
 ROLE_THRESHOLD = 0.70
 
-_ROLE_KEY_MAP = {"tanks": "tank", "healers": "healer", "dps": "dps"}
+_ROLE_KEY_MAP = {
+    "tanks": "tank", "tank": "tank",
+    "healers": "healer", "healer": "healer",
+    "dps": "dps",
+}
+
+
+def _normalize_role(role_key: str) -> str:
+    return _ROLE_KEY_MAP.get((role_key or "").lower(), "dps")
 
 # Every key get_report_summary()'s cached entry must have. Checked on every
 # cache read (see get_report_summary) rather than just checking for
@@ -43,10 +52,6 @@ _SUMMARY_KEYS = {
     "zone", "start_time", "end_time", "fights", "kill_counts",
     "kill_fight_roles", "parses", "deaths", "damage_done", "healing_done",
 }
-
-
-def _normalize_role(role_key: str) -> str:
-    return _ROLE_KEY_MAP.get(role_key, "dps")
 
 CHARACTER_QUERY = """
 query CharacterLookup($name: String!, $serverSlug: String!, $serverRegion: String!) {
@@ -190,7 +195,7 @@ query GuildZoneRankings($name: String!, $serverSlug: String!, $serverRegion: Str
     guild(name: $name, serverSlug: $serverSlug, serverRegion: $serverRegion) {
       id
       name
-      zoneRankings(zoneId: $zoneId)
+      zoneRanking(zoneId: $zoneId)
     }
   }
 }
@@ -446,9 +451,23 @@ class WarcraftLogsClient:
                     name = player.get("name")
                     if not name:
                         continue
+                    # kill_counts stays exactly as before (attendance's
+                    # behavior must not change here) - every playerDetails
+                    # entry counts, pets/summons included, same as always.
                     kill_counts[name] = kill_counts.get(name, 0) + 1
+
+                    # role_tally (roster composition / class icons) is
+                    # narrower: WCL's playerDetails buckets have been seen
+                    # live to include non-player entries (pets/summons) -
+                    # 27 "raiders" on a 25-cap raid, going by report. Those
+                    # don't have a real WoW class, so filtering to the known
+                    # class set (config.CLASS_EMOJI_NAMES) excludes them
+                    # without needing to guess at a "is this a pet" field.
+                    class_name = player.get("type")
+                    if class_name not in config.CLASS_EMOJI_NAMES:
+                        continue
                     tally = role_tally.setdefault(
-                        name, {"tank": 0, "healer": 0, "dps": 0, "total": 0, "class": player.get("type")}
+                        name, {"tank": 0, "healer": 0, "dps": 0, "total": 0, "class": class_name}
                     )
                     tally[_normalize_role(role_key)] += 1
                     tally["total"] += 1
@@ -770,7 +789,10 @@ class WarcraftLogsClient:
         Returns None (never raises) if the guild/zone can't be found or the
         response shape is unexpected - see get_report_summary's parse
         helpers for the same reasoning; this JSON shape is likewise
-        unverified from this sandbox.
+        unverified from this sandbox. The field name itself (Guild.zoneRanking,
+        singular) WAS confirmed live: the original guess "zoneRankings" got a
+        clear WCL error naming the correct field, so that part is solid -
+        only the shape of what it returns is still a guess.
         """
         token = await self._get_token()
         headers = {"Authorization": f"Bearer {token}"}
@@ -800,7 +822,7 @@ class WarcraftLogsClient:
         if not guild:
             return None
 
-        raw = guild.get("zoneRankings")
+        raw = guild.get("zoneRanking")
         if not isinstance(raw, dict):
             return None
 

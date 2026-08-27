@@ -135,6 +135,9 @@ ADD_LOOT_WAIT_SECONDS = 300
 QUALITY_EMOJI = {0: "⬜", 1: "⬜", 2: "🟩", 3: "🟦", 4: "🟪", 5: "🟧"}
 DEFAULT_QUALITY_EMOJI = "⬜"
 
+# Rank -> medal emoji for the damage/death leaderboards (1st-5th place).
+RANK_MEDALS = ["🥇", "🥈", "🥉", "🏅", "🏅"]
+
 # Same guild-local timezone convention already used elsewhere (see
 # cogs/apply.py's AMSTERDAM_TZ) - raid start/end clock times are far more
 # readable in local time than UTC.
@@ -221,7 +224,10 @@ class RaidSummaryEditModal(discord.ui.Modal, title="Edit Raid Summary"):
         required=False, max_length=300,
     )
     media_link = discord.ui.TextInput(
-        label="Media link - YouTube/Twitch/image URL (optional)", required=False, max_length=300,
+        # Discord caps TextInput labels at 45 chars - the original label
+        # here was 48 and made every /raidsummary edit attempt 400 with
+        # "Invalid Form Body" until this was noticed live.
+        label="Media link (YouTube/Twitch/image)", required=False, max_length=300,
     )
 
     def __init__(self, cog: "RaidSummaryCog", last_message_id: int, prefill_note=None, prefill_media=None):
@@ -581,10 +587,14 @@ class RaidSummaryCog(commands.Cog):
         total = sum(deaths.values())
         top = sorted(deaths.items(), key=lambda kv: -kv[1])[:5]
         lines = [
-            f"💀 {self._name_icon(guild, classes_map.get(name))}**{name}** — {count} death{'s' if count != 1 else ''}"
-            for name, count in top
+            f"{RANK_MEDALS[i]} {self._name_icon(guild, classes_map.get(name))}**{name}** — "
+            f"{count} death{'s' if count != 1 else ''}"
+            for i, (name, count) in enumerate(top)
         ]
-        return f"**Death leaderboard** — {total} total death{'s' if total != 1 else ''}\n" + "\n".join(lines)
+        return (
+            f"💀 **Death's Leaderboard** — {total} total death{'s' if total != 1 else ''}\n"
+            + "\n".join(lines)
+        )
 
     def _build_damage_block(self, damage_done: dict, guild: discord.Guild, classes_map: dict) -> str:
         """Top 5 by total damage across the whole report (bosses AND
@@ -595,32 +605,46 @@ class RaidSummaryCog(commands.Cog):
         total_damage = sum(damage_done.values()) or 1
         top = sorted(damage_done.items(), key=lambda kv: -kv[1])[:5]
         lines = [
-            f"⚔️ {self._name_icon(guild, classes_map.get(name))}**{name}** — "
+            f"{RANK_MEDALS[i]} {self._name_icon(guild, classes_map.get(name))}**{name}** — "
             f"{amount:,} damage ({amount / total_damage * 100:.2f}%)"
-            for name, amount in top
+            for i, (name, amount) in enumerate(top)
         ]
-        return "**Top Overall Damage (bosses + trash)**\n" + "\n".join(lines)
+        return "⚔️ **Top Overall Damage (bosses + trash)**\n" + "\n".join(lines)
 
     def _build_parses_block(self, parses: list, fights: list, damage_done: dict, healing_done: dict,
-                             guild: discord.Guild, classes_map: dict) -> str:
+                             guild: discord.Guild, classes_map: dict, personal_best_updates: dict) -> str:
         """
-        "Raid MVP's" - three separate lines: highest DPS parse (rank
-        percentile, DPS-role parses only - healers/tanks have their own
-        separate WCL metrics, not comparable on the same percentile scale),
-        highest overall damage done, and highest overall healing done.
-        Followed by the elite (>= config.PARSE_HIGHLIGHT_THRESHOLD) parse
-        callouts, any role.
+        "Raid MVP's" - three separate lines: highest AVERAGE DPS parse
+        across all of this raid's boss kills (matches WCL's own "avg"
+        rankings column - DPS-role parses only, since healers/tanks use
+        their own separate WCL metrics, not comparable on the same
+        percentile scale), highest overall damage done, and highest
+        overall healing done. Followed by "Noteworthy parses" - the elite
+        (>= config.PARSE_HIGHLIGHT_THRESHOLD) individual-boss parse
+        callouts, any role, tagged as a personal best where applicable
+        (personal_best_updates - see _build_personal_bests_block, computed
+        by the caller BEFORE this so that info is available here too).
         """
         fight_names = {f["id"]: f["name"] for f in fights}
+        fight_encounter = {f["id"]: f.get("encounter_id") for f in fights}
         with_pct = [p for p in parses if p.get("rank_percent") is not None]
 
         mvp_lines = []
-        dps_parses = [p for p in with_pct if p.get("role") == "dps"]
-        if dps_parses:
-            top = max(dps_parses, key=lambda p: p["rank_percent"])
+        dps_pcts_by_name = {}
+        dps_class_by_name = {}
+        for p in with_pct:
+            if p.get("role") != "dps":
+                continue
+            dps_pcts_by_name.setdefault(p["name"], []).append(p["rank_percent"])
+            dps_class_by_name.setdefault(p["name"], p.get("class"))
+        if dps_pcts_by_name:
+            name, avg_pct = max(
+                ((n, sum(pcts) / len(pcts)) for n, pcts in dps_pcts_by_name.items()),
+                key=lambda pair: pair[1],
+            )
             mvp_lines.append(
-                f"🏆 {self._name_icon(guild, top.get('class'))}**{top['name']}** — highest DPS parse "
-                f"({top['rank_percent']:.1f}% on {_boss_name(top, fight_names)})"
+                f"🏆 {self._name_icon(guild, dps_class_by_name.get(name))}**{name}** — "
+                f"highest average DPS parse ({avg_pct:.1f}%)"
             )
         if damage_done:
             name, amount = max(damage_done.items(), key=lambda kv: kv[1])
@@ -647,12 +671,14 @@ class RaidSummaryCog(commands.Cog):
         if elite:
             if lines:
                 lines.append("")
+            lines.append("**Noteworthy parses**")
             for p in elite[:20]:
-                spec_class = " ".join(x for x in (p.get("spec"), p.get("class")) if x)
-                suffix = f" ({spec_class})" if spec_class else ""
+                encounter_id = fight_encounter.get(p.get("fight_id"))
+                is_pb = personal_best_updates.get(encounter_id, {}).get(p["name"]) == p["rank_percent"]
+                pb_tag = " — **Personal best!**" if is_pb else ""
                 lines.append(
                     f"🌟 {self._name_icon(guild, p.get('class'))}**{p['name']}** — {p['rank_percent']:.1f}% on "
-                    f"{_boss_name(p, fight_names)}{suffix}"
+                    f"{_boss_name(p, fight_names)}{pb_tag}"
                 )
 
         return "\n".join(lines)
@@ -1023,15 +1049,17 @@ class RaidSummaryCog(commands.Cog):
             pre_loot_blocks.append(self._text_block(comp_block))
         if boss_lines:
             pre_loot_blocks.append(self._text_block("**Boss-by-boss**\n" + "\n".join(boss_lines)))
-        parses_block = self._build_parses_block(
-            summary["parses"], summary["fights"], summary["damage_done"], summary["healing_done"],
-            interaction.guild, classes_map,
-        )
-        if parses_block:
-            pre_loot_blocks.append(self._text_block(parses_block))
+        # Computed before _build_parses_block, which tags a "Noteworthy
+        # parse" as a personal best using this same data.
         personal_bests_block, parse_updates = self._build_personal_bests_block(
             summary["parses"], summary["fights"], records, interaction.guild
         )
+        parses_block = self._build_parses_block(
+            summary["parses"], summary["fights"], summary["damage_done"], summary["healing_done"],
+            interaction.guild, classes_map, parse_updates,
+        )
+        if parses_block:
+            pre_loot_blocks.append(self._text_block(parses_block))
         if personal_bests_block:
             pre_loot_blocks.append(self._text_block(personal_bests_block))
         guild_rank_block = await self._build_guild_rank_block(tier_data, fights_by_encounter)
