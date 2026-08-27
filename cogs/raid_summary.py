@@ -156,6 +156,13 @@ def _extract_report_code(link: str) -> str:
     return match.group(1) if match else link
 
 
+def _wipefest_fight_url(report_code: str, fight_id: int) -> str:
+    """Wipefest's per-fight deep link - confirmed live: WCL's fight ID
+    (already recorded per fight in the report cache) is literally the same
+    ID Wipefest uses in its own /fight/<id> URL segment, not a guess."""
+    return f"https://www.wipefest.gg/report/{report_code}/fight/{fight_id}?gameVersion=warcraft-fresh"
+
+
 def _boss_name(p: dict, fight_names: dict) -> str:
     """A parse's boss name, preferring whatever WCL's rankings JSON embeds
     directly on the entry, falling back to joining fight_id against the
@@ -446,7 +453,7 @@ class RaidSummaryCog(commands.Cog):
                 killed_count += 1
         return killed_count, attempted_count, total_pulls
 
-    def _build_boss_lines(self, tier: dict, fights_by_encounter: dict, records: dict) -> tuple:
+    def _build_boss_lines(self, tier: dict, fights_by_encounter: dict, records: dict, report_code: str) -> tuple:
         """
         Returns (lines, newly_killed_ids, new_fastest_kills) where
         new_fastest_kills is {encounter_id: duration_ms} for every boss this
@@ -454,7 +461,8 @@ class RaidSummaryCog(commands.Cog):
         caller persists these after a successful post. Every non-kill
         (wipe) fight in a boss's group gets its own indented line below the
         boss's summary line, in pull order, showing the boss's remaining
-        health % at that wipe.
+        health % at that wipe. "killed"/"Wipe N" are each a link straight
+        to that specific pull's Wipefest analysis (see _wipefest_fight_url).
         """
         lines = []
         newly_killed = []
@@ -492,8 +500,9 @@ class RaidSummaryCog(commands.Cog):
                     else:
                         badge = f" ({_format_delta(delta)})"
 
+                kill_url = _wipefest_fight_url(report_code, kill_fight["id"])
                 lines.append(
-                    f"✅ **{boss_name}** — killed in {pulls} pull{'s' if pulls != 1 else ''} "
+                    f"✅ **{boss_name}** — [killed]({kill_url}) in {pulls} pull{'s' if pulls != 1 else ''} "
                     f"({clock}){badge}"
                 )
             else:
@@ -506,7 +515,8 @@ class RaidSummaryCog(commands.Cog):
                 wipe_number += 1
                 pct = f.get("boss_percentage")
                 pct_text = f"{round(pct)}%" if pct is not None else "?"
-                lines.append(f" ↳ Wipe {wipe_number}: {pct_text}")
+                wipe_url = _wipefest_fight_url(report_code, f["id"])
+                lines.append(f" ↳ [Wipe {wipe_number}]({wipe_url}): {pct_text}")
 
         return lines, newly_killed, new_fastest_kills
 
@@ -1000,7 +1010,7 @@ class RaidSummaryCog(commands.Cog):
         fights_by_encounter = self._group_fights_by_encounter(summary["fights"])
         records = self._get_records()
         boss_lines, newly_killed_ids, new_fastest_kills = self._build_boss_lines(
-            tier_data, fights_by_encounter, records
+            tier_data, fights_by_encounter, records, report_code
         )
         killed_count, attempted_count, total_pulls = self._tier_stats(tier_data, fights_by_encounter)
         clear_label = "Full Clear!" if clear_status.value == "full_clear" else "Progress Raid"
