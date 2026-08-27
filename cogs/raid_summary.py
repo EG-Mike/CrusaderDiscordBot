@@ -7,18 +7,23 @@ guild rank, a death leaderboard) as a new thread in a Discord forum channel,
 so raiders have somewhere to discuss each raid night.
 
 Design, per discussion:
-  - A moderator runs /raidsummary once per raid, giving it: which tier was
-    raided, the WCL report link, whether it was a full clear or still
-    progress, whether it's a main or alt/fun raid, and optionally the
-    Gargul loot export pasted directly (gargul_export_text - a normal
-    night's export is well under Discord's 6000-char option ceiling, so
-    this covers the common case; can be added/replaced later too, see
-    below), a note, and a media link (YouTube/Twitch clip or an image) to
-    feature. A paste that lands exactly at that 6000-char ceiling is
-    rejected rather than trusted, since Discord's own input box silently
-    truncates rather than refusing to submit - the rejection points the
+  - A moderator runs /raidsummary with the short/choice fields (tier,
+    report link, full-clear-or-progress, main-or-alt raid) as slash-command
+    options, which then opens a modal (RaidSummaryCreateModal) for the
+    free-text ones: the Gargul loot export pasted directly, a note, and a
+    media link. The loot paste specifically HAS to go through a modal, not
+    a slash-command string option - a plain option renders as a single-
+    line input in Discord's client, so a multi-line paste into one gets
+    every newline silently collapsed to a space (confirmed live: the
+    parser then sees the whole export as one unparseable line). A modal's
+    paragraph-style TextInput is the only Discord input that preserves
+    real newlines. Loot can also be added/replaced later - see below - and
+    a paste that lands exactly at the modal field's 4000-char ceiling is
+    rejected rather than trusted, since Discord's input box silently
+    truncates instead of refusing to submit - the rejection points the
     moderator at the 🎁 Add/Update Loot button's file upload instead,
-    which has no such limit.
+    which has no such limit (a Gargul export runs ~50 chars/item, so 4000
+    chars still covers ~75-80 items - comfortably past a normal night).
   - All WCL data for the report (fights/pulls, parse rankings, deaths,
     damage done, healing done) comes from ONE cached fetch -
     wcl_client.WarcraftLogsClient.get_report_summary() - shared with
@@ -138,14 +143,16 @@ EDIT_BUTTON_CUSTOM_ID = "raidsummary_edit_btn"
 ADD_LOOT_BUTTON_CUSTOM_ID = "raidsummary_addloot_btn"
 ADD_LOOT_WAIT_SECONDS = 300
 
-# Discord's own hard ceiling for a slash command STRING option - not
-# something we can raise. A Gargul export is compact (roughly 50 chars per
-# item), so this covers 100+ items - far more than one raid night drops in
-# the ordinary case. Anything that hits this ceiling exactly is treated as
-# possibly truncated by Discord's own input box rather than trusted - see
-# the command handler - and pointed at the 🎁 Add/Update Loot button's file
-# upload instead, which has no such limit.
-GARGUL_TEXT_MAX_LENGTH = 6000
+# Discord's own hard ceiling for a modal TextInput field - not something we
+# can raise (see RaidSummaryCreateModal's docstring for why the loot paste
+# has to go through a modal, not a slash-command option, in the first
+# place). A Gargul export is compact (roughly 50 chars/item, confirmed
+# against a real 43-item export), so this covers ~75-80 items - comfortably
+# past a normal raid night. Anything that hits this ceiling exactly is
+# treated as possibly truncated by Discord's own input box rather than
+# trusted - see _create_summary() - and pointed at the 🎁 Add/Update Loot
+# button's file upload instead, which has no such limit.
+GARGUL_TEXT_MAX_LENGTH = 4000
 
 QUALITY_EMOJI = {0: "⬜", 1: "⬜", 2: "🟩", 3: "🟦", 4: "🟪", 5: "🟧"}
 DEFAULT_QUALITY_EMOJI = "⬜"
@@ -266,6 +273,50 @@ class RaidSummaryEditModal(discord.ui.Modal, title="Edit Raid Summary"):
         await self.cog._apply_edit(
             interaction, self.last_message_id,
             str(self.note).strip() or None, str(self.media_link).strip() or None,
+        )
+
+
+class RaidSummaryCreateModal(discord.ui.Modal, title="Post Raid Summary"):
+    """
+    /raidsummary opens this for its free-text fields, rather than taking
+    them as slash-command string options directly. Slash command STRING
+    options render as a single-line input in Discord's client - pasting a
+    multi-line Gargul export into one silently collapses every newline to a
+    space (confirmed live: the parser then sees the whole export as one
+    unparseable line and reports "no loot rows found"). A modal's
+    TextInput(style=paragraph) is the only Discord input that actually
+    preserves newlines, so loot text has to go through here instead. tier/
+    report/clear_status/raid_type stay as slash-command options (short,
+    single-line or choice-based, no newline problem) and are just carried
+    through to this modal's constructor from the command handler.
+    """
+    gargul_export_text = discord.ui.TextInput(
+        label="Gargul loot export (optional)", style=discord.TextStyle.paragraph,
+        required=False, max_length=GARGUL_TEXT_MAX_LENGTH,
+    )
+    note = discord.ui.TextInput(
+        label="Note/highlight (optional)", style=discord.TextStyle.paragraph,
+        required=False, max_length=300,
+    )
+    media_link = discord.ui.TextInput(
+        label="Media link (YouTube/Twitch/image)", required=False, max_length=300,
+    )
+
+    def __init__(self, cog: "RaidSummaryCog", tier, report: str, clear_status, raid_type):
+        super().__init__()
+        self.cog = cog
+        self.tier = tier
+        self.report = report
+        self.clear_status = clear_status
+        self.raid_type = raid_type
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        await self.cog._create_summary(
+            interaction, self.tier, self.report, self.clear_status, self.raid_type,
+            str(self.gargul_export_text).strip() or None,
+            str(self.media_link).strip() or None,
+            str(self.note).strip() or None,
         )
 
 
@@ -934,13 +985,6 @@ class RaidSummaryCog(commands.Cog):
         report="WCL report link (or bare report code)",
         clear_status="Full clear or still progressing?",
         raid_type="Main raid or an alt/fun raid?",
-        gargul_export_text=(
-            "Paste the Gargul loot export directly (fits a normal raid night many times "
-            "over). Leave blank to add it later - the Add/Update Loot button also takes a "
-            "file upload, for the rare export too big to paste here."
-        ),
-        media_link="Optional: a YouTube/Twitch clip or image URL to feature",
-        note="Optional short note/highlight for the top of the summary",
     )
     @app_commands.choices(
         tier=[
@@ -963,9 +1007,6 @@ class RaidSummaryCog(commands.Cog):
         report: str,
         clear_status: app_commands.Choice[str],
         raid_type: app_commands.Choice[str],
-        gargul_export_text: app_commands.Range[str, 0, GARGUL_TEXT_MAX_LENGTH] = None,
-        media_link: str = None,
-        note: str = None,
     ):
         if not await self._is_mod(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can post raid summaries.", ephemeral=True)
@@ -979,7 +1020,32 @@ class RaidSummaryCog(commands.Cog):
             )
             return
 
-        await interaction.response.defer(ephemeral=True, thinking=True)
+        # Loot/note/media are collected via a modal, not more slash-command
+        # options - see RaidSummaryCreateModal's docstring for why (short
+        # version: a slash-command STRING option can't hold a multi-line
+        # paste). send_modal has to be the interaction's first response, so
+        # this command never defers - the modal's on_submit does that once
+        # it has the free-text fields.
+        await interaction.response.send_modal(
+            RaidSummaryCreateModal(self, tier, report, clear_status, raid_type)
+        )
+
+    async def _create_summary(self, interaction: discord.Interaction, tier: app_commands.Choice[str], report: str,
+                               clear_status: app_commands.Choice[str], raid_type: app_commands.Choice[str],
+                               gargul_export_text: str, media_link: str, note: str):
+        """The actual posting logic, called from RaidSummaryCreateModal.on_submit
+        once the modal's free-text fields are in. interaction has already
+        been deferred by the modal by this point."""
+        forum_channel = self.bot.get_channel(self.forum_channel_id)
+        if forum_channel is None or not isinstance(forum_channel, discord.ForumChannel):
+            # Already checked once before the modal was shown - re-checked
+            # here in case something changed in between (e.g. the channel
+            # was deleted while the moderator was filling out the modal).
+            await interaction.followup.send(
+                "RAID_SUMMARY_FORUM_CHANNEL_ID isn't set to a real forum channel the bot can see.",
+                ephemeral=True,
+            )
+            return
 
         # --- parse the pasted loot export, if given now ---
         loot_rows = []

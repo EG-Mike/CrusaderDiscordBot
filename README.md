@@ -71,16 +71,22 @@ moderator-driven announcement system.
 
 ### Raid summaries
 
-1. A moderator runs **`/raidsummary`** after a raid, giving it: the tier
-   raided, the WCL report link, full-clear-or-progress, main-or-alt raid,
-   and optionally the Gargul loot export **pasted directly** into
-   `gargul_export_text` (a normal night's export is a fraction of Discord's
-   6000-character option limit; can be added/replaced later too - see
-   below), a note, and a YouTube/Twitch/image link to feature. A paste
-   landing exactly at that 6000-char ceiling is rejected rather than
-   trusted, since Discord's input box silently truncates instead of
-   refusing to submit - use the Add/Update Loot button's file upload for
-   an export that large instead (no size limit there).
+1. A moderator runs **`/raidsummary`** with the short fields (tier, WCL
+   report link, full-clear-or-progress, main-or-alt raid), which opens a
+   **modal** for the free-text ones: the Gargul loot export **pasted
+   directly**, a note, and a YouTube/Twitch/image link. The loot paste has
+   to go through a modal rather than a plain slash-command option - a
+   slash-command string option is a single-line input in Discord's client,
+   so pasting a multi-line export into one silently collapses every
+   newline to a space and the export becomes unparseable. A modal's
+   paragraph text field is the only Discord input that keeps real newlines
+   intact. A normal night's export runs a fraction of the modal field's
+   4000-character limit (~50 chars/item, so ~75-80 items of headroom); loot
+   can also be added/replaced later - see below. A paste landing exactly at
+   that 4000-char ceiling is rejected rather than trusted, since Discord's
+   input box silently truncates instead of refusing to submit - use the
+   Add/Update Loot button's file upload for an export that large instead
+   (no size limit there).
 2. The bot posts a new thread in the raid-summary **forum channel**. The
    top post has: a tier banner image, a TL;DR (bosses down, pulls, loot
    count; first-pull/raid-ended clock times + total duration, anchored to
@@ -185,7 +191,7 @@ moderator-driven announcement system.
 | `/checkattendance links <member>` | Debug: show a member's resolved main name and linked alts. |
 | `/checkattendance exclude <name> <reason>` | Excuse a player from attendance tracking. |
 | `/checkattendance removeexcluded <id>` | Remove a player from the excused list by its `#ID`. |
-| `/raidsummary <tier> <report> <clear_status> <raid_type> [gargul_export_text] [media_link] [note]` | Post a raid summary thread to the raid-summary forum (loot can be pasted directly, added later, or - for an unusually large export - uploaded as a file via the thread's Add/Update Loot button). |
+| `/raidsummary <tier> <report> <clear_status> <raid_type>` (opens a modal for loot/note/media) | Post a raid summary thread to the raid-summary forum (loot can be pasted directly, added later, or - for an unusually large export - uploaded as a file via the thread's Add/Update Loot button). |
 
 ## Setting up on a new server
 
