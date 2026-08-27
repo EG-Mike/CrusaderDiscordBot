@@ -186,6 +186,13 @@ class RaidLogsCog(commands.Cog):
         self.source_channel_id = int(source_channel_id) if source_channel_id else None
         repost_channel_id = os.environ.get("RAID_LOGS_REPOST_CHANNEL_ID")
         self.repost_channel_id = int(repost_channel_id) if repost_channel_id else None
+        # Optional - a Main Raid Summarize also mirrors the just-refreshed
+        # Attendance Overview here (see _post_moderator_overview_notice), on
+        # top of the #attendance-check notification, since that channel is
+        # easy to miss unless a mod happens to be looking at it. Leave unset
+        # to skip this extra post - nothing else here depends on it.
+        moderator_channel_id = os.environ.get("MODERATOR_CHANNEL_ID")
+        self.moderator_channel_id = int(moderator_channel_id) if moderator_channel_id else None
 
     async def cog_load(self):
         # One dummy view registering every custom_id this cog ever sends,
@@ -557,11 +564,27 @@ class RaidLogsCog(commands.Cog):
 
         await attendance_cog._do_addlog(guild, date_str, tier_label, entry["report_code"], updated_by=who_label)
         await attendance_cog._refresh_roster_message(guild, updated_by=who_label)
-        await attendance_cog._refresh_overview_message(guild, updated_by=who_label)
+        overview_embed = await attendance_cog._refresh_overview_message(guild, updated_by=who_label)
         await self._post_summary_prompt(
             attendance_cog.attendance_channel_id, entry, raid_type="main",
             tier_guess=tier_guess, who_label=who_label, is_auto=is_auto,
         )
+        await self._post_moderator_overview_notice(overview_embed, who_label)
+
+    async def _post_moderator_overview_notice(self, overview_embed, who_label: str):
+        if not self.moderator_channel_id or overview_embed is None:
+            return
+        channel = self.bot.get_channel(self.moderator_channel_id)
+        if channel is None:
+            log.warning("MODERATOR_CHANNEL_ID set but channel not found/visible")
+            return
+        try:
+            await channel.send(
+                f"📊 **Attendance overview is updated** after the last raid (refreshed by {who_label}).",
+                embed=overview_embed,
+            )
+        except Exception:
+            log.exception("Failed to post the attendance overview notice to MODERATOR_CHANNEL_ID")
 
     async def _post_summary_prompt(self, channel_id, entry: dict, raid_type: str, tier_guess, who_label: str, is_auto: bool):
         channel = self.bot.get_channel(channel_id) if channel_id else None
