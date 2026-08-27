@@ -71,22 +71,32 @@ moderator-driven announcement system.
 
 ### Raid summaries
 
-1. A moderator runs **`/raidsummary`** with the short fields (tier, WCL
-   report link, full-clear-or-progress, main-or-alt raid), which opens a
-   **modal** for the free-text ones: the Gargul loot export **pasted
-   directly**, a note, and a YouTube/Twitch/image link. The loot paste has
-   to go through a modal rather than a plain slash-command option - a
-   slash-command string option is a single-line input in Discord's client,
-   so pasting a multi-line export into one silently collapses every
-   newline to a space and the export becomes unparseable. A modal's
-   paragraph text field is the only Discord input that keeps real newlines
-   intact. A normal night's export runs a fraction of the modal field's
-   4000-character limit (~50 chars/item, so ~75-80 items of headroom); loot
-   can also be added/replaced later - see below. A paste landing exactly at
-   that 4000-char ceiling is rejected rather than trusted, since Discord's
-   input box silently truncates instead of refusing to submit - use the
-   Add/Update Loot button's file upload for an export that large instead
-   (no size limit there).
+1. A moderator runs **`/raidsummary`** with no arguments at all. The bot
+   immediately shows a set of dropdowns: tier, full-clear-or-progress,
+   main-or-alt raid, and - when `RAID_LOGS_CHANNEL_ID` is configured (see
+   section 10 below) - a **report picker** populated from recent posts in
+   your #logs channel (wherever your WCL-report-posting webhook/app, e.g.
+   "Crusader's Logs", announces new reports), labeled by the report's own
+   title (e.g. "SSC+TK") instead of a raw link. Hitting **Continue** opens
+   a **modal** for the fields that can't be a dropdown: a report-link box
+   (pre-filled if one was picked above, but always editable - the dropdown
+   only shows the most recent reports, so an older one still needs a
+   pasted link), the Gargul loot export **pasted directly**, a note, and a
+   YouTube/Twitch/image link. Two steps rather than one because Discord
+   modals have no dropdown support at all - only text fields - so anything
+   meant to be pick-from-a-list has to happen before the modal opens. The
+   loot paste specifically has to go through the modal rather than a plain
+   slash-command option - a slash-command string option is a single-line
+   input in Discord's client, so pasting a multi-line export into one
+   silently collapses every newline to a space and the export becomes
+   unparseable. A modal's paragraph text field is the only Discord input
+   that keeps real newlines intact. A normal night's export runs a
+   fraction of the modal field's 4000-character limit (~50 chars/item, so
+   ~75-80 items of headroom); loot can also be added/replaced later - see
+   below. A paste landing exactly at that 4000-char ceiling is rejected
+   rather than trusted, since Discord's input box silently truncates
+   instead of refusing to submit - use the Add/Update Loot button's file
+   upload for an export that large instead (no size limit there).
 2. The bot posts a new thread in the raid-summary **forum channel**. The
    top post has: a tier banner image, a TL;DR (bosses down, pulls, loot
    count; first-pull/raid-ended clock times + total duration, anchored to
@@ -191,7 +201,7 @@ moderator-driven announcement system.
 | `/checkattendance links <member>` | Debug: show a member's resolved main name and linked alts. |
 | `/checkattendance exclude <name> <reason>` | Excuse a player from attendance tracking. |
 | `/checkattendance removeexcluded <id>` | Remove a player from the excused list by its `#ID`. |
-| `/raidsummary <tier> <report> <clear_status> <raid_type>` (opens a modal for loot/note/media) | Post a raid summary thread to the raid-summary forum (loot can be pasted directly, added later, or - for an unusually large export - uploaded as a file via the thread's Add/Update Loot button). |
+| `/raidsummary` (dropdowns for tier/clear status/raid type/report, then a modal for report-link fallback/loot/note/media) | Post a raid summary thread to the raid-summary forum (loot can be pasted directly, added later, or - for an unusually large export - uploaded as a file via the thread's Add/Update Loot button). |
 
 ## Setting up on a new server
 
@@ -324,7 +334,17 @@ which is why the DM also includes a plain-text fallback instruction.
    (e.g. `images/banner-bt.jpg`). Local files just need to exist on disk
    next to the bot; nothing to upload anywhere manually. A tier with a
    missing/unconfigured banner just posts without one.
-6. **Before relying on it**, post one real summary and sanity-check the
+6. Optionally set `RAID_LOGS_CHANNEL_ID` in `.env` to the channel your
+   WCL-report-posting webhook/app announces new reports in (e.g.
+   "Crusader's Logs"). When set, `/raidsummary`'s dropdown step offers the
+   most recent reports posted there, labeled by their report title, so a
+   moderator can pick one by name instead of pasting a link - see
+   `_extract_log_report_code` in `cogs/raid_summary.py` for how it finds
+   the report code inside that channel's embeds (checks the description,
+   every field, the embed's own URL, and the title, so it isn't tied to
+   one exact field layout). Leave it unset to skip straight to pasting a
+   link in the modal.
+7. **Before relying on it**, post one real summary and sanity-check the
    loot section: item names/icons come from Wowhead's `&xml` data feed (see
    `wowhead.py`) - if they keep coming back as "Item #NNNNN" placeholders,
    test a single known item ID first.

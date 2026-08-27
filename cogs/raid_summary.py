@@ -7,23 +7,33 @@ guild rank, a death leaderboard) as a new thread in a Discord forum channel,
 so raiders have somewhere to discuss each raid night.
 
 Design, per discussion:
-  - A moderator runs /raidsummary with the short/choice fields (tier,
-    report link, full-clear-or-progress, main-or-alt raid) as slash-command
-    options, which then opens a modal (RaidSummaryCreateModal) for the
-    free-text ones: the Gargul loot export pasted directly, a note, and a
-    media link. The loot paste specifically HAS to go through a modal, not
-    a slash-command string option - a plain option renders as a single-
-    line input in Discord's client, so a multi-line paste into one gets
-    every newline silently collapsed to a space (confirmed live: the
-    parser then sees the whole export as one unparseable line). A modal's
-    paragraph-style TextInput is the only Discord input that preserves
-    real newlines. Loot can also be added/replaced later - see below - and
-    a paste that lands exactly at the modal field's 4000-char ceiling is
-    rejected rather than trusted, since Discord's input box silently
-    truncates instead of refusing to submit - the rejection points the
-    moderator at the 🎁 Add/Update Loot button's file upload instead,
-    which has no such limit (a Gargul export runs ~50 chars/item, so 4000
-    chars still covers ~75-80 items - comfortably past a normal night).
+  - /raidsummary takes NO slash-command options - it immediately shows
+    RaidSummaryOptionsView, an ephemeral message with native dropdowns for
+    tier, full-clear-or-progress, main-or-alt raid, and (when
+    RAID_LOGS_CHANNEL_ID is configured) a report picker populated from
+    recent posts in the #logs channel, labeled by their report title
+    instead of a raw link (see _fetch_recent_log_entries /
+    _extract_log_report_code). Hitting Continue there opens a modal
+    (RaidSummaryCreateModal) for the fields that can't be a dropdown: a
+    report-link fallback (pre-filled if one was picked, always editable -
+    the #logs list is best-effort/recent-only, so an older report still
+    needs a pasted link), the Gargul loot export, a note, and a media
+    link. Two steps, not one, because Discord modals have no select-menu
+    support at all - only text fields - so anything meant to be a picker
+    has to happen before the modal, not in it. The loot paste specifically
+    HAS to go through the modal, not a slash-command string option - a
+    plain option renders as a single-line input in Discord's client, so a
+    multi-line paste into one gets every newline silently collapsed to a
+    space (confirmed live: the parser then sees the whole export as one
+    unparseable line). A modal's paragraph-style TextInput is the only
+    Discord input that preserves real newlines. Loot can also be
+    added/replaced later - see below - and a paste that lands exactly at
+    the modal field's 4000-char ceiling is rejected rather than trusted,
+    since Discord's input box silently truncates instead of refusing to
+    submit - the rejection points the moderator at the 🎁 Add/Update Loot
+    button's file upload instead, which has no such limit (a Gargul export
+    runs ~50 chars/item, so 4000 chars still covers ~75-80 items -
+    comfortably past a normal night).
   - All WCL data for the report (fights/pulls, parse rankings, deaths,
     damage done, healing done) comes from ONE cached fetch -
     wcl_client.WarcraftLogsClient.get_report_summary() - shared with
@@ -138,6 +148,14 @@ log = logging.getLogger("wow-apply-bot.raidsummary")
 
 REPORT_LINK_RE = re.compile(r"(?:reports/|^)([A-Za-z0-9]{8,20})(?:[/#].*)?$")
 
+# Used to pull a report code out of #logs channel embeds (see
+# _fetch_recent_log_entries) - deliberately looser than REPORT_LINK_RE
+# (which expects the WHOLE string to be a link/code) since here the code
+# is embedded somewhere inside a title/description/field of unknown shape.
+LOG_REPORT_URL_RE = re.compile(r"warcraftlogs\.com/reports/([A-Za-z0-9]{8,20})")
+LOGS_HISTORY_LIMIT = 50
+LOGS_SELECT_LIMIT = 25  # Discord's own per-select-menu option cap
+
 RECORDS_KEY = "raid_summary_records"
 EDIT_BUTTON_CUSTOM_ID = "raidsummary_edit_btn"
 ADD_LOOT_BUTTON_CUSTOM_ID = "raidsummary_addloot_btn"
@@ -176,6 +194,24 @@ def _extract_report_code(link: str) -> str:
     link = link.strip().rstrip("/")
     match = REPORT_LINK_RE.search(link)
     return match.group(1) if match else link
+
+
+def _extract_log_report_code(embed: discord.Embed) -> str | None:
+    """Pulls a WCL report code out of a #logs channel post's embed. The
+    exact field layout is up to whatever third-party webhook/app posts
+    there (e.g. "Crusader's Logs") - rather than assume one fixed spot,
+    this checks the description, every field value, the embed's own url,
+    and the title, in that order, and returns the first WCL report link
+    found anywhere in them."""
+    candidates = [embed.description, embed.url, embed.title]
+    candidates += [f.value for f in embed.fields]
+    for text in candidates:
+        if not text:
+            continue
+        match = LOG_REPORT_URL_RE.search(text)
+        if match:
+            return match.group(1)
+    return None
 
 
 def _wipefest_fight_url(report_code: str, fight_id: int) -> str:
@@ -276,20 +312,134 @@ class RaidSummaryEditModal(discord.ui.Modal, title="Edit Raid Summary"):
         )
 
 
+class RaidSummaryOptionsView(discord.ui.View):
+    """
+    /raidsummary's first step, replacing what used to be four slash-
+    command options (tier, report, clear_status, raid_type) - now the
+    command takes no arguments at all and immediately shows this: three
+    native dropdowns (tier, clear status, raid type) plus, when
+    RAID_LOGS_CHANNEL_ID is configured, a fourth dropdown of recent
+    reports pulled from the #logs channel (see
+    RaidSummaryCog._fetch_recent_log_entries), labeled by their report
+    title rather than a raw link/code. A modal has no select-menu support
+    (only text fields), so this two-step "pick from dropdowns, then hit
+    Continue for the modal" flow is the only way to keep every field a
+    picker except the genuinely free-text ones (loot paste, note, media
+    link) - those stay in RaidSummaryCreateModal, which Continue opens.
+    Report is always still editable/typeable there too (pre-filled from
+    this dropdown if one was picked) - the #logs list is best-effort and
+    only ever shows the most recent LOGS_SELECT_LIMIT reports, so an
+    older report still needs a pasted link.
+    """
+    def __init__(self, cog: "RaidSummaryCog", log_entries: list):
+        super().__init__(timeout=600)
+        self.cog = cog
+        self.tier = None
+        self.clear_status = None
+        self.raid_type = None
+        self.report_code = None
+
+        self.tier_select = discord.ui.Select(
+            placeholder="Tier",
+            options=[
+                discord.SelectOption(label=config.CURRENT_TIER["name"], value=config.CURRENT_TIER["name"]),
+                discord.SelectOption(label=config.PREVIOUS_TIER["name"], value=config.PREVIOUS_TIER["name"]),
+            ],
+        )
+        self.tier_select.callback = self._on_tier_select
+        self.add_item(self.tier_select)
+
+        self.clear_status_select = discord.ui.Select(
+            placeholder="Full Clear or Progress?",
+            options=[
+                discord.SelectOption(label="Full Clear", value="full_clear"),
+                discord.SelectOption(label="Progress", value="progress"),
+            ],
+        )
+        self.clear_status_select.callback = self._on_clear_status_select
+        self.add_item(self.clear_status_select)
+
+        self.raid_type_select = discord.ui.Select(
+            placeholder="Main Raid or Alt Raid?",
+            options=[
+                discord.SelectOption(label="Main Raid", value="main"),
+                discord.SelectOption(label="Alt Raid", value="alt"),
+            ],
+        )
+        self.raid_type_select.callback = self._on_raid_type_select
+        self.add_item(self.raid_type_select)
+
+        self.report_select = None
+        if log_entries:
+            options = [
+                discord.SelectOption(
+                    label=entry["label"],
+                    value=entry["report_code"],
+                    description=entry["created_at"].astimezone(AMSTERDAM_TZ).strftime("%b %d, %H:%M"),
+                )
+                for entry in log_entries
+            ]
+            self.report_select = discord.ui.Select(
+                placeholder="Report from #logs (optional - or paste a link in the next step)",
+                options=options, min_values=0, max_values=1,
+            )
+            self.report_select.callback = self._on_report_select
+            self.add_item(self.report_select)
+
+        self.continue_button = discord.ui.Button(label="Continue", style=discord.ButtonStyle.primary, disabled=True)
+        self.continue_button.callback = self._on_continue
+        self.add_item(self.continue_button)
+
+    def _ready(self) -> bool:
+        return self.tier is not None and self.clear_status is not None and self.raid_type is not None
+
+    async def _refresh(self, interaction: discord.Interaction):
+        self.continue_button.disabled = not self._ready()
+        await interaction.response.edit_message(view=self)
+
+    async def _on_tier_select(self, interaction: discord.Interaction):
+        self.tier = self.tier_select.values[0]
+        await self._refresh(interaction)
+
+    async def _on_clear_status_select(self, interaction: discord.Interaction):
+        self.clear_status = self.clear_status_select.values[0]
+        await self._refresh(interaction)
+
+    async def _on_raid_type_select(self, interaction: discord.Interaction):
+        self.raid_type = self.raid_type_select.values[0]
+        await self._refresh(interaction)
+
+    async def _on_report_select(self, interaction: discord.Interaction):
+        self.report_code = self.report_select.values[0] if self.report_select.values else None
+        await self._refresh(interaction)
+
+    async def _on_continue(self, interaction: discord.Interaction):
+        if not self._ready():
+            await interaction.response.defer()
+            return
+        await interaction.response.send_modal(
+            RaidSummaryCreateModal(self.cog, self.tier, self.report_code, self.clear_status, self.raid_type)
+        )
+        self.stop()
+
+
 class RaidSummaryCreateModal(discord.ui.Modal, title="Post Raid Summary"):
     """
-    /raidsummary opens this for its free-text fields, rather than taking
-    them as slash-command string options directly. Slash command STRING
-    options render as a single-line input in Discord's client - pasting a
-    multi-line Gargul export into one silently collapses every newline to a
-    space (confirmed live: the parser then sees the whole export as one
-    unparseable line and reports "no loot rows found"). A modal's
-    TextInput(style=paragraph) is the only Discord input that actually
-    preserves newlines, so loot text has to go through here instead. tier/
-    report/clear_status/raid_type stay as slash-command options (short,
-    single-line or choice-based, no newline problem) and are just carried
-    through to this modal's constructor from the command handler.
+    Opened by RaidSummaryOptionsView's Continue button for the fields that
+    can't be a dropdown: the report link (pre-filled if one was picked
+    from #logs, but always editable/typeable for an older report or when
+    RAID_LOGS_CHANNEL_ID isn't configured), the Gargul loot export, a
+    note, and a media link. The loot paste specifically HAS to go through
+    a modal, not a slash-command string option - a plain option renders
+    as a single-line input in Discord's client, so a multi-line paste
+    into one gets every newline silently collapsed to a space (confirmed
+    live: the parser then sees the whole export as one unparseable line).
+    A modal's paragraph-style TextInput is the only Discord input that
+    preserves real newlines.
     """
+    report_link = discord.ui.TextInput(
+        label="Report link (if not picked above)", required=False, max_length=200,
+    )
     gargul_export_text = discord.ui.TextInput(
         label="Gargul loot export (optional)", style=discord.TextStyle.paragraph,
         required=False, max_length=GARGUL_TEXT_MAX_LENGTH,
@@ -302,18 +452,27 @@ class RaidSummaryCreateModal(discord.ui.Modal, title="Post Raid Summary"):
         label="Media link (YouTube/Twitch/image)", required=False, max_length=300,
     )
 
-    def __init__(self, cog: "RaidSummaryCog", tier, report: str, clear_status, raid_type):
+    def __init__(self, cog: "RaidSummaryCog", tier: str, report_code: str, clear_status: str, raid_type: str):
         super().__init__()
         self.cog = cog
         self.tier = tier
-        self.report = report
         self.clear_status = clear_status
         self.raid_type = raid_type
+        if report_code:
+            self.report_link.default = report_code
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True, thinking=True)
+        report = str(self.report_link).strip()
+        if not report:
+            await interaction.followup.send(
+                "No report was picked or pasted - run /raidsummary again and either pick one from "
+                "the dropdown or paste a report link/code in this modal.",
+                ephemeral=True,
+            )
+            return
         await self.cog._create_summary(
-            interaction, self.tier, self.report, self.clear_status, self.raid_type,
+            interaction, self.tier, report, self.clear_status, self.raid_type,
             str(self.gargul_export_text).strip() or None,
             str(self.media_link).strip() or None,
             str(self.note).strip() or None,
@@ -328,6 +487,8 @@ class RaidSummaryCog(commands.Cog):
         self.server_slug = os.environ["SERVER_SLUG"]
         self.server_region = os.environ.get("SERVER_REGION", "us")
         self.guild_name = os.environ.get("GUILD_NAME")  # optional - enables the guild-rank section
+        logs_channel_id = os.environ.get("RAID_LOGS_CHANNEL_ID")
+        self.logs_channel_id = int(logs_channel_id) if logs_channel_id else None  # optional - enables the report picker
 
     async def cog_load(self):
         # Registers both buttons' custom_ids so they keep working across
@@ -432,6 +593,51 @@ class RaidSummaryCog(commands.Cog):
             return ""
         icon = icons.resolve_class_icon(guild, class_name)
         return f"{icon} " if icon else ""
+
+    async def _fetch_recent_log_entries(self) -> list:
+        """
+        Scans the most recent messages in the configured #logs channel
+        (RAID_LOGS_CHANNEL_ID) for WCL report links posted there by a
+        third-party webhook/app (e.g. "Crusader's Logs"), so
+        RaidSummaryOptionsView can offer them as a dropdown labeled by
+        their report title instead of the moderator hunting down and
+        pasting the raw link. Best-effort like everything else optional
+        here: an unconfigured/inaccessible channel, or one with no
+        matching embeds, just means an empty list - the modal's manual
+        report-link field still works either way. Capped at
+        LOGS_SELECT_LIMIT since that's Discord's own per-select-menu
+        option limit anyway.
+        """
+        if not self.logs_channel_id:
+            return []
+        channel = self.bot.get_channel(self.logs_channel_id)
+        if channel is None:
+            try:
+                channel = await self.bot.fetch_channel(self.logs_channel_id)
+            except (discord.NotFound, discord.Forbidden):
+                log.warning("RAID_LOGS_CHANNEL_ID set but channel not found/visible")
+                return []
+
+        entries = []
+        try:
+            async for message in channel.history(limit=LOGS_HISTORY_LIMIT):
+                for embed in message.embeds:
+                    report_code = _extract_log_report_code(embed)
+                    if not report_code:
+                        continue
+                    label = (embed.description or embed.title or f"Report {report_code}").strip()
+                    entries.append({
+                        "label": label[:100],
+                        "report_code": report_code,
+                        "created_at": message.created_at,
+                    })
+                    break  # one entry per message is enough
+                if len(entries) >= LOGS_SELECT_LIMIT:
+                    break
+        except (discord.Forbidden, discord.HTTPException):
+            log.warning("Couldn't read #logs channel history for the report picker", exc_info=True)
+            return []
+        return entries
 
     # --- data assembly -----------------------------------------------------
 
@@ -980,34 +1186,7 @@ class RaidSummaryCog(commands.Cog):
     # --- the command ---------------------------------------------------
 
     @app_commands.command(name="raidsummary", description="Post a raid summary to the raid-summary forum (moderator only)")
-    @app_commands.describe(
-        tier="Which raid tier was raided",
-        report="WCL report link (or bare report code)",
-        clear_status="Full clear or still progressing?",
-        raid_type="Main raid or an alt/fun raid?",
-    )
-    @app_commands.choices(
-        tier=[
-            app_commands.Choice(name=config.CURRENT_TIER["name"], value=config.CURRENT_TIER["name"]),
-            app_commands.Choice(name=config.PREVIOUS_TIER["name"], value=config.PREVIOUS_TIER["name"]),
-        ],
-        clear_status=[
-            app_commands.Choice(name="Full Clear", value="full_clear"),
-            app_commands.Choice(name="Progress", value="progress"),
-        ],
-        raid_type=[
-            app_commands.Choice(name="Main Raid", value="main"),
-            app_commands.Choice(name="Alt Raid", value="alt"),
-        ],
-    )
-    async def raidsummary(
-        self,
-        interaction: discord.Interaction,
-        tier: app_commands.Choice[str],
-        report: str,
-        clear_status: app_commands.Choice[str],
-        raid_type: app_commands.Choice[str],
-    ):
+    async def raidsummary(self, interaction: discord.Interaction):
         if not await self._is_mod(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can post raid summaries.", ephemeral=True)
             return
@@ -1020,18 +1199,21 @@ class RaidSummaryCog(commands.Cog):
             )
             return
 
-        # Loot/note/media are collected via a modal, not more slash-command
-        # options - see RaidSummaryCreateModal's docstring for why (short
-        # version: a slash-command STRING option can't hold a multi-line
-        # paste). send_modal has to be the interaction's first response, so
-        # this command never defers - the modal's on_submit does that once
-        # it has the free-text fields.
-        await interaction.response.send_modal(
-            RaidSummaryCreateModal(self, tier, report, clear_status, raid_type)
+        # Every field starts as a dropdown here (RaidSummaryOptionsView) -
+        # Continue then opens RaidSummaryCreateModal for the genuinely
+        # free-text fields (report link fallback, loot paste, note, media
+        # link). See RaidSummaryOptionsView's docstring for why this can't
+        # all be one step: modals have no select-menu support.
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        log_entries = await self._fetch_recent_log_entries()
+        await interaction.followup.send(
+            "Pick the raid's details, then hit **Continue** for the report link, loot, note, and media link.",
+            view=RaidSummaryOptionsView(self, log_entries),
+            ephemeral=True,
         )
 
-    async def _create_summary(self, interaction: discord.Interaction, tier: app_commands.Choice[str], report: str,
-                               clear_status: app_commands.Choice[str], raid_type: app_commands.Choice[str],
+    async def _create_summary(self, interaction: discord.Interaction, tier: str, report: str,
+                               clear_status: str, raid_type: str,
                                gargul_export_text: str, media_link: str, note: str):
         """The actual posting logic, called from RaidSummaryCreateModal.on_submit
         once the modal's free-text fields are in. interaction has already
@@ -1103,14 +1285,14 @@ class RaidSummaryCog(commands.Cog):
             composition = None
         classes_map = (composition or {}).get("classes", {})
 
-        tier_data = self._resolve_tier(tier.value)
+        tier_data = self._resolve_tier(tier)
         fights_by_encounter = self._group_fights_by_encounter(summary["fights"])
         records = self._get_records()
         boss_lines, newly_killed_ids, new_fastest_kills = self._build_boss_lines(
             tier_data, fights_by_encounter, records, report_code
         )
         killed_count, attempted_count, total_pulls = self._tier_stats(tier_data, fights_by_encounter)
-        clear_label = "Full Clear!" if clear_status.value == "full_clear" else "Progress Raid"
+        clear_label = "Full Clear!" if clear_status == "full_clear" else "Progress Raid"
 
         # "First pull" is the first REAL boss pull, not the report's own
         # start (which can include several minutes of trash/travel before
@@ -1185,7 +1367,7 @@ class RaidSummaryCog(commands.Cog):
         banner_source, banner_file = self._load_banner(tier_data["name"])
         page_views = self._render_pages(pre_loot_blocks, loot_blocks, header_ctx, note, media_link, banner_source)
 
-        applied_tags = self._resolve_applied_tags(forum_channel, tier_data["name"], clear_status.value, raid_type.value)
+        applied_tags = self._resolve_applied_tags(forum_channel, tier_data["name"], clear_status, raid_type)
 
         thread_name = f"{tier_data['name']} — {report_date}"
         try:
