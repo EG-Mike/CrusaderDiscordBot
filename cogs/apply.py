@@ -33,6 +33,14 @@ log = logging.getLogger("wow-apply-bot.apply")
 
 APPROVE_EMOJI = "✅"
 DENY_EMOJI = "❌"
+FRESH_ROLE_EMOJI = "<:fresh_role:1542590697238962226>"
+
+
+def _fresh_label(name: str) -> str:
+    """Prefixes the Fresh role's emoji in front of its name wherever it's
+    mentioned in an assigned/already-had role list - other exempt roles
+    (Regular/Organizer) are left as plain text."""
+    return f"{FRESH_ROLE_EMOJI} {name}" if name == "Fresh" else name
 
 DIALOG_TIMEOUT = 300       # role/spec selection
 SCREENSHOT_TIMEOUT = 180   # waiting for an optional screenshot reply
@@ -1369,13 +1377,19 @@ class ApplyCog(commands.Cog):
         nickname_line = "Name not changed - no applicant member found"
 
         if applicant is not None:
-            is_exempt = any(r.id in config.FRESH_EXEMPT_ROLE_IDS for r in applicant.roles)
+            applicant_role_ids = {r.id for r in applicant.roles}
+            held_exempt_roles = [
+                name for rid, name in config.FRESH_EXEMPT_ROLE_IDS.items()
+                if rid in applicant_role_ids
+            ]
+            is_exempt = bool(held_exempt_roles)
+            held_exempt_display = "/".join(_fresh_label(name) for name in held_exempt_roles)
 
             if is_exempt:
-                already_had.append("Fresh/Regular/Organizer")
+                already_had.append(held_exempt_display)
             else:
                 await self._grant_role(
-                    guild, applicant, self.fresh_role_id, "Fresh",
+                    guild, applicant, self.fresh_role_id, _fresh_label("Fresh"),
                     newly_assigned, already_had, "Guild application approved",
                 )
 
@@ -1396,7 +1410,7 @@ class ApplyCog(commands.Cog):
 
             original_name = applicant.display_name
             if is_exempt:
-                nickname_line = f"Name not changed - already Fresh/Regular/Organizer ({original_name})"
+                nickname_line = f"Name not changed - already {held_exempt_display} ({original_name})"
             else:
                 try:
                     await applicant.edit(nick=character_name, reason="Guild application approved")

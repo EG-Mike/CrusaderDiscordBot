@@ -185,11 +185,16 @@ OXM_REGISTER_COMMAND_ID = 1502459742461624360
 # "Fresh" role should NOT be (re-)assigned or should be reported as
 # "already had" instead of "assigned" - they're already a step above plain
 # Fresh status. Also used to skip the nickname change for the same people.
-FRESH_EXEMPT_ROLE_IDS = [
-    1337919809928691793,  # Fresh
-    1337905799061700709,  # Regular
-    1337905891667742770,  # Organizer
-]
+# Maps role ID -> display name, so the approval card can say exactly which
+# of these (Fresh/Regular/Organizer) the applicant actually holds instead of
+# a generic combined label. Dict membership (`in`) checks the keys, same as
+# the old plain list did, so existing `id in FRESH_EXEMPT_ROLE_IDS` checks
+# still work unchanged.
+FRESH_EXEMPT_ROLE_IDS = {
+    1337919809928691793: "Fresh",
+    1337905799061700709: "Regular",
+    1337905891667742770: "Organizer",
+}
 
 # Auto-assigned class/role Discord roles, granted on approval based on the
 # applicant's selected main role and class (in addition to Fresh). Maps our
