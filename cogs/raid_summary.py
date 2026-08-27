@@ -124,6 +124,26 @@ Design, per discussion:
     against however many messages existed before (see _reconcile_pages -
     edits messages in place, sends new ones if longer, deletes leftovers if
     shorter).
+  - Fun stats: top-3 leaderboards for Activity % (wcl_client's Summary-table
+    fetch), combined Destruction+Haste potion use (Casts table, headed by
+    both potions' real Wowhead item icons), interrupts, and dispels - see
+    _build_top3_block/_build_potions_block. Below those, a "Buff/Debuff
+    Uptime" section for config.TRACKED_DEBUFFS (Sunder/Expose Armor, Curse
+    of the Elements/Recklessness - kept on the boss) and config.
+    TRACKED_BUFFS (Judgement of Wisdom/Light - kept on a player), each
+    shown with both an "all fights" (bosses+trash) and a "boss fights only"
+    uptime %, the raider who contributed the most of the boss-fight uptime,
+    and a delta/⚡-new-best badge against records["buffs"] (boss-only
+    percentage only - trash uptime is too inconsistent raid-to-raid to be a
+    meaningful personal best) - see _build_uptime_lines and
+    wcl_client.get_report_aura_uptime. All four ability lists are matched
+    against WCL by NAME, not spell ID, since a rank's exact ID varies by
+    who cast it while the name doesn't - see config.py's comment above
+    TRACKED_DEBUFFS. Each tracked debuff/buff also gets a real Wowhead spell
+    icon (config.TRACKED_ABILITY_ICON_SPELL_IDS - any correct rank's ID
+    works there since the icon doesn't change across ranks), fetched once
+    and provisioned as a bot-owned emoji the same way loot/potion icons are
+    (icons.ensure_spell_emoji).
   - Self-contained like every other cog here - a future feature is a new
     cog file, not changes to this one.
 """
@@ -554,16 +574,18 @@ class RaidSummaryCog(commands.Cog):
     def _get_records(self) -> dict:
         record = self.bot.store.get(RECORDS_KEY)
         if record is None:
-            return {"encounters": {}, "clears": {}, "parses": {}}
+            return {"encounters": {}, "clears": {}, "parses": {}, "buffs": {}}
         return {
             "encounters": record.get("encounters", {}),
             "clears": record.get("clears", {}),
             "parses": record.get("parses", {}),
+            "buffs": record.get("buffs", {}),
         }
 
     def _save_records(self, records: dict):
         self.bot.store.set(
-            RECORDS_KEY, encounters=records["encounters"], clears=records["clears"], parses=records["parses"]
+            RECORDS_KEY, encounters=records["encounters"], clears=records["clears"],
+            parses=records["parses"], buffs=records["buffs"],
         )
 
     # --- tier / banner resolution -------------------------------------------
@@ -711,7 +733,19 @@ class RaidSummaryCog(commands.Cog):
             resolved.append({**row, "item": item_cache[item_id]})
         return resolved
 
-    async def _build_loot_lines(self, resolved_loot: list, guild: discord.Guild, classes_map: dict) -> list:
+    async def _fetch_existing_app_emojis(self) -> dict:
+        """Fetched ONCE per command run and passed to every icon-provisioning
+        call in that run (loot, potions, buff/debuff uptime) - see
+        icons.ensure_item_emoji/ensure_spell_emoji's own docstring for why
+        this needs to be shared rather than re-fetched per icon."""
+        try:
+            return {e.name: e for e in await self.bot.fetch_application_emojis()}
+        except Exception:
+            log.warning("Couldn't fetch application emojis for icon provisioning", exc_info=True)
+            return {}
+
+    async def _build_loot_lines(self, resolved_loot: list, guild: discord.Guild, classes_map: dict,
+                                 existing_by_name: dict) -> list:
         """
         One compact line per loot row: "<item icon> [Item](wowhead) →
         <class icon> **Winner** *(OS)*". The item icon is a real bot-owned
@@ -727,12 +761,6 @@ class RaidSummaryCog(commands.Cog):
         """
         if not resolved_loot:
             return []
-
-        try:
-            existing_by_name = {e.name: e for e in await self.bot.fetch_application_emojis()}
-        except Exception:
-            log.warning("Couldn't fetch application emojis for loot icons", exc_info=True)
-            existing_by_name = {}
 
         icon_cache = {}
         lines = []
@@ -951,6 +979,105 @@ class RaidSummaryCog(commands.Cog):
             for i, (name, amount) in enumerate(top)
         ]
         return "⚔️ **Top Overall Damage (bosses + trash)**\n" + "\n".join(lines)
+
+    def _build_top3_block(self, title: str, emoji: str, values: dict, guild: discord.Guild, classes_map: dict,
+                           unit_fmt) -> str:
+        """Shared top-3 leaderboard renderer for the simple count/percent
+        fun stats (Activity %, potions, interrupts, dispels) - same medal-
+        emoji style as _build_damage_block/_build_deaths_block's top-5
+        lists, just capped at 3 per the raid-summary design discussion."""
+        if not values:
+            return ""
+        top = sorted(values.items(), key=lambda kv: -kv[1])[:3]
+        lines = [
+            f"{RANK_MEDALS[i]} {self._name_icon(guild, classes_map.get(name))}**{name}** — {unit_fmt(amount)}"
+            for i, (name, amount) in enumerate(top)
+        ]
+        return f"{emoji} **{title}**\n" + "\n".join(lines)
+
+    async def _build_potions_block(self, potion_casts: dict, guild: discord.Guild, classes_map: dict,
+                                    existing_by_name: dict) -> str:
+        """Top-3 "Destruction + Haste potions used" leaderboard (config.
+        TRACKED_POTIONS, combined into one count per player by
+        wcl_client._fetch_ability_cast_counts) - headed by both potions'
+        real Wowhead item icons (config.TRACKED_POTION_ITEM_IDS) instead of
+        a generic emoji, same provisioning mechanism loot icons use."""
+        if not potion_casts:
+            return ""
+
+        icon_prefix = ""
+        for item_id in config.TRACKED_POTION_ITEM_IDS.values():
+            item = await self.bot.wowhead.get_item(item_id)
+            if item.get("icon_url"):
+                icon_prefix += await icons.ensure_item_emoji(self.bot, existing_by_name, item_id, item["icon_url"])
+        return self._build_top3_block(
+            "Top Potion Users (Destruction + Haste)", icon_prefix or "🧪",
+            potion_casts, guild, classes_map, lambda v: f"{v} used",
+        )
+
+    async def _build_uptime_lines(self, aura_uptime: dict, records: dict, guild: discord.Guild,
+                                   classes_map: dict, existing_by_name: dict) -> tuple:
+        """
+        Returns (lines, updates) for the "Buff/Debuff Uptime" section -
+        config.TRACKED_DEBUFFS (kept on the boss) and config.TRACKED_BUFFS
+        (kept on a player), each shown with an "all fights" (bosses+trash)
+        and a "boss fights only" uptime %, plus whichever raider contributed
+        the most of the boss-fight uptime (see
+        wcl_client.get_report_aura_uptime). An ability that never appeared
+        at all this raid (both percentages None) is omitted, same as an
+        un-attempted boss in _build_boss_lines.
+
+        The record compared against/updated (records["buffs"]) is always
+        the BOSS-ONLY percentage - trash uptime is too inconsistent raid-to-
+        raid to be a meaningful "personal best" - mirrors how clear-time
+        records are boss/instance-scoped, not raid-wide. updates is
+        {ability_name: new_best_boss_pct} for the caller to persist after a
+        successful post, same pattern as _build_clear_time_lines.
+        """
+        if not aura_uptime:
+            return [], {}
+
+        stored = records["buffs"]
+        lines, updates = [], {}
+        for name in config.TRACKED_DEBUFFS + config.TRACKED_BUFFS:
+            data = aura_uptime.get(name) or {}
+            boss_pct, all_pct = data.get("boss_pct"), data.get("all_pct")
+            if boss_pct is None and all_pct is None:
+                continue  # never appeared this raid - omit rather than clutter
+
+            icon = ""
+            spell_id = config.TRACKED_ABILITY_ICON_SPELL_IDS.get(name)
+            if spell_id:
+                spell = await self.bot.wowhead.get_spell(spell_id)
+                if spell.get("icon_url"):
+                    icon = await icons.ensure_spell_emoji(self.bot, existing_by_name, spell_id, spell["icon_url"])
+                    await asyncio.sleep(0.3)  # same pacing _build_loot_lines uses for item-icon provisioning
+
+            badge = ""
+            if boss_pct is not None:
+                prior = stored.get(name, {}).get("best_uptime_pct")
+                if prior is None:
+                    badge = " 🆕 **First time tracked**"
+                    updates[name] = boss_pct
+                elif boss_pct > prior:
+                    badge = f" ⚡ **New best!** (+{boss_pct - prior:.1f}%)"
+                    updates[name] = boss_pct
+                elif boss_pct < prior:
+                    badge = f" ({boss_pct - prior:+.1f}%)"
+
+            top_bit = ""
+            if data.get("top_player"):
+                top_icon = self._name_icon(guild, classes_map.get(data["top_player"]))
+                top_pct = data.get("top_player_pct")
+                top_pct_text = f" ({top_pct:.1f}%)" if top_pct is not None else ""
+                top_bit = f" — best kept by {top_icon}**{data['top_player']}**{top_pct_text}"
+
+            boss_text = f"{boss_pct:.1f}%" if boss_pct is not None else "?"
+            all_text = f"{all_pct:.1f}%" if all_pct is not None else "?"
+            lines.append(
+                f"{icon} **{name}** — {boss_text} bosses / {all_text} all fights{badge}{top_bit}"
+            )
+        return lines, updates
 
     def _build_parses_block(self, parses: list, fights: list, damage_done: dict, healing_done: dict,
                              guild: discord.Guild, classes_map: dict, personal_best_updates: dict) -> str:
@@ -1387,6 +1514,25 @@ class RaidSummaryCog(commands.Cog):
 
         clear_time_lines, clear_time_updates = self._build_clear_time_lines(tier_data, fights_by_encounter, records)
 
+        # Boss-fight IDs (this tier's configured bosses only, excluding trash
+        # AND the deliberate-reset wipes _group_fights_by_encounter already
+        # filtered out) - same scoping _tier_stats/_build_boss_lines use,
+        # needed here so the uptime section can show a "boss fights only"
+        # number alongside the "all fights" one - see get_report_aura_uptime.
+        boss_fight_ids = [
+            f["id"] for encounter_id in tier_data["bosses"].values()
+            for f in fights_by_encounter.get(encounter_id, [])
+        ]
+        try:
+            aura_uptime = await self.bot.wcl.get_report_aura_uptime(report_code, boss_fight_ids)
+        except Exception:
+            log.warning("Aura uptime lookup failed for %s", report_code, exc_info=True)
+            aura_uptime = {}
+
+        # Fetched once and reused for every icon this post provisions (loot,
+        # potions, buff/debuff uptime) - see _fetch_existing_app_emojis.
+        existing_by_name = await self._fetch_existing_app_emojis()
+
         header_ctx = {
             "clear_label": clear_label, "tier_name": tier_data["name"], "report_date": report_date,
             "killed_count": killed_count, "attempted_count": attempted_count, "total_pulls": total_pulls,
@@ -1424,7 +1570,36 @@ class RaidSummaryCog(commands.Cog):
         if deaths_block:
             pre_loot_blocks.append(self._text_block(deaths_block))
 
-        loot_lines = await self._build_loot_lines(resolved_loot, interaction.guild, classes_map)
+        activity_block = self._build_top3_block(
+            "Top Activity %", "⚡", summary.get("activity", {}), interaction.guild, classes_map,
+            lambda v: f"{v:.1f}%",
+        )
+        if activity_block:
+            pre_loot_blocks.append(self._text_block(activity_block))
+        potions_block = await self._build_potions_block(
+            summary.get("potion_casts", {}), interaction.guild, classes_map, existing_by_name
+        )
+        if potions_block:
+            pre_loot_blocks.append(self._text_block(potions_block))
+        interrupts_block = self._build_top3_block(
+            "Top Interrupters", "⛔", summary.get("interrupts", {}), interaction.guild, classes_map,
+            lambda v: f"{v} interrupt{'s' if v != 1 else ''}",
+        )
+        if interrupts_block:
+            pre_loot_blocks.append(self._text_block(interrupts_block))
+        dispels_block = self._build_top3_block(
+            "Top Dispellers", "🧹", summary.get("dispels", {}), interaction.guild, classes_map,
+            lambda v: f"{v} dispel{'s' if v != 1 else ''}",
+        )
+        if dispels_block:
+            pre_loot_blocks.append(self._text_block(dispels_block))
+        uptime_lines, uptime_updates = await self._build_uptime_lines(
+            aura_uptime, records, interaction.guild, classes_map, existing_by_name
+        )
+        if uptime_lines:
+            pre_loot_blocks.append(self._text_block("**Buff/Debuff Uptime**\n" + "\n".join(uptime_lines)))
+
+        loot_lines = await self._build_loot_lines(resolved_loot, interaction.guild, classes_map, existing_by_name)
         loot_blocks = self._build_loot_blocks(loot_lines)
 
         banner_source, banner_file = self._load_banner(tier_data["name"])
@@ -1451,8 +1626,8 @@ class RaidSummaryCog(commands.Cog):
             )
             return
 
-        # Only commit kill/clear-time/parse records once the post actually succeeded.
-        if newly_killed_ids or new_fastest_kills or clear_time_updates or parse_updates:
+        # Only commit kill/clear-time/parse/uptime records once the post actually succeeded.
+        if newly_killed_ids or new_fastest_kills or clear_time_updates or parse_updates or uptime_updates:
             for encounter_id in newly_killed_ids:
                 records["encounters"].setdefault(str(encounter_id), {})["first_seen_report"] = report_code
                 records["encounters"][str(encounter_id)]["first_seen_date"] = report_date
@@ -1469,6 +1644,10 @@ class RaidSummaryCog(commands.Cog):
                 boss_bests = records["parses"].setdefault(str(encounter_id), {})
                 for name, pct in name_map.items():
                     boss_bests[name] = {"best_percent": pct, "report_code": report_code, "date": report_date}
+            for ability_name, new_best_pct in uptime_updates.items():
+                records["buffs"][ability_name] = {
+                    "best_uptime_pct": new_best_pct, "report_code": report_code, "date": report_date,
+                }
             self._save_records(records)
 
         # Persisted so the ✏️ Edit / 🎁 Add Loot buttons can rebuild the
@@ -1627,7 +1806,8 @@ class RaidSummaryCog(commands.Cog):
             except Exception:
                 log.warning("Role composition lookup failed while adding loot for %s", report_code, exc_info=True)
 
-        loot_lines = await self._build_loot_lines(resolved_loot, interaction.guild, classes_map)
+        existing_by_name = await self._fetch_existing_app_emojis()
+        loot_lines = await self._build_loot_lines(resolved_loot, interaction.guild, classes_map, existing_by_name)
 
         record["loot_blocks"] = self._build_loot_blocks(loot_lines)
         record["header_ctx"]["loot_count"] = len(resolved_loot)

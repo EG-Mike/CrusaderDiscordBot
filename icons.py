@@ -62,28 +62,27 @@ def resolve_spec_icon(class_name: str, spec_name: str) -> str:
     return _resolve_app_emoji(f"spec:{class_name}:{spec_name}")
 
 
-async def ensure_item_emoji(client: discord.Client, existing_by_name: dict, item_id: int, icon_url: str) -> str:
+async def _ensure_wow_icon_emoji(client: discord.Client, existing_by_name: dict, key: str, icon_url: str) -> str:
     """
-    Lazily provisions (or reuses) a bot-owned application emoji for a WoW
-    item's icon, keyed by item ID - used by cogs/raid_summary.py to prefix
-    loot lines with a real icon instead of a generic colored square. Same
+    Shared by ensure_item_emoji/ensure_spell_emoji below - lazily provisions
+    (or reuses) a bot-owned application emoji for a WoW item/spell icon,
+    keyed by the given namespaced key ("item:<id>" / "spell:<id>"). Same
     underlying mechanism as /add-emoji (cogs/emoji_admin.py) and
-    provision_app_emojis() below, just provisioned on demand per item
-    instead of all at once at startup (the class/role/spec set is small and
-    fixed; the set of items that drop is not).
+    provision_app_emojis() below, just provisioned on demand instead of all
+    at once at startup (the class/role/spec set is small and fixed; the set
+    of items/abilities a raid summary might need icons for is not).
 
     `existing_by_name` should be fetched ONCE per command run (via
-    `await client.fetch_application_emojis()`) and passed in for every item
-    looked up in that run - avoids one full application-emoji-list fetch per
-    item. This function keeps it updated as it creates new emoji, so a
-    second lookup in the same run (e.g. the same trinket won by two people)
-    never re-creates one already made earlier in that same run.
+    `await client.fetch_application_emojis()`) and passed in for every
+    item/spell looked up in that run - avoids one full application-emoji-
+    list fetch per icon. This function keeps it updated as it creates new
+    emoji, so a second lookup in the same run never re-creates one already
+    made earlier in that same run.
 
     Returns the emoji as an inline-usable string (e.g. "<:item_30023:123...>"),
     or '' if it couldn't be created - never raises, a missing icon just
-    means that loot line has no emoji prefix.
+    means no emoji prefix for that caller.
     """
-    key = f"item:{item_id}"
     cached = _app_emoji_cache.get(key)
     if cached:
         return str(cached)
@@ -100,12 +99,26 @@ async def ensure_item_emoji(client: discord.Client, existing_by_name: dict, item
                 image_bytes = await resp.read()
         emoji = await client.create_application_emoji(name=emoji_name, image=image_bytes)
     except Exception:
-        log.warning("Couldn't provision item emoji for item %s", item_id, exc_info=True)
+        log.warning("Couldn't provision icon emoji for %s", key, exc_info=True)
         return ""
 
     _app_emoji_cache[key] = emoji
     existing_by_name[emoji_name] = emoji
     return str(emoji)
+
+
+async def ensure_item_emoji(client: discord.Client, existing_by_name: dict, item_id: int, icon_url: str) -> str:
+    """Item-icon flavor of _ensure_wow_icon_emoji - used by
+    cogs/raid_summary.py to prefix loot lines and potion leaderboard entries
+    with a real icon instead of a generic colored square/emoji."""
+    return await _ensure_wow_icon_emoji(client, existing_by_name, f"item:{item_id}", icon_url)
+
+
+async def ensure_spell_emoji(client: discord.Client, existing_by_name: dict, spell_id: int, icon_url: str) -> str:
+    """Spell-icon flavor of _ensure_wow_icon_emoji - used by
+    cogs/raid_summary.py's buff/debuff-uptime section to prefix each tracked
+    ability (config.TRACKED_ABILITY_ICON_SPELL_IDS) with its real icon."""
+    return await _ensure_wow_icon_emoji(client, existing_by_name, f"spell:{spell_id}", icon_url)
 
 
 async def provision_app_emojis(client: discord.Client):

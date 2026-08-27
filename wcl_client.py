@@ -51,6 +51,7 @@ def _normalize_role(role_key: str) -> str:
 _SUMMARY_KEYS = {
     "zone", "start_time", "end_time", "fights", "kill_counts",
     "kill_fight_roles", "parses", "deaths", "damage_done", "healing_done",
+    "activity", "potion_casts", "interrupts", "dispels",
 }
 
 CHARACTER_QUERY = """
@@ -178,6 +179,123 @@ query ReportHealing($code: String!, $fightIDs: [Int]!) {
   reportData {
     report(code: $code) {
       table(fightIDs: $fightIDs, dataType: Healing)
+    }
+  }
+}
+"""
+
+# dataType: Summary, across every fight at once - the same table that backs
+# WCL's own combined (role-agnostic) "Summary" tab, whose entries carry each
+# player's activeTime - the "Top Activity %" fun-stat leaderboard divides
+# that by the raid's total selected-fight duration. Unlike DamageDone/
+# Healing (role-specific), this is the one table that gives every raider,
+# tank/healer/DPS alike, a single comparable activity number.
+REPORT_ACTIVITY_QUERY = """
+query ReportActivity($code: String!, $fightIDs: [Int]!) {
+  reportData {
+    report(code: $code) {
+      table(fightIDs: $fightIDs, dataType: Summary)
+    }
+  }
+}
+"""
+
+# dataType: Casts, across every fight at once - per-player cast counts
+# broken down by ability (same nested-breakdown shape DamageDone/Healing
+# entries use for their own per-ability totals). Used for the "Top potion
+# users" leaderboard (config.TRACKED_POTIONS, matched by ability name) -
+# not filtered to a specific abilityID here since matching by name against
+# the full per-player breakdown avoids needing an exact-rank spell ID (see
+# config.py's TRACKED_POTIONS comment).
+REPORT_CASTS_QUERY = """
+query ReportCasts($code: String!, $fightIDs: [Int]!) {
+  reportData {
+    report(code: $code) {
+      table(fightIDs: $fightIDs, dataType: Casts)
+    }
+  }
+}
+"""
+
+# dataType: Interrupts / Dispels, across every fight at once - flat per-
+# player totals, same shape as Deaths/DamageDone - the "Top Interrupters"/
+# "Top Dispellers" fun-stat leaderboards.
+REPORT_INTERRUPTS_QUERY = """
+query ReportInterrupts($code: String!, $fightIDs: [Int]!) {
+  reportData {
+    report(code: $code) {
+      table(fightIDs: $fightIDs, dataType: Interrupts)
+    }
+  }
+}
+"""
+
+REPORT_DISPELS_QUERY = """
+query ReportDispels($code: String!, $fightIDs: [Int]!) {
+  reportData {
+    report(code: $code) {
+      table(fightIDs: $fightIDs, dataType: Dispels)
+    }
+  }
+}
+"""
+
+# --- buff/debuff uptime tracking (cogs/raid_summary.py's "Buff/Debuff
+# Uptime" section) ---
+#
+# dataType: Debuffs/Buffs, unfiltered by abilityID - returns every aura's
+# own totalUptime (ms) within the given fights, one entry per distinct
+# ability. config.TRACKED_DEBUFFS/TRACKED_BUFFS match against these entries'
+# NAME client-side (see that file's comment on why: matching by exact spell
+# ID would miss whichever rank a given raid actually used). hostilityType
+# picks which side's auras this reads: Enemies for a debuff living on the
+# boss, Friendlies for a buff living on a raid member.
+REPORT_DEBUFFS_QUERY = """
+query ReportDebuffs($code: String!, $fightIDs: [Int]!) {
+  reportData {
+    report(code: $code) {
+      table(fightIDs: $fightIDs, dataType: Debuffs, hostilityType: Enemies)
+    }
+  }
+}
+"""
+
+REPORT_BUFFS_QUERY = """
+query ReportBuffs($code: String!, $fightIDs: [Int]!) {
+  reportData {
+    report(code: $code) {
+      table(fightIDs: $fightIDs, dataType: Buffs, hostilityType: Friendlies)
+    }
+  }
+}
+"""
+
+# Same two tables, viewed "by source"/"by target" instead of the default
+# per-ability view - regroups entries by PLAYER instead, each carrying a
+# nested per-ability uptime breakdown, so the raid summary can call out
+# whichever raider contributed the most of a tracked debuff/buff's uptime
+# (the applying warrior/warlock for a debuff kept on the boss; the paladin's
+# target - usually the tank - actually wearing a buff). The `viewBy`
+# argument and this per-player nested shape mirror how WCL's own UI lets you
+# flip a Buffs/Debuffs tab between "by ability" and "by source"/"by target",
+# but - like GUILD_ZONE_RANKINGS_QUERY above - this could not be verified
+# against a live report from this sandbox; see get_report_aura_uptime's
+# docstring for how a shape surprise here degrades gracefully.
+REPORT_DEBUFFS_BY_SOURCE_QUERY = """
+query ReportDebuffsBySource($code: String!, $fightIDs: [Int]!) {
+  reportData {
+    report(code: $code) {
+      table(fightIDs: $fightIDs, dataType: Debuffs, hostilityType: Enemies, viewBy: Source)
+    }
+  }
+}
+"""
+
+REPORT_BUFFS_BY_TARGET_QUERY = """
+query ReportBuffsByTarget($code: String!, $fightIDs: [Int]!) {
+  reportData {
+    report(code: $code) {
+      table(fightIDs: $fightIDs, dataType: Buffs, hostilityType: Friendlies, viewBy: Target)
     }
   }
 }
@@ -619,6 +737,107 @@ class WarcraftLogsClient:
             return {}
         return dict(totals)
 
+    async def _fetch_activity(self, session, headers, report_code: str, fight_ids: list, total_duration_ms: int) -> dict:
+        """Best-effort {character_name: activity_pct} - each player's
+        activeTime (from the Summary table - see REPORT_ACTIVITY_QUERY) as a
+        % of the raid's total selected-fight duration, matching WCL's own
+        "Active %" column."""
+        entries = await self._fetch_table_entries(session, headers, report_code, fight_ids, REPORT_ACTIVITY_QUERY)
+        result = {}
+        try:
+            for entry in entries:
+                name = entry.get("name")
+                active_ms = entry.get("activeTime")
+                if name and active_ms is not None and total_duration_ms:
+                    result[name] = min(100.0, active_ms / total_duration_ms * 100)
+        except Exception:
+            log.warning("Unexpected shape for activity summary table - skipping", exc_info=True)
+            return {}
+        return result
+
+    async def _fetch_ability_cast_counts(self, session, headers, report_code: str, fight_ids: list, tracked_names: set) -> dict:
+        """Best-effort {character_name: cast_count} - total casts of any
+        ability in tracked_names, summed per player, from the Casts table's
+        per-player "abilities" breakdown (see REPORT_CASTS_QUERY)."""
+        entries = await self._fetch_table_entries(session, headers, report_code, fight_ids, REPORT_CASTS_QUERY)
+        result = {}
+        try:
+            for entry in entries:
+                name = entry.get("name")
+                if not name:
+                    continue
+                for ability in entry.get("abilities") or []:
+                    if ability.get("name") in tracked_names:
+                        result[name] = result.get(name, 0) + (ability.get("total") or 0)
+        except Exception:
+            log.warning("Unexpected shape for casts table - skipping", exc_info=True)
+            return {}
+        return result
+
+    async def _fetch_flat_count_table(self, session, headers, report_code: str, fight_ids: list, query: str) -> dict:
+        """Best-effort {character_name: total} for a table dataType whose
+        entries are already flat per-player counts (Interrupts, Dispels) -
+        same shape Deaths/DamageDone already use."""
+        entries = await self._fetch_table_entries(session, headers, report_code, fight_ids, query)
+        result = {}
+        try:
+            for entry in entries:
+                name = entry.get("name")
+                if name:
+                    result[name] = result.get(name, 0) + (entry.get("total") or 0)
+        except Exception:
+            log.warning("Unexpected shape for count table - skipping", exc_info=True)
+            return {}
+        return result
+
+    async def _fetch_aura_uptime(self, session, headers, report_code: str, fight_ids: list, query: str) -> dict:
+        """Best-effort {ability_name: total_uptime_ms} from an unfiltered
+        Buffs/Debuffs table (see REPORT_DEBUFFS_QUERY/REPORT_BUFFS_QUERY) -
+        every aura on that side (enemy/friendly), not just the tracked ones;
+        matching against config.TRACKED_DEBUFFS/TRACKED_BUFFS happens in the
+        caller (get_report_aura_uptime)."""
+        entries = await self._fetch_table_entries(session, headers, report_code, fight_ids, query)
+        result = {}
+        try:
+            for entry in entries:
+                name = entry.get("name")
+                uptime_ms = entry.get("totalUptime")
+                if name and uptime_ms is not None:
+                    result[name] = result.get(name, 0) + uptime_ms
+        except Exception:
+            log.warning("Unexpected shape for aura uptime table - skipping", exc_info=True)
+            return {}
+        return result
+
+    async def _fetch_aura_uptime_by_player(self, session, headers, report_code: str, fight_ids: list, query: str) -> dict:
+        """Best-effort {ability_name: {character_name: uptime_ms}} from a
+        Buffs/Debuffs table queried "by source"/"by target" (see
+        REPORT_DEBUFFS_BY_SOURCE_QUERY/REPORT_BUFFS_BY_TARGET_QUERY) -
+        entries become players instead of abilities, each carrying a nested
+        per-ability uptime breakdown (assumed to mirror the "abilities"
+        breakdown DamageDone/Healing/Casts entries already use elsewhere in
+        this file - not independently verified for aura tables specifically,
+        see those queries' own docstring). Returns {} on any unexpected
+        shape rather than raising, same as every other best-effort parse
+        here."""
+        entries = await self._fetch_table_entries(session, headers, report_code, fight_ids, query)
+        result = {}
+        try:
+            for entry in entries:
+                player_name = entry.get("name")
+                if not player_name:
+                    continue
+                for ability in entry.get("abilities") or []:
+                    ability_name = ability.get("name")
+                    uptime_ms = ability.get("totalUptime")
+                    if ability_name and uptime_ms is not None:
+                        bucket = result.setdefault(ability_name, {})
+                        bucket[player_name] = bucket.get(player_name, 0) + uptime_ms
+        except Exception:
+            log.warning("Unexpected shape for per-player aura uptime table - skipping", exc_info=True)
+            return {}
+        return result
+
     async def get_report_summary(self, report_code: str) -> dict:
         """
         THE single per-report fetch point. Everything any feature needs from
@@ -655,6 +874,10 @@ class WarcraftLogsClient:
             "deaths": {name: death_count},                   # best-effort
             "damage_done": {name: total_damage},              # best-effort
             "healing_done": {name: total_healing},            # best-effort
+            "activity": {name: activity_pct},                 # best-effort
+            "potion_casts": {name: cast_count},               # best-effort - config.TRACKED_POTIONS combined
+            "interrupts": {name: interrupt_count},            # best-effort
+            "dispels": {name: dispel_count},                  # best-effort
           }
         """
         cached = self._report_cache.get(report_code)
@@ -681,7 +904,8 @@ class WarcraftLogsClient:
                 empty = {
                     "zone": None, "start_time": None, "end_time": None, "fights": [],
                     "kill_counts": {}, "kill_fight_roles": {}, "parses": [], "deaths": {},
-                    "damage_done": {}, "healing_done": {},
+                    "damage_done": {}, "healing_done": {}, "activity": {}, "potion_casts": {},
+                    "interrupts": {}, "dispels": {},
                 }
                 self._report_cache.set(report_code, **empty)
                 return empty
@@ -711,6 +935,19 @@ class WarcraftLogsClient:
             damage_done = await self._fetch_damage_done(session, headers, report_code, all_fight_ids)
             healing_done = await self._fetch_healing_done(session, headers, report_code, all_fight_ids)
 
+            # activeTime is a % of the raid's total selected-fight duration
+            # (bosses + trash, same fight set as damage/healing/deaths above).
+            all_duration_ms = sum(
+                (f["end_time"] or 0) - (f["start_time"] or 0) for f in fights
+                if f["start_time"] is not None and f["end_time"] is not None
+            )
+            activity = await self._fetch_activity(session, headers, report_code, all_fight_ids, all_duration_ms)
+            potion_casts = await self._fetch_ability_cast_counts(
+                session, headers, report_code, all_fight_ids, set(config.TRACKED_POTIONS)
+            )
+            interrupts = await self._fetch_flat_count_table(session, headers, report_code, all_fight_ids, REPORT_INTERRUPTS_QUERY)
+            dispels = await self._fetch_flat_count_table(session, headers, report_code, all_fight_ids, REPORT_DISPELS_QUERY)
+
             zone = report.get("zone")
             summary = {
                 "zone": {"id": zone.get("id"), "name": zone.get("name")} if zone else None,
@@ -723,6 +960,10 @@ class WarcraftLogsClient:
                 "deaths": deaths,
                 "damage_done": damage_done,
                 "healing_done": healing_done,
+                "activity": activity,
+                "potion_casts": potion_casts,
+                "interrupts": interrupts,
+                "dispels": dispels,
             }
 
         self._report_cache.set(report_code, **summary)
@@ -789,6 +1030,100 @@ class WarcraftLogsClient:
         cached_entry["role_composition"] = composition
         self._report_cache.set(report_code, **cached_entry)
         return composition
+
+    async def get_report_aura_uptime(self, report_code: str, boss_fight_ids: list) -> dict:
+        """
+        Best-effort raid-wide uptime for config.TRACKED_DEBUFFS (kept on the
+        boss) and config.TRACKED_BUFFS (kept on a player), matched by
+        ability NAME - see that config comment for why name, not spell ID.
+        For each tracked ability, returns BOTH an "all fights" uptime %
+        (bosses + trash, the report's whole fight list) and a "boss fights
+        only" uptime % (just boss_fight_ids, supplied by the caller since
+        only it knows which tier/bosses are in play for this report), plus
+        whichever raider contributed the most of the BOSS-FIGHT uptime (the
+        applying player for a debuff on the boss, the wearer for a buff on
+        a player) - trash uptime is too inconsistent raid-to-raid to be a
+        meaningful "who kept this up" callout.
+
+        Like get_report_role_composition, this needs caller-supplied context
+        (boss_fight_ids) get_report_summary() doesn't have, so it's its own
+        lazily-cached call rather than folded into that always-cheap fetch -
+        cached on the same per-report entry, invalidated if a later call
+        passes a different boss_fight_ids (e.g. a report re-summarized under
+        a different tier pick).
+
+        This whole feature's WCL table shape - especially the "by source"/
+        "by target" per-player breakdown - could not be verified against a
+        live report from this sandbox (see REPORT_DEBUFFS_BY_SOURCE_QUERY's
+        docstring). A shape surprise just means that ability's percentages
+        and/or top-player come back None, never a crash - if numbers look
+        wrong/empty once tested against a real report, this is the first
+        place to check.
+
+        Returns {ability_name: {"all_pct": float|None, "boss_pct": float|None,
+                                  "top_player": str|None, "top_player_pct": float|None}}
+        """
+        summary = await self.get_report_summary(report_code)
+        if not summary.get("fights"):
+            return {}
+
+        cache_key_ids = sorted(boss_fight_ids)
+        cached_entry = self._report_cache.get(report_code) or {}
+        cached = cached_entry.get("aura_uptime")
+        if cached is not None and cached.get("boss_fight_ids") == cache_key_ids:
+            return cached["data"]
+
+        fights = summary["fights"]
+        all_fight_ids = [f["id"] for f in fights]
+
+        def _duration_ms(ids: set) -> int:
+            return sum(
+                (f["end_time"] or 0) - (f["start_time"] or 0) for f in fights
+                if f["id"] in ids and f["start_time"] is not None and f["end_time"] is not None
+            )
+
+        all_duration_ms = _duration_ms(set(all_fight_ids))
+        boss_duration_ms = _duration_ms(set(boss_fight_ids))
+
+        def _pct(uptime_ms, duration_ms):
+            if not duration_ms:
+                return None
+            return min(100.0, uptime_ms / duration_ms * 100)
+
+        token = await self._get_token()
+        headers = {"Authorization": f"Bearer {token}"}
+        async with aiohttp.ClientSession() as session:
+            debuffs_all = await self._fetch_aura_uptime(session, headers, report_code, all_fight_ids, REPORT_DEBUFFS_QUERY)
+            debuffs_boss = await self._fetch_aura_uptime(session, headers, report_code, boss_fight_ids, REPORT_DEBUFFS_QUERY)
+            debuffs_by_source = await self._fetch_aura_uptime_by_player(
+                session, headers, report_code, boss_fight_ids, REPORT_DEBUFFS_BY_SOURCE_QUERY
+            )
+            buffs_all = await self._fetch_aura_uptime(session, headers, report_code, all_fight_ids, REPORT_BUFFS_QUERY)
+            buffs_boss = await self._fetch_aura_uptime(session, headers, report_code, boss_fight_ids, REPORT_BUFFS_QUERY)
+            buffs_by_target = await self._fetch_aura_uptime_by_player(
+                session, headers, report_code, boss_fight_ids, REPORT_BUFFS_BY_TARGET_QUERY
+            )
+
+        result = {}
+        for name, all_uptime, boss_uptime, by_player in (
+            *((name, debuffs_all, debuffs_boss, debuffs_by_source) for name in config.TRACKED_DEBUFFS),
+            *((name, buffs_all, buffs_boss, buffs_by_target) for name in config.TRACKED_BUFFS),
+        ):
+            entry = {
+                "all_pct": _pct(all_uptime[name], all_duration_ms) if name in all_uptime else None,
+                "boss_pct": _pct(boss_uptime[name], boss_duration_ms) if name in boss_uptime else None,
+                "top_player": None, "top_player_pct": None,
+            }
+            per_player = by_player.get(name)
+            if per_player:
+                top_name, top_uptime_ms = max(per_player.items(), key=lambda kv: kv[1])
+                entry["top_player"] = top_name
+                entry["top_player_pct"] = _pct(top_uptime_ms, boss_duration_ms)
+            result[name] = entry
+
+        cached_entry["aura_uptime"] = {"boss_fight_ids": cache_key_ids, "data": result}
+        self._report_cache.set(report_code, **cached_entry)
+        return result
 
     async def get_report_kill_counts(self, report_code: str) -> dict:
         """

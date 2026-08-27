@@ -300,6 +300,50 @@ def color_for_percentile(pct) -> int:
 # summary's "elite parses" section.
 PARSE_HIGHLIGHT_THRESHOLD = 99
 
+# --- Raid summary: buff/debuff uptime + fun-stat ability tracking ---
+# Matched against WCL's own Buffs/Debuffs/Casts tables by ability display
+# NAME, not spell ID - Sunder Armor/Judgement of Wisdom/potions etc. each
+# have several ranks with a different spell ID depending on which one was
+# cast, while the ability's NAME stays the same across all of them. Same
+# name-vs-ID reasoning CLEAR_STATUS_TAG_NAMES above uses.
+#
+# Debuffs tracked on the BOSS (WCL table dataType: Debuffs, hostilityType:
+# Enemies) - shown with both an "all fights" (bosses+trash) and a
+# "boss fights only" uptime %, plus whichever raider contributed the most
+# of the boss-fight uptime. See cogs/raid_summary.py's _build_uptime_lines.
+TRACKED_DEBUFFS = ["Sunder Armor", "Expose Armor", "Curse of the Elements", "Curse of Recklessness"]
+
+# Buffs tracked on a PLAYER (WCL table dataType: Buffs, hostilityType: Friendlies).
+TRACKED_BUFFS = ["Judgement of Wisdom", "Judgement of Light"]
+
+# Potions counted together as one "Top potion users" leaderboard (WCL table
+# dataType: Casts, matched by ability name same as the buffs/debuffs above).
+TRACKED_POTIONS = ["Destruction Potion", "Haste Potion"]
+
+# Item IDs for the two potions above - used only to show their real Wowhead
+# icons on the "Top potion users" leaderboard (via wowhead.get_item(), the
+# same lookup loot icons already use), not for WCL matching (that's by name,
+# see TRACKED_POTIONS). Confirmed against Wowhead's TBC Classic item pages.
+TRACKED_POTION_ITEM_IDS = {
+    "Destruction Potion": 22839,
+    "Haste Potion": 22838,
+}
+
+# Spell IDs for TRACKED_DEBUFFS/TRACKED_BUFFS above - used ONLY to fetch each
+# ability's icon via Wowhead (wowhead.get_spell()), NOT for WCL matching
+# (that's by name - see the comment above TRACKED_DEBUFFS for why: WCL spell
+# IDs differ per rank, but the icon is the same across ranks for all of
+# these, so any correct rank's ID works fine here). Confirmed against
+# Wowhead's TBC Classic spell pages.
+TRACKED_ABILITY_ICON_SPELL_IDS = {
+    "Sunder Armor": 25225,
+    "Expose Armor": 11198,
+    "Curse of the Elements": 27228,
+    "Curse of Recklessness": 27226,
+    "Judgement of Wisdom": 20354,
+    "Judgement of Light": 27162,
+}
+
 # WoW item quality (as returned by Wowhead) -> embed/accent color.
 ITEM_QUALITY_COLORS = {
     0: 0x9D9D9D,  # poor (grey)
