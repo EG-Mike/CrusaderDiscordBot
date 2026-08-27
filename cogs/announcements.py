@@ -14,11 +14,16 @@ Flow:
      ephemeral interaction that expires.
   4. When ready, click Publish - a native channel picker appears, and the
      announcement gets reconstructed in its final form in the chosen
-     channel. The draft in the sandbox is marked "Published" and its
-     buttons removed.
-  5. Every published announcement also carries its own persistent Edit
-     button - ANY moderator can tweak it further after the fact, same
-     pattern as the draft.
+     channel. The draft in the sandbox is marked "Published to #channel by
+     X" - its Publish button is gone (can't re-publish by accident), but
+     its Edit button STAYS, now retargeted at the published message (see
+     _on_editpublished_click) rather than the draft.
+  5. The published message itself carries no Edit button - unlike the
+     sandbox, its audience is the whole channel, not just moderators, so
+     editing stays a mod-only sandbox action rather than a public button
+     only some viewers could use. (Announcements published before this
+     changed keep their old public Edit button working - see cog_load's
+     legacy registration - just don't get a new one.)
 
 Self-contained like cogs/apply.py - a future feature is a new cog file, not
 changes here.
@@ -96,7 +101,22 @@ class AnnouncementsCog(commands.Cog):
         # Registers the persistent buttons so they keep working across bot
         # restarts, on every previously-posted draft/announcement.
         self.bot.add_view(self._render_draft({"title": None, "body": ""}))
-        self.bot.add_view(self._render_posted_announcement({"title": None, "body": ""}))
+        self.bot.add_view(self._render_published_draft_marker({"title": None, "body": ""}, 0, "someone"))
+
+        # _render_posted_announcement no longer attaches an Edit button to
+        # NEW announcements (see its docstring), but announcements already
+        # published before this change still carry the old "wow_announce_edit"
+        # button baked into their message - registering a bare dummy view
+        # for that custom_id keeps those old buttons working instead of
+        # dead-clicking after a restart. _on_published_edit_click itself is
+        # unchanged and still shared with the new sandbox-side Edit button.
+        legacy_dummy = discord.ui.View(timeout=None)
+        legacy_edit_button = discord.ui.Button(
+            label="✏️ Edit", style=discord.ButtonStyle.secondary, custom_id="wow_announce_edit"
+        )
+        legacy_edit_button.callback = self._on_published_edit_click
+        legacy_dummy.add_item(legacy_edit_button)
+        self.bot.add_view(legacy_dummy)
 
     # --- permission check ------------------------------------------------
 
@@ -163,14 +183,31 @@ class AnnouncementsCog(commands.Cog):
         return view
 
     def _render_posted_announcement(self, record: dict) -> discord.ui.LayoutView:
+        """The final, public-facing message - no Edit button (see
+        _render_published_draft_marker for where that lives now): a
+        published announcement's audience is the whole channel, not just
+        moderators, and a button only some viewers can use was worth
+        moving off it entirely rather than just gating."""
         view = discord.ui.LayoutView(timeout=None)
         view.add_item(self._build_announcement_container(record))
+        return view
+
+    def _render_published_draft_marker(self, record: dict, published_channel_id: int, published_by: str) -> discord.ui.LayoutView:
+        """What the sandbox draft turns into after Publish - same content
+        preview, a "Published to #channel by X" marker, and (unlike before)
+        an Edit button that stays right here rather than on the public
+        message - see _on_editpublished_click. Sandbox is mod-only, so
+        editing from here needs no extra visibility consideration the old
+        public-message button did."""
+        view = discord.ui.LayoutView(timeout=None)
+        view.add_item(self._build_announcement_container(record))
+        view.add_item(discord.ui.TextDisplay(f"-# ✅ Published to <#{published_channel_id}> by {published_by}"))
 
         action_row = discord.ui.ActionRow()
         edit_button = discord.ui.Button(
-            label="✏️ Edit", style=discord.ButtonStyle.secondary, custom_id="wow_announce_edit"
+            label="✏️ Edit", style=discord.ButtonStyle.secondary, custom_id="wow_announce_editpublished"
         )
-        edit_button.callback = self._on_published_edit_click
+        edit_button.callback = self._on_editpublished_click
         action_row.add_item(edit_button)
         view.add_item(action_row)
         return view
@@ -325,6 +362,7 @@ class AnnouncementsCog(commands.Cog):
             await interaction.followup.send("Couldn't find that channel.", ephemeral=True)
             return
 
+        published_by_label = str(interaction.user)
         final_record = {"title": record.get("title"), "body": record.get("body")}
         message = await target_channel.send(view=self._render_posted_announcement(final_record))
         self.store.set(
@@ -334,29 +372,57 @@ class AnnouncementsCog(commands.Cog):
             channel_id=chosen["channel_id"],
             created_by=interaction.user.id,
             is_draft=False,
+            draft_message_id=draft_message_id,
         )
 
-        # Mark the draft as published and strip its buttons so it can't be
-        # re-published by accident.
+        # Mark the draft as published (kept alive, not stripped of buttons -
+        # its Edit button now edits the PUBLISHED message, see
+        # _on_editpublished_click, rather than disappearing).
         self.store.update(
-            draft_message_id, published=True, published_channel_id=chosen["channel_id"]
+            draft_message_id, published=True, published_channel_id=chosen["channel_id"],
+            published_message_id=message.id, published_by=published_by_label,
         )
         sandbox_channel = self.bot.get_channel(int(self.sandbox_channel_id))
         if sandbox_channel is not None:
             try:
                 draft_message = await sandbox_channel.fetch_message(draft_message_id)
-                published_marker_view = discord.ui.LayoutView(timeout=None)
-                published_marker_view.add_item(self._build_announcement_container(record))
-                published_marker_view.add_item(discord.ui.TextDisplay(
-                    f"-# ✅ Published to <#{chosen['channel_id']}> by {interaction.user}"
-                ))
-                await draft_message.edit(view=published_marker_view)
+                await draft_message.edit(
+                    view=self._render_published_draft_marker(record, chosen["channel_id"], published_by_label)
+                )
             except (discord.NotFound, discord.Forbidden):
                 pass
 
         await interaction.followup.send(f"🚀 Published to <#{chosen['channel_id']}>.", ephemeral=True)
 
     # --- editing an already-published announcement --------------------
+
+    async def _on_editpublished_click(self, interaction: discord.Interaction):
+        """The sandbox draft's own Edit button once it's marked Published -
+        see _render_published_draft_marker. Looks up the linked published
+        message (stored on the draft's own record at publish time) rather
+        than using interaction.message.id directly, since the button lives
+        on the DRAFT message here, not the published one."""
+        if not await self._is_mod(interaction.guild, interaction.user.id):
+            await interaction.response.send_message(
+                "Only moderators can edit announcements.", ephemeral=True
+            )
+            return
+        draft_record = self.store.get(interaction.message.id)
+        published_message_id = (draft_record or {}).get("published_message_id")
+        published_record = self.store.get(published_message_id) if published_message_id else None
+        if published_record is None:
+            await interaction.response.send_message(
+                "Couldn't find the published announcement's record.", ephemeral=True
+            )
+            return
+        modal = AnnouncementModal(
+            self,
+            mode="edit_published",
+            message_id=published_message_id,
+            prefill_title=published_record.get("title"),
+            prefill_body=published_record.get("body"),
+        )
+        await interaction.response.send_modal(modal)
 
     async def _on_published_edit_click(self, interaction: discord.Interaction):
         if not await self._is_mod(interaction.guild, interaction.user.id):
@@ -408,7 +474,37 @@ class AnnouncementsCog(commands.Cog):
             return
 
         await message.edit(view=self._render_posted_announcement(record))
+        await self._sync_sandbox_preview(record)
         await interaction.followup.send("Announcement updated!", ephemeral=True)
+
+    async def _sync_sandbox_preview(self, published_record: dict):
+        """Keeps the sandbox draft's displayed content preview in sync after
+        its linked published announcement is edited - otherwise the sandbox
+        message would keep showing the pre-edit title/body forever. A no-op
+        for a published record with no draft_message_id link (announcements
+        published before this existed) - nothing to sync back to."""
+        draft_message_id = published_record.get("draft_message_id")
+        if not draft_message_id or not self.sandbox_channel_id:
+            return
+        draft_record = self.store.get(draft_message_id)
+        if draft_record is None:
+            return
+
+        self.store.update(draft_message_id, title=published_record.get("title"), body=published_record.get("body"))
+        draft_record = self.store.get(draft_message_id)
+
+        sandbox_channel = self.bot.get_channel(int(self.sandbox_channel_id))
+        if sandbox_channel is None:
+            return
+        try:
+            draft_message = await sandbox_channel.fetch_message(draft_message_id)
+        except (discord.NotFound, discord.Forbidden):
+            return
+        await draft_message.edit(
+            view=self._render_published_draft_marker(
+                draft_record, draft_record.get("published_channel_id"), draft_record.get("published_by", "a moderator"),
+            )
+        )
 
 
 async def setup(bot: commands.Bot):

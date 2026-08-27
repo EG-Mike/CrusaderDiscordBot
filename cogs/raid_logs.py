@@ -41,10 +41,13 @@ Design, per discussion:
   - What Summarize actually runs depends on the tag - "Main Raid" attaches
     the log to attendance.py's tracked list, refreshes the roster and
     overview messages (stamped with who/when - see attendance.py's
-    updated_by param), and posts a notification to #attendance-check with
-    a button to continue into /raidsummary. "Alt Raid" skips the
-    attendance steps entirely and posts that same continue-to-/raidsummary
-    button in this channel instead. "Other" gets no Summarize button and
+    updated_by param), and posts a notification with a button to continue
+    into /raidsummary - to attendance.py's MODERATOR_CHANNEL_ID if
+    configured (see _summary_prompt_channel_id), falling back to
+    #attendance-check itself otherwise. "Alt Raid" skips the attendance
+    steps entirely and posts that same continue-to-/raidsummary button the
+    same place (falling back to this repost channel instead of
+    #attendance-check). "Other" gets no Summarize button and
     no automation at all - it's a label only; post a summary manually with
     /raidsummary if one's ever actually needed for one.
   - The Gargul loot paste always needs a human at the keyboard, so even an
@@ -541,9 +544,20 @@ class RaidLogsCog(commands.Cog):
             await self._run_main_automation(guild, entry, who_label, tier_guess, is_auto)
         elif entry["tag"] == "alt":
             await self._post_summary_prompt(
-                self.repost_channel_id, entry, raid_type="alt",
+                self._summary_prompt_channel_id(self.repost_channel_id), entry, raid_type="alt",
                 tier_guess=tier_guess, who_label=who_label, is_auto=is_auto,
             )
+
+    def _summary_prompt_channel_id(self, fallback_channel_id):
+        """Prefers AttendanceCog's MODERATOR_CHANNEL_ID (mods actually watch
+        that channel) for the Post Raid Summary prompt - see
+        _post_summary_prompt - falling back to fallback_channel_id if
+        AttendanceCog isn't loaded or that setting isn't configured, same
+        as before this existed."""
+        attendance_cog = self.bot.get_cog("AttendanceCog")
+        if attendance_cog is not None and attendance_cog.moderator_channel_id:
+            return attendance_cog.moderator_channel_id
+        return fallback_channel_id
 
     async def _run_main_automation(self, guild: discord.Guild, entry: dict, who_label: str, tier_guess, is_auto: bool):
         attendance_cog = self.bot.get_cog("AttendanceCog")
@@ -563,7 +577,7 @@ class RaidLogsCog(commands.Cog):
         # /checkattendance run would. No separate notify call needed here.
         await attendance_cog._refresh_overview_message(guild, updated_by=who_label)
         await self._post_summary_prompt(
-            attendance_cog.attendance_channel_id, entry, raid_type="main",
+            self._summary_prompt_channel_id(attendance_cog.attendance_channel_id), entry, raid_type="main",
             tier_guess=tier_guess, who_label=who_label, is_auto=is_auto,
         )
 
@@ -623,6 +637,20 @@ class RaidLogsCog(commands.Cog):
             ),
             ephemeral=True,
         )
+
+        # One-shot: strip the button so it can't be clicked again and start
+        # a second, duplicate /raidsummary flow for the same log - the
+        # moderator who clicked it already has their own ephemeral prompt
+        # above; /raidsummary is always still available directly for
+        # anyone else. Same "loses its buttons once acted on" pattern
+        # announcements.py's draft message already uses after Publish.
+        try:
+            original_content = interaction.message.content or ""
+            await interaction.message.edit(
+                content=f"{original_content}\n✅ Started by {interaction.user.display_name}.", view=None
+            )
+        except (discord.NotFound, discord.Forbidden):
+            pass
 
     # --- daily auto-summarize cutoff ---------------------------------------
 
