@@ -10,9 +10,15 @@ Design, per discussion:
   - A moderator runs /raidsummary once per raid, giving it: which tier was
     raided, the WCL report link, whether it was a full clear or still
     progress, whether it's a main or alt/fun raid, and optionally the
-    Gargul loot export (as a file attachment - can be added later, see
+    Gargul loot export pasted directly (gargul_export_text - a normal
+    night's export is well under Discord's 6000-char option ceiling, so
+    this covers the common case; can be added/replaced later too, see
     below), a note, and a media link (YouTube/Twitch clip or an image) to
-    feature.
+    feature. A paste that lands exactly at that 6000-char ceiling is
+    rejected rather than trusted, since Discord's own input box silently
+    truncates rather than refusing to submit - the rejection points the
+    moderator at the 🎁 Add/Update Loot button's file upload instead,
+    which has no such limit.
   - All WCL data for the report (fights/pulls, parse rankings, deaths,
     damage done, healing done) comes from ONE cached fetch -
     wcl_client.WarcraftLogsClient.get_report_summary() - shared with
@@ -131,6 +137,15 @@ RECORDS_KEY = "raid_summary_records"
 EDIT_BUTTON_CUSTOM_ID = "raidsummary_edit_btn"
 ADD_LOOT_BUTTON_CUSTOM_ID = "raidsummary_addloot_btn"
 ADD_LOOT_WAIT_SECONDS = 300
+
+# Discord's own hard ceiling for a slash command STRING option - not
+# something we can raise. A Gargul export is compact (roughly 50 chars per
+# item), so this covers 100+ items - far more than one raid night drops in
+# the ordinary case. Anything that hits this ceiling exactly is treated as
+# possibly truncated by Discord's own input box rather than trusted - see
+# the command handler - and pointed at the 🎁 Add/Update Loot button's file
+# upload instead, which has no such limit.
+GARGUL_TEXT_MAX_LENGTH = 6000
 
 QUALITY_EMOJI = {0: "⬜", 1: "⬜", 2: "🟩", 3: "🟦", 4: "🟪", 5: "🟧"}
 DEFAULT_QUALITY_EMOJI = "⬜"
@@ -919,7 +934,11 @@ class RaidSummaryCog(commands.Cog):
         report="WCL report link (or bare report code)",
         clear_status="Full clear or still progressing?",
         raid_type="Main raid or an alt/fun raid?",
-        loot_export="Gargul loot export (.csv/.txt) - optional, add later with the Add Loot button if not ready yet",
+        gargul_export_text=(
+            "Paste the Gargul loot export directly (fits a normal raid night many times "
+            "over). Leave blank to add it later - the Add/Update Loot button also takes a "
+            "file upload, for the rare export too big to paste here."
+        ),
         media_link="Optional: a YouTube/Twitch clip or image URL to feature",
         note="Optional short note/highlight for the top of the summary",
     )
@@ -944,7 +963,7 @@ class RaidSummaryCog(commands.Cog):
         report: str,
         clear_status: app_commands.Choice[str],
         raid_type: app_commands.Choice[str],
-        loot_export: discord.Attachment = None,
+        gargul_export_text: app_commands.Range[str, 0, GARGUL_TEXT_MAX_LENGTH] = None,
         media_link: str = None,
         note: str = None,
     ):
@@ -962,18 +981,30 @@ class RaidSummaryCog(commands.Cog):
 
         await interaction.response.defer(ephemeral=True, thinking=True)
 
-        # --- parse the loot export, if given now ---
+        # --- parse the pasted loot export, if given now ---
         loot_rows = []
-        if loot_export is not None:
+        if gargul_export_text is not None:
+            if len(gargul_export_text) >= GARGUL_TEXT_MAX_LENGTH:
+                # Discord's own input box enforces this ceiling by silently
+                # truncating, not by refusing to submit - so hitting it
+                # exactly isn't trusted as a complete export. Reject rather
+                # than risk quietly posting a cut-off loot list.
+                await interaction.followup.send(
+                    f"That export is at Discord's {GARGUL_TEXT_MAX_LENGTH}-character paste limit, "
+                    "so it may have been cut off. Post the summary without loot, then use the "
+                    "🎁 Add/Update Loot button afterward to upload it as a file instead - no size "
+                    "limit there.",
+                    ephemeral=True,
+                )
+                return
             try:
-                raw_bytes = await loot_export.read()
-                loot_rows = gargul_loot.parse_gargul_export(raw_bytes.decode("utf-8", errors="replace"))
+                loot_rows = gargul_loot.parse_gargul_export(gargul_export_text)
             except gargul_loot.GargulParseError as e:
                 await interaction.followup.send(f"Couldn't read the loot export: {e}", ephemeral=True)
                 return
             except Exception:
-                log.exception("Failed to read/parse loot_export attachment")
-                await interaction.followup.send("Couldn't read the loot export file.", ephemeral=True)
+                log.exception("Failed to parse pasted Gargul export")
+                await interaction.followup.send("Couldn't read the loot export text.", ephemeral=True)
                 return
 
         # --- fetch the WCL report (single cached fetch, shared with attendance) ---
@@ -1048,7 +1079,7 @@ class RaidSummaryCog(commands.Cog):
         header_ctx = {
             "clear_label": clear_label, "tier_name": tier_data["name"], "report_date": report_date,
             "killed_count": killed_count, "attempted_count": attempted_count, "total_pulls": total_pulls,
-            "loot_count": len(resolved_loot), "loot_pending": loot_export is None,
+            "loot_count": len(resolved_loot), "loot_pending": gargul_export_text is None,
             "duration_line": duration_line, "clear_time_lines": clear_time_lines,
         }
 
@@ -1243,7 +1274,8 @@ class RaidSummaryCog(commands.Cog):
         user_id = interaction.user.id
 
         await interaction.response.send_message(
-            f"Reply in this thread with the Gargul loot export (.csv/.txt attachment) within "
+            f"Reply in this thread with the Gargul loot export as a **file attachment** "
+            f"(.csv/.txt - no size limit, unlike pasting into `/raidsummary` directly) within "
             f"{ADD_LOOT_WAIT_SECONDS // 60} minutes.",
             ephemeral=True,
         )

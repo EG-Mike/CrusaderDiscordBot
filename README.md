@@ -73,8 +73,14 @@ moderator-driven announcement system.
 
 1. A moderator runs **`/raidsummary`** after a raid, giving it: the tier
    raided, the WCL report link, full-clear-or-progress, main-or-alt raid,
-   and optionally the Gargul loot export (can be added later - see below),
-   a note, and a YouTube/Twitch/image link to feature.
+   and optionally the Gargul loot export **pasted directly** into
+   `gargul_export_text` (a normal night's export is a fraction of Discord's
+   6000-character option limit; can be added/replaced later too - see
+   below), a note, and a YouTube/Twitch/image link to feature. A paste
+   landing exactly at that 6000-char ceiling is rejected rather than
+   trusted, since Discord's input box silently truncates instead of
+   refusing to submit - use the Add/Update Loot button's file upload for
+   an export that large instead (no size limit there).
 2. The bot posts a new thread in the raid-summary **forum channel**. The
    top post has: a tier banner image, a TL;DR (bosses down, pulls, loot
    count; first-pull/raid-ended clock times + total duration, anchored to
@@ -179,7 +185,7 @@ moderator-driven announcement system.
 | `/checkattendance links <member>` | Debug: show a member's resolved main name and linked alts. |
 | `/checkattendance exclude <name> <reason>` | Excuse a player from attendance tracking. |
 | `/checkattendance removeexcluded <id>` | Remove a player from the excused list by its `#ID`. |
-| `/raidsummary <tier> <report> <clear_status> <raid_type> [loot_export] [media_link] [note]` | Post a raid summary thread to the raid-summary forum (loot can be added later via the thread's Add Loot button). |
+| `/raidsummary <tier> <report> <clear_status> <raid_type> [gargul_export_text] [media_link] [note]` | Post a raid summary thread to the raid-summary forum (loot can be pasted directly, added later, or - for an unusually large export - uploaded as a file via the thread's Add/Update Loot button). |
 
 ## Setting up on a new server
 
