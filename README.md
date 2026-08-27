@@ -87,17 +87,22 @@ moderator-driven announcement system.
    time + its difference from our fastest-ever kill of that boss, and every
    *real* wipe indented underneath with the boss's HP% at that wipe - a
    100%-HP "wipe" is treated as a deliberate reset, not a real attempt, and
-   doesn't count), three **Raid MVP's** (highest DPS parse, highest overall
-   damage done, highest overall healing done) plus elite (99%+) parse
-   callouts, who broke their own personal-best parse on a boss tonight, the
-   top 5 by damage done - bosses + trash, with each person's exact share of
-   the raid's total damage, a guild rank vs. other guilds (if `GUILD_NAME`
-   is set), and a death leaderboard (top 5). Every name mentioned anywhere
-   in the summary - parses, MVP's, leaderboards, loot winners - is prefixed
-   with that character's class icon (same icon source as
-   `/checkattendance`'s roster). It auto-applies forum tags: tier and main/
-   alt-raid by exact tag ID (`config.TIER_TAG_IDS` / `RAID_TYPE_TAG_IDS`),
-   clear-status by name (`config.CLEAR_STATUS_TAG_NAMES`).
+   doesn't count), three **Raid MVP's** (highest AVERAGE DPS parse across
+   all of that raid's kills - matches WCL's own "avg" rankings column,
+   highest overall damage done, highest overall healing done), a
+   **Noteworthy parses** list (elite 99%+ individual-boss parses, flagged
+   as a personal best where applicable), who broke their own personal-best
+   parse on a boss tonight, ⚔️ **Top Overall Damage** (bosses + trash, top
+   5 with medals 🥇🥈🥉🏅🏅, each person's exact share of the raid's total
+   damage), a guild rank vs. other guilds (if `GUILD_NAME` is set), and a
+   💀 **Death's Leaderboard** (top 5, same medals). Every name mentioned
+   anywhere in the summary - parses, MVP's, leaderboards, loot winners - is
+   prefixed with that character's class icon (same icon source as
+   `/checkattendance`'s roster; pet/summon entries are filtered out of
+   roster composition specifically, since WCL's data can include them).
+   It auto-applies forum tags: tier and main/alt-raid by exact tag ID
+   (`config.TIER_TAG_IDS` / `RAID_TYPE_TAG_IDS`), clear-status by name
+   (`config.CLEAR_STATUS_TAG_NAMES`).
 3. **Loot** is always its own separate message (normally the 2nd one) as a
    compact list - one line per item: a real item icon (see below) + a
    clickable Wowhead-linked name + who won it. Never a wall of text mixed
@@ -396,9 +401,14 @@ when adding a new persistent component elsewhere.
   empties that section instead of crashing; the boss-name field in
   particular was already wrong once - see `_parse_rankings`'s docstring -
   and now has two independent fallback paths, but is still worth watching),
-  the Deaths/DamageDone table shapes, and the guild zone-rankings shape
-  behind the "guild rank" section. Post one real summary and check each
-  section actually populated before trusting it. Item lookups (`wowhead.py`)
+  the Deaths/DamageDone/Healing table shapes, and the shape (not the field
+  name - `Guild.zoneRanking`, singular, was confirmed live via a WCL error
+  message after the original `zoneRankings` guess failed) returned by the
+  guild-rank query. `playerDetails` per fight has also been seen live
+  returning `[]` instead of the expected role-bucketed dict for some
+  fights - handled, but a reminder these WCL shapes vary more than the
+  docs suggest. Post one real summary and check each section actually
+  populated before trusting it. Item lookups (`wowhead.py`)
   reuse the same `&xml` endpoint `/add-emoji` already relies on, so that
   part carries the same (lighter) caveat as that existing command. The
   ✏️ Edit button's `message.edit(view=...)` call on an already-posted forum
