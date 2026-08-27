@@ -229,6 +229,29 @@ ARCHIVE_CHANNEL_ID = 1337906439066488914
 # specific ID the attendance feature checks/toggles).
 REGULAR_ROLE_ID = 1337905799061700709
 
+# Organizer role - same ID as FRESH_EXEMPT_ROLE_IDS' "Organizer" entry above,
+# given its own named constant since cogs/raid_logs.py gates raid-log
+# tagging (Main/Alt/Other/Reset) to this role specifically, separate from
+# the broader MOD_ROLE_ID gate (which can Summarize/refresh but not tag).
+ORGANIZER_ROLE_ID = 1337905891667742770
+
+# --- Raid log tagging (cogs/raid_logs.py) ---
+# Daily cutoff ("HH:MM", 24h, Europe/Amsterdam - same TZ convention as
+# raid_summary.py's AMSTERDAM_TZ) past which a tagged-but-not-yet-summarized
+# Main/Alt raid log auto-completes the automatable part of Summarize (see
+# RaidLogsCog._auto_summarize_loop). Main/alt raids reliably start
+# 20:00-20:30 and never run past midnight, so a fixed same-day cutoff is
+# safe - see the module docstring for why this isn't WCL's report.endTime
+# or a boss-kill trigger instead (both look identical to "raid over" on a
+# report that's just paused between two nights of the same raid).
+RAID_LOG_AUTO_SUMMARIZE_TIME = "23:59"
+
+# How close together (in minutes) two "started a new report" posts for the
+# same zone have to be to be treated as simultaneous duplicate live-logs
+# (multiple people starting a log for the same raid at once) rather than two
+# genuinely different logs - see RaidLogsCog._find_duplicate_entry.
+RAID_LOG_DUPLICATE_WINDOW_MINUTES = 20
+
 ATTENDANCE_WINDOW = 5           # how many of the most recent tagged main-raid
                                 # logs count toward eligibility
 ATTENDANCE_MIN_ATTENDED = 3     # out of ATTENDANCE_WINDOW, needed to be

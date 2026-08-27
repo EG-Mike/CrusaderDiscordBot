@@ -279,6 +279,7 @@ Copy `.env.example` to `.env` and fill in every value:
 | `FRESH_ROLE_ID` | The role granted on approval |
 | `MOD_ROLE_ID` | Who can approve/deny/reset/edit announcements (in addition to anyone with `Manage Roles`) |
 | `SERVER_SLUG` / `SERVER_REGION` | From step 5 |
+| `ATTENDANCE_CHANNEL_ID` | The channel for the three pinned attendance-check messages - required for `/checkattendance` (see `cogs/attendance.py`) |
 
 Never commit the real `.env` anywhere - only `.env.example` (no secrets) is
 meant to be shared/versioned.
@@ -350,7 +351,51 @@ which is why the DM also includes a plain-text fallback instruction.
    `wowhead.py`) - if they keep coming back as "Item #NNNNN" placeholders,
    test a single known item ID first.
 
-### 11. Install and run
+### 11. Raid log tagging & attendance automation (optional, for `cogs/raid_logs.py`)
+
+Turns the post-raid #attendance-check checklist (attach the log, refresh
+roster, refresh overview, notify the mods, run `/raidsummary`) into
+tag-the-log-once-and-click-Summarize. Needs `RAID_LOGS_CHANNEL_ID` (step 10
+above) AND a second channel:
+
+1. **Hide `RAID_LOGS_CHANNEL_ID`'s channel from members** - deny `View
+   Channel` for `@everyone` there, but make sure the bot's own role can
+   still see it (and that your WCL-report-posting webhook/app can still
+   post to it). This bot never attaches buttons to that channel's own
+   messages (it doesn't own them - a third-party app posts there); it only
+   reads them.
+2. Create a second, **visible** channel - this is where the bot reposts a
+   cleaned-up version of each new log (reporter, when it started, the
+   zone, a link - deliberately not the Wipefest tool link or `/listen`
+   instructions some third-party posts include) with its own tagging
+   buttons attached.
+3. Set `RAID_LOGS_REPOST_CHANNEL_ID` in `.env` to that second channel's ID.
+   Leave it blank to disable this whole feature - `RAID_LOGS_CHANNEL_ID`
+   and `/raidsummary`'s picker keep working standalone either way.
+4. Make sure `config.ORGANIZER_ROLE_ID` matches your real Organizer role -
+   tagging a log (Main Raid/Alt Raid/Other) and Reset are Organizer-only;
+   Summarize (manual or the daily auto-complete) stays moderator-only, same
+   gate as everything else in this bot.
+5. `config.RAID_LOG_AUTO_SUMMARIZE_TIME` (default `"23:59"`, Europe/
+   Amsterdam) is the daily cutoff past which a tagged-but-not-yet-
+   Summarized log auto-runs the automatable part of Summarize (attendance
+   attach/refresh/notify for a Main Raid tag - the Gargul loot paste always
+   still needs a moderator, so "Post Raid Summary" is left as a button
+   either way). `config.RAID_LOG_DUPLICATE_WINDOW_MINUTES` (default `20`)
+   controls how close together two "started a new report" posts for the
+   same zone have to be before the second one is folded into the first
+   instead of getting its own repost - see `cogs/raid_logs.py`'s module
+   docstring for why this exists (multiple people starting a live log for
+   the same raid at once) and how it degrades (never silently discarded -
+   folded into the existing message as "also started by X").
+6. **Before relying on it**, watch the first real log come through: the
+   #logs embed parsing (`_parse_source_embed` in `cogs/raid_logs.py`) was
+   written against one real example post, not verified against every
+   layout your specific webhook/app might use - see that function's
+   docstring. A parsing miss just means a blank reporter/description, never
+   a crash - but it's worth a glance the first time.
+
+### 12. Install and run
 
 ```bash
 pip install -r requirements.txt
@@ -375,6 +420,10 @@ cogs/
   announcements.py   - the whole announcement feature (self-contained)
   attendance.py      - the whole attendance-tracking feature (self-contained)
   raid_summary.py    - the whole raid-summary feature (self-contained)
+  raid_logs.py       - raid log tagging + attendance/raidsummary automation
+                        (self-contained; reuses raid_summary.py's
+                        RaidSummaryOptionsView and attendance.py's
+                        addlog/refresh methods directly, cross-cog)
 debug_zones.py        - lists every WCL zone/encounter ID visible via the API
 debug_rankings.py     - dumps raw zoneRankings JSON for one character - the
                         source of truth for a zone ID, since debug_zones.py's
@@ -459,3 +508,20 @@ when adding a new persistent component elsewhere.
   fights instead of kills - lower risk than the other best-effort pieces
   above, but still worth a glance the first time a report with real wipes
   goes through it.
+- **`cogs/raid_logs.py`'s #logs embed parsing needs the same kind of live
+  check.** `_parse_source_embed` was written against one real example post,
+  matching the exact "X started a new report" / zone line / Tools+Wipefest
+  field / `/listen`-block layout seen at the time - not against every shape
+  that webhook/app might use. A parsing miss degrades gracefully (a blank
+  reporter/description, never a crash) as long as the WCL report link
+  itself is still found somewhere in the embed - but watch the first few
+  real reposts to confirm reporter/description come through correctly.
+  Duplicate-live-log folding (`_find_duplicate_entry`) is a same-zone-text
+  + time-window heuristic, not a guarantee - it only ever folds a match
+  into the existing repost (never silently drops one), so a false negative
+  just means two reposts for the same raid instead of one, easy to spot
+  and clean up manually. Only `config.CURRENT_TIER`/`PREVIOUS_TIER` are
+  ever offered/guessed as a tier for the Summarize → Post Raid Summary
+  hand-off - older content (e.g. Karazhan, Gruul's Lair/Magtheridon's Lair)
+  isn't wired in, since that needs real WCL zone/encounter IDs pulled via
+  `debug_zones.py` against a live account, not guessed.
