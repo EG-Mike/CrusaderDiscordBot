@@ -33,6 +33,7 @@ EXTENSIONS = [
     "cogs.emoji_admin",
     "cogs.attendance",
     "cogs.raid_summary",
+    "cogs.raid_logs",
 ]
 
 intents = discord.Intents.default()

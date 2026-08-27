@@ -331,13 +331,30 @@ class RaidSummaryOptionsView(discord.ui.View):
     only ever shows the most recent LOGS_SELECT_LIMIT reports, so an
     older report still needs a pasted link.
     """
-    def __init__(self, cog: "RaidSummaryCog", log_entries: list):
+    def __init__(self, cog: "RaidSummaryCog", log_entries: list, preset_report_code: str = None,
+                 preset_raid_type: str = None, default_tier: str = None):
+        """
+        preset_report_code/preset_raid_type let cogs/raid_logs.py's tagging
+        workflow skip straight to this view with the report and main/alt
+        pick already decided (both are already known by the time a tagged
+        log gets Summarized - see RaidLogsCog._post_summary_prompt), rather
+        than duplicating this whole dropdown-then-modal flow in a second
+        place. When set, the corresponding select is never created at all -
+        tier and clear-status still always need a human pick, since neither
+        is reliably inferable (this bot only tracks CURRENT_TIER/
+        PREVIOUS_TIER's exact two names - see _resolve_tier - and an older
+        tier or alt-run zone can't be assumed to be either one).
+        default_tier best-effort pre-selects the tier dropdown (still
+        changeable) when the log's own zone text looks like a match -
+        never trusted blindly, since guessing wrong and letting it through
+        unnoticed would misfile boss-kill/clear-time records.
+        """
         super().__init__(timeout=600)
         self.cog = cog
-        self.tier = None
+        self.tier = default_tier
         self.clear_status = None
-        self.raid_type = None
-        self.report_code = None
+        self.raid_type = preset_raid_type
+        self.report_code = preset_report_code
 
         self.tier_select = discord.ui.Select(
             placeholder="Tier",
@@ -359,18 +376,20 @@ class RaidSummaryOptionsView(discord.ui.View):
         self.clear_status_select.callback = self._on_clear_status_select
         self.add_item(self.clear_status_select)
 
-        self.raid_type_select = discord.ui.Select(
-            placeholder="Main Raid or Alt Raid?",
-            options=[
-                discord.SelectOption(label="Main Raid", value="main"),
-                discord.SelectOption(label="Alt Raid", value="alt"),
-            ],
-        )
-        self.raid_type_select.callback = self._on_raid_type_select
-        self.add_item(self.raid_type_select)
+        self.raid_type_select = None
+        if preset_raid_type is None:
+            self.raid_type_select = discord.ui.Select(
+                placeholder="Main Raid or Alt Raid?",
+                options=[
+                    discord.SelectOption(label="Main Raid", value="main"),
+                    discord.SelectOption(label="Alt Raid", value="alt"),
+                ],
+            )
+            self.raid_type_select.callback = self._on_raid_type_select
+            self.add_item(self.raid_type_select)
 
         self.report_select = None
-        if log_entries:
+        if preset_report_code is None and log_entries:
             options = [
                 discord.SelectOption(
                     label=entry["label"],
@@ -386,9 +405,12 @@ class RaidSummaryOptionsView(discord.ui.View):
             self.report_select.callback = self._on_report_select
             self.add_item(self.report_select)
 
-        self.continue_button = discord.ui.Button(label="Continue", style=discord.ButtonStyle.primary, disabled=True)
+        self.continue_button = discord.ui.Button(
+            label="Continue", style=discord.ButtonStyle.primary, disabled=not self._ready()
+        )
         self.continue_button.callback = self._on_continue
         self.add_item(self.continue_button)
+        self._sync_selected_defaults()
 
     def _ready(self) -> bool:
         return self.tier is not None and self.clear_status is not None and self.raid_type is not None
@@ -403,8 +425,9 @@ class RaidSummaryOptionsView(discord.ui.View):
             opt.default = opt.value == self.tier
         for opt in self.clear_status_select.options:
             opt.default = opt.value == self.clear_status
-        for opt in self.raid_type_select.options:
-            opt.default = opt.value == self.raid_type
+        if self.raid_type_select:
+            for opt in self.raid_type_select.options:
+                opt.default = opt.value == self.raid_type
         if self.report_select:
             for opt in self.report_select.options:
                 opt.default = opt.value == self.report_code
@@ -624,7 +647,26 @@ class RaidSummaryCog(commands.Cog):
         report-link field still works either way. Capped at
         LOGS_SELECT_LIMIT since that's Discord's own per-select-menu
         option limit anyway.
+
+        When cogs/raid_logs.py is loaded and configured, its own structured
+        (already-parsed, already-deduplicated) recent-log data is preferred
+        over re-scraping embeds here - see get_recent_entries_for_picker.
+        Falls through to the channel-scrape below if that cog isn't loaded,
+        so this still works standalone.
         """
+        raid_logs_cog = self.bot.get_cog("RaidLogsCog")
+        if raid_logs_cog is not None:
+            entries = raid_logs_cog.get_recent_entries_for_picker(limit=LOGS_SELECT_LIMIT)
+            if entries:
+                return [
+                    {
+                        "label": e["label"],
+                        "report_code": e["report_code"],
+                        "created_at": e["created_at"],
+                    }
+                    for e in entries
+                ]
+
         if not self.logs_channel_id:
             return []
         channel = self.bot.get_channel(self.logs_channel_id)

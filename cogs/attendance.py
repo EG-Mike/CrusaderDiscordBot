@@ -28,6 +28,8 @@ import re
 import asyncio
 import logging
 import time
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import discord
 from discord import app_commands
@@ -37,6 +39,11 @@ import config
 import icons
 
 log = logging.getLogger("wow-apply-bot.attendance")
+
+# Same guild-local timezone convention already used in cogs/raid_summary.py
+# (AMSTERDAM_TZ there) - "last updated" timestamps are far more readable in
+# local time than UTC.
+AMSTERDAM_TZ = ZoneInfo("Europe/Amsterdam")
 
 # Sentinel keys in the shared bot.store (same generic JSON store used
 # elsewhere - these aren't real Discord message/application records, just
@@ -112,6 +119,23 @@ def _extract_report_code(link: str) -> str:
     return match.group(1) if match else link
 
 
+def _footer_with_update_stamp(marker: str, updated_by: str = None) -> str:
+    """
+    Appends a "Last updated by X - <date> <time>" line to a message's footer
+    marker text, so mods can see at a glance whether the log
+    list/roster/overview reflects the latest data without having to ask -
+    see the module docstring. Embed footers render as plain text (no
+    markdown/mentions), so `updated_by` must already be a plain display
+    name/label by the time it gets here, never a <@id> mention. `updated_by`
+    of None (e.g. the startup reconciliation pass, which has no acting user)
+    just posts the marker alone, same as before this existed.
+    """
+    if not updated_by:
+        return marker
+    when = datetime.now(timezone.utc).astimezone(AMSTERDAM_TZ).strftime("%Y-%m-%d %H:%M")
+    return f"{marker} · Last updated by {updated_by} · {when}"
+
+
 # --- Modals ---------------------------------------------------------------
 
 class AddLogModal(discord.ui.Modal, title="Add Main Raid Log"):
@@ -119,14 +143,24 @@ class AddLogModal(discord.ui.Modal, title="Add Main Raid Log"):
     tier = discord.ui.TextInput(label="Tier/zone (e.g. SSC/TK)", required=True, max_length=64)
     link = discord.ui.TextInput(label="WCL report link or code", required=True, max_length=200)
 
-    def __init__(self, cog: "AttendanceCog"):
+    def __init__(self, cog: "AttendanceCog", prefill_date: str = None, prefill_tier: str = None,
+                 prefill_link: str = None):
         super().__init__()
         self.cog = cog
+        # Pre-filled (but always still editable) when opened from
+        # AddLogPickerView's #logs dropdown - see LogListView.add_log.
+        if prefill_date:
+            self.date.default = prefill_date
+        if prefill_tier:
+            self.tier.default = prefill_tier
+        if prefill_link:
+            self.link.default = prefill_link
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True, thinking=True)
         confirmation = await self.cog._do_addlog(
-            interaction.guild, str(self.date), str(self.tier), str(self.link)
+            interaction.guild, str(self.date), str(self.tier), str(self.link),
+            updated_by=interaction.user.display_name,
         )
         await interaction.followup.send(confirmation, ephemeral=True)
 
@@ -145,7 +179,9 @@ class RemoveLogModal(discord.ui.Modal, title="Remove Main Raid Log"):
         except ValueError:
             await interaction.followup.send("That's not a valid number.", ephemeral=True)
             return
-        confirmation = await self.cog._do_removelog(interaction.guild, log_id)
+        confirmation = await self.cog._do_removelog(
+            interaction.guild, log_id, updated_by=interaction.user.display_name
+        )
         await interaction.followup.send(confirmation, ephemeral=True)
 
 
@@ -200,6 +236,66 @@ class RemoveExcludedModal(discord.ui.Modal, title="Remove Excused Player"):
         await interaction.followup.send(confirmation, ephemeral=True)
 
 
+# --- Ephemeral picker (not persistent - same short-lived-view pattern as
+# raid_summary.py's RaidSummaryOptionsView) --------------------------------
+
+class AddLogPickerView(discord.ui.View):
+    """
+    Shown by LogListView's Add Log button instead of going straight to
+    AddLogModal, when cogs/raid_logs.py is loaded and has recent tagged/
+    reposted logs to offer - the same "pick from a dropdown instead of
+    hunting down and pasting a link" upgrade /raidsummary already has (see
+    RaidLogsCog.get_recent_entries_for_picker). Picking one still opens
+    AddLogModal for confirmation - date/tier/link just arrive pre-filled
+    (and stay fully editable) instead of blank.
+    """
+    def __init__(self, cog: "AttendanceCog", entries: list):
+        super().__init__(timeout=180)
+        self.cog = cog
+        self.report_code = None
+        self._entries_by_code = {e["report_code"]: e for e in entries}
+
+        self.select = discord.ui.Select(
+            placeholder="Pick a recent log from #logs",
+            options=[
+                discord.SelectOption(
+                    label=e["label"][:100], value=e["report_code"], description=(e.get("description") or "")[:100],
+                )
+                for e in entries[:25]
+            ],
+        )
+        self.select.callback = self._on_select
+        self.add_item(self.select)
+
+        self.continue_button = discord.ui.Button(label="Continue", style=discord.ButtonStyle.primary, disabled=True)
+        self.continue_button.callback = self._on_continue
+        self.add_item(self.continue_button)
+
+        self.manual_button = discord.ui.Button(label="Not listed - enter manually", style=discord.ButtonStyle.secondary)
+        self.manual_button.callback = self._on_manual
+        self.add_item(self.manual_button)
+
+    async def _on_select(self, interaction: discord.Interaction):
+        self.report_code = self.select.values[0]
+        self.continue_button.disabled = False
+        for opt in self.select.options:
+            opt.default = opt.value == self.report_code
+        await interaction.response.edit_message(view=self)
+
+    async def _on_continue(self, interaction: discord.Interaction):
+        entry = self._entries_by_code.get(self.report_code, {})
+        modal = AddLogModal(
+            self.cog, prefill_date=entry.get("date_guess"),
+            prefill_tier=entry.get("description"), prefill_link=self.report_code,
+        )
+        await interaction.response.send_modal(modal)
+        self.stop()
+
+    async def _on_manual(self, interaction: discord.Interaction):
+        await interaction.response.send_modal(AddLogModal(self.cog))
+        self.stop()
+
+
 # --- Persistent views (one template registered per view in cog_load) ------
 
 class LogListView(discord.ui.View):
@@ -212,7 +308,16 @@ class LogListView(discord.ui.View):
         if not await self.cog._is_mod(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can manage the log list.", ephemeral=True)
             return
-        await interaction.response.send_modal(AddLogModal(self.cog))
+
+        raid_logs_cog = self.cog.bot.get_cog("RaidLogsCog")
+        entries = raid_logs_cog.get_recent_entries_for_picker() if raid_logs_cog else []
+        if entries:
+            await interaction.response.send_message(
+                "Pick the log to add (or enter one manually if it's not listed):",
+                view=AddLogPickerView(self.cog, entries), ephemeral=True,
+            )
+        else:
+            await interaction.response.send_modal(AddLogModal(self.cog))
 
     @discord.ui.button(label="Remove Log", emoji="➖", style=discord.ButtonStyle.danger, custom_id="attendance_removelog_btn")
     async def remove_log(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -233,7 +338,7 @@ class RosterView(discord.ui.View):
             await interaction.response.send_message("Only moderators can refresh the roster.", ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
-        await self.cog._refresh_roster_message(interaction.guild)
+        await self.cog._refresh_roster_message(interaction.guild, updated_by=interaction.user.display_name)
         await interaction.followup.send("Roster refreshed.", ephemeral=True)
 
     @discord.ui.button(label="+ Add player", style=discord.ButtonStyle.success, custom_id="attendance_exclude_btn")
@@ -281,7 +386,7 @@ class OverviewView(discord.ui.View):
             return
 
         await interaction.response.defer(ephemeral=True, thinking=True)
-        await self.cog._refresh_overview_message(interaction.guild)
+        await self.cog._refresh_overview_message(interaction.guild, updated_by=interaction.user.display_name)
         await interaction.followup.send("Overview refreshed.", ephemeral=True)
 
 
@@ -448,7 +553,7 @@ class AttendanceCog(commands.Cog):
 
     # --- pinned log-list message -------------------------------------
 
-    def _render_log_list_embed(self, entries: list) -> discord.Embed:
+    def _render_log_list_embed(self, entries: list, updated_by: str = None) -> discord.Embed:
         embed = discord.Embed(
             title="📋 Main Raid Log List",
             description=(
@@ -479,17 +584,17 @@ class AttendanceCog(commands.Cog):
                     value="… older entries truncated - still counted, just not all shown here.",
                     inline=False,
                 )
-        embed.set_footer(text=LOG_LIST_MARKER)
+        embed.set_footer(text=_footer_with_update_stamp(LOG_LIST_MARKER, updated_by))
         return embed
 
-    async def _sync_log_list_message(self, guild):
+    async def _sync_log_list_message(self, guild, updated_by: str = None):
         channel = self.bot.get_channel(self.attendance_channel_id)
         if channel is None:
             log.warning("ATTENDANCE_CHANNEL_ID set but channel not found/visible")
             return
 
         record = self._get_log_list()
-        embed = self._render_log_list_embed(record["entries"])
+        embed = self._render_log_list_embed(record["entries"], updated_by=updated_by)
 
         if record.get("pinned_message_id"):
             try:
@@ -509,7 +614,7 @@ class AttendanceCog(commands.Cog):
 
     # --- roster message ------------------------------------------------
 
-    async def _build_roster_embed(self, guild: discord.Guild) -> discord.Embed:
+    async def _build_roster_embed(self, guild: discord.Guild, updated_by: str = None) -> discord.Embed:
         fresh_role = guild.get_role(self.fresh_role_id)
         regular_role = guild.get_role(config.REGULAR_ROLE_ID)
         alt_links = self._get_alt_links()
@@ -601,14 +706,14 @@ class AttendanceCog(commands.Cog):
             if excl_truncated or len(excl_chunks) > 4:
                 embed.add_field(name="\u200b", value="… excused list truncated.", inline=False)
 
-        embed.set_footer(text=ROSTER_MARKER)
+        embed.set_footer(text=_footer_with_update_stamp(ROSTER_MARKER, updated_by))
         return embed
 
-    async def _refresh_roster_message(self, guild: discord.Guild):
+    async def _refresh_roster_message(self, guild: discord.Guild, updated_by: str = None):
         channel = self.bot.get_channel(self.attendance_channel_id)
         if channel is None:
             return
-        embed = await self._build_roster_embed(guild)
+        embed = await self._build_roster_embed(guild, updated_by=updated_by)
 
         record = self.bot.store.get(ROSTER_MESSAGE_KEY)
         if record and record.get("message_id"):
@@ -762,7 +867,7 @@ class AttendanceCog(commands.Cog):
 
     # --- shared action logic (used by both slash commands and buttons) --
 
-    async def _do_addlog(self, guild, date: str, tier: str, link: str) -> str:
+    async def _do_addlog(self, guild, date: str, tier: str, link: str, updated_by: str = None) -> str:
         report_code = _extract_report_code(link)
         record = self._get_log_list()
         next_id = (max((e["id"] for e in record["entries"]), default=0)) + 1
@@ -770,17 +875,17 @@ class AttendanceCog(commands.Cog):
             "id": next_id, "date": date.strip(), "tier": tier.strip(), "report_code": report_code,
         })
         self._save_log_list(record)
-        await self._sync_log_list_message(guild)
+        await self._sync_log_list_message(guild, updated_by=updated_by)
         return f"Added log #{next_id} ({date.strip()} · {tier.strip()})."
 
-    async def _do_removelog(self, guild, log_id: int) -> str:
+    async def _do_removelog(self, guild, log_id: int, updated_by: str = None) -> str:
         record = self._get_log_list()
         before = len(record["entries"])
         record["entries"] = [e for e in record["entries"] if e["id"] != log_id]
         if len(record["entries"]) == before:
             return f"No log with ID #{log_id} found."
         self._save_log_list(record)
-        await self._sync_log_list_message(guild)
+        await self._sync_log_list_message(guild, updated_by=updated_by)
         return f"Removed log #{log_id}."
 
     async def _do_exclude(self, guild, name: str, reason: str) -> str:
@@ -900,7 +1005,7 @@ class AttendanceCog(commands.Cog):
             "excluded": excluded_display, "window_size": window_size,
         }
 
-    def _render_overview_embed(self, results: dict) -> discord.Embed:
+    def _render_overview_embed(self, results: dict, updated_by: str = None) -> discord.Embed:
         embed = discord.Embed(
             title="📊 Attendance Overview",
             description=(
@@ -940,16 +1045,20 @@ class AttendanceCog(commands.Cog):
             inline=False,
         )
         embed.add_field(name="🚫 Excluded", value=", ".join(results["excluded"]) or "None", inline=False)
-        embed.set_footer(text="Role changes are manual - this is a discussion aid, not an automatic action.")
+        footer = "Role changes are manual - this is a discussion aid, not an automatic action."
+        if updated_by:
+            when = datetime.now(timezone.utc).astimezone(AMSTERDAM_TZ).strftime("%Y-%m-%d %H:%M")
+            footer += f" · Last updated by {updated_by} · {when}"
+        embed.set_footer(text=footer)
         return embed
 
-    async def _refresh_overview_message(self, guild: discord.Guild):
+    async def _refresh_overview_message(self, guild: discord.Guild, updated_by: str = None):
         channel = self.bot.get_channel(self.attendance_channel_id)
         if channel is None:
             return
 
         results = await self._compute_attendance(guild)
-        embed = self._render_overview_embed(results)
+        embed = self._render_overview_embed(results, updated_by=updated_by)
 
         record = self.bot.store.get(OVERVIEW_MESSAGE_KEY)
         if record and record.get("message_id"):
@@ -996,7 +1105,7 @@ class AttendanceCog(commands.Cog):
         links[alt.strip().lower()] = main.strip()
         self._save_alt_links(links)
         await interaction.response.defer(ephemeral=True, thinking=True)
-        await self._refresh_roster_message(interaction.guild)
+        await self._refresh_roster_message(interaction.guild, updated_by=interaction.user.display_name)
         await interaction.followup.send(f"Linked **{alt.strip()}** as an alt of **{main.strip()}**.", ephemeral=True)
 
     @checkattendance_group.command(name="removealt", description="Remove a previously linked alt")
@@ -1013,7 +1122,7 @@ class AttendanceCog(commands.Cog):
         removed_main = links.pop(key)
         self._save_alt_links(links)
         await interaction.response.defer(ephemeral=True, thinking=True)
-        await self._refresh_roster_message(interaction.guild)
+        await self._refresh_roster_message(interaction.guild, updated_by=interaction.user.display_name)
         await interaction.followup.send(f"Removed **{alt.strip()}** as an alt of **{removed_main}**.", ephemeral=True)
 
     @checkattendance_group.command(name="setmain", description="Override a member's main character name")
@@ -1026,7 +1135,7 @@ class AttendanceCog(commands.Cog):
         overrides[str(member.id)] = character.strip()
         self._save_main_overrides(overrides)
         await interaction.response.defer(ephemeral=True, thinking=True)
-        await self._refresh_roster_message(interaction.guild)
+        await self._refresh_roster_message(interaction.guild, updated_by=interaction.user.display_name)
         await interaction.followup.send(
             f"{member.mention}'s main character is now set to **{character.strip()}**.", ephemeral=True
         )
@@ -1044,7 +1153,7 @@ class AttendanceCog(commands.Cog):
         del overrides[str(member.id)]
         self._save_main_overrides(overrides)
         await interaction.response.defer(ephemeral=True, thinking=True)
-        await self._refresh_roster_message(interaction.guild)
+        await self._refresh_roster_message(interaction.guild, updated_by=interaction.user.display_name)
         await interaction.followup.send(f"Removed {member.mention}'s main-name override.", ephemeral=True)
 
     @checkattendance_group.command(name="links", description="Debug: show a member's resolved main name and linked alts")
@@ -1098,7 +1207,7 @@ class AttendanceCog(commands.Cog):
             await interaction.response.send_message("Only moderators can run attendance checks.", ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
-        await self._refresh_overview_message(interaction.guild)
+        await self._refresh_overview_message(interaction.guild, updated_by=interaction.user.display_name)
         await interaction.followup.send("Overview posted/refreshed.", ephemeral=True)
 
 
