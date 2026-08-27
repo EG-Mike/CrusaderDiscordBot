@@ -85,7 +85,9 @@ moderator-driven announcement system.
    (the full WCL log + a [Wipefest](https://www.wipefest.gg) analysis
    link), roster composition, a boss-by-boss breakdown (pull count, kill
    time + its difference from our fastest-ever kill of that boss, and every
-   *real* wipe indented underneath with the boss's HP% at that wipe - a
+   *real* wipe indented underneath with the boss's HP% at that wipe - "killed"
+   and each "Wipe N" link straight to that specific pull's Wipefest analysis,
+   since a WCL fight ID is also Wipefest's own per-fight URL segment. A
    100%-HP "wipe" is treated as a deliberate reset, not a real attempt, and
    doesn't count), three **Raid MVP's** (highest AVERAGE DPS parse across
    all of that raid's kills - matches WCL's own "avg" rankings column,
