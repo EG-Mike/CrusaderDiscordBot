@@ -33,6 +33,7 @@ from storage import ApplicationStore
 log = logging.getLogger("wow-apply-bot.wowhead")
 
 ITEM_XML_URL = "https://www.wowhead.com/item={item_id}&xml"
+SPELL_XML_URL = "https://www.wowhead.com/spell={spell_id}&xml"
 ICON_TAG_RE = re.compile(r"<icon[^>]*>([^<]+)</icon>", re.IGNORECASE)
 NAME_TAG_RE = re.compile(r"<name[^>]*>([^<]+)</name>", re.IGNORECASE)
 QUALITY_TAG_RE = re.compile(r'<quality id="(\d+)"', re.IGNORECASE)
@@ -53,6 +54,11 @@ def item_icon_url(icon_slug: str | None) -> str:
     # Same wow.zamimg.com CDN convention already relied on elsewhere in this
     # repo (see config.py's CLASS_ICON_URLS and emoji_admin.py) - proven to work.
     return f"https://wow.zamimg.com/images/wow/icons/large/{icon_slug or FALLBACK_ICON}.jpg"
+
+
+def spell_wowhead_url(spell_id: int) -> str:
+    """Wowhead's plain (non-expansion-specific) spell URL - see item_wowhead_url."""
+    return f"https://www.wowhead.com/spell={spell_id}"
 
 
 class WowheadClient:
@@ -109,4 +115,54 @@ class WowheadClient:
             "icon_url": item_icon_url(icon_slug),
             "wowhead_url": item_wowhead_url(item_id),
             "quality": int(quality_match.group(1)) if quality_match else None,
+        }
+
+    async def get_spell(self, spell_id: int) -> dict:
+        """Returns {"id", "name", "icon_slug", "icon_url", "wowhead_url"} for
+        a spell - same permanent-cache/never-raises contract as get_item(),
+        used to give cogs/raid_summary.py's buff/debuff-uptime section a
+        real icon per tracked ability (config.TRACKED_ABILITY_ICON_SPELL_IDS).
+        Cached under a "spell:<id>" string key in the same store as items
+        (plain int item IDs), so the two never collide."""
+        cache_key = f"spell:{spell_id}"
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        result = await self._fetch_spell(spell_id)
+        self._cache.set(cache_key, **result)
+        return result
+
+    async def _fetch_spell(self, spell_id: int) -> dict:
+        fallback = {
+            "id": spell_id,
+            "name": f"Spell #{spell_id}",
+            "icon_slug": None,
+            "icon_url": item_icon_url(None),
+            "wowhead_url": spell_wowhead_url(spell_id),
+        }
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(SPELL_XML_URL.format(spell_id=spell_id)) as resp:
+                    resp.raise_for_status()
+                    text = await resp.text()
+        except Exception:
+            log.warning("Wowhead lookup failed for spell %s - using placeholder", spell_id, exc_info=True)
+            return fallback
+
+        icon_match = ICON_TAG_RE.search(text)
+        if not icon_match:
+            log.warning("Wowhead lookup for spell %s returned no <icon> tag - using placeholder", spell_id)
+            return fallback
+
+        name_match = NAME_TAG_RE.search(text)
+        icon_slug = icon_match.group(1).strip()
+
+        return {
+            "id": spell_id,
+            "name": name_match.group(1).strip() if name_match else f"Spell #{spell_id}",
+            "icon_slug": icon_slug,
+            "icon_url": item_icon_url(icon_slug),
+            "wowhead_url": spell_wowhead_url(spell_id),
         }
