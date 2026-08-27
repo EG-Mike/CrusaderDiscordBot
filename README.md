@@ -113,8 +113,9 @@ moderator-driven announcement system.
    100%-HP "wipe" is treated as a deliberate reset, not a real attempt, and
    doesn't count), three **Raid MVP's** (highest AVERAGE DPS parse across
    all of that raid's kills - matches WCL's own "avg" rankings column,
-   highest overall damage done, highest overall healing done), a
-   **Noteworthy parses** list (elite 99%+ individual-boss parses, flagged
+   highest overall damage done, highest overall healing done - the latter
+   two each also show that amount's % share of the raid's total
+   damage/healing), a **Noteworthy parses** list (elite 99%+ individual-boss parses, flagged
    as a personal best where applicable), who broke their own personal-best
    parse on a boss tonight, ⚔️ **Top Overall Damage** (bosses + trash, top
    5 with medals 🥇🥈🥉🏅🏅, each person's exact share of the raid's total
