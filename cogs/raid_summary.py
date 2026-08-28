@@ -681,6 +681,62 @@ class RaidSummaryCog(commands.Cog):
             reports = [r for r in reports if r.get("raid_type") == raid_type]
         return [r["code"] for r in reports]
 
+    def get_tier_report_entries(self, tier_name: str, raid_type: str = "main") -> list:
+        """
+        Like get_tier_reports(), but returns the full {"code", "raid_type",
+        "session_id"} entries instead of just bare codes - used by
+        cogs/tier_retrospective.py's aggregation to group reports into
+        "sessions" (raid weeks), which a plain code list can't carry.
+        session_id defaults to a report's own code (i.e. every report is
+        its own session, one week each - today's behavior) unless
+        merge_tier_reports() folded two or more codes into a shared one -
+        see that method's docstring for why that's needed at all (a raid
+        week split across multiple calendar nights).
+        """
+        key = f"{TIER_REPORTS_KEY_PREFIX}{tier_name}"
+        reports = self._normalize_tier_reports(self.store.get(key) or {})
+        if raid_type is not None:
+            reports = [r for r in reports if r.get("raid_type") == raid_type]
+        return [
+            {"code": r["code"], "raid_type": r.get("raid_type"), "session_id": r.get("session_id") or r["code"]}
+            for r in reports
+        ]
+
+    def merge_tier_reports(self, tier_name: str, codes: list) -> bool:
+        """
+        Folds 2+ already-recorded report codes into one shared session_id,
+        so cogs/tier_retrospective.py's aggregation treats them as ONE raid
+        week - one week number, and "fastest raid night" summed across all
+        of them - instead of one week per report. For when a guild splits
+        a raid week across multiple calendar nights (e.g. SSC cleared one
+        night, TK cleared a different night the same week), which the
+        default one-report-per-week numbering gets wrong.
+
+        Every OTHER stat (medals, damage/healing/deaths, potions,
+        attendance, unique roster, per-instance fastest-clear) is
+        unaffected by merging - those are still computed per individual
+        report exactly as before. Only week numbering and the raid-night-
+        duration stat change.
+
+        Returns False (no change made) if any given code isn't currently
+        on record for this tier, or fewer than 2 codes were given -
+        callers should treat that as a usage error, not a silent no-op
+        success. The session_id itself is an opaque deterministic string
+        (sorted, joined codes) - nothing outside this store reads it.
+        """
+        if len(codes) < 2:
+            return False
+        key = f"{TIER_REPORTS_KEY_PREFIX}{tier_name}"
+        reports = self._normalize_tier_reports(self.store.get(key) or {})
+        by_code = {r["code"]: r for r in reports}
+        if any(c not in by_code for c in codes):
+            return False
+        session_id = "session:" + "+".join(sorted(codes))
+        for c in codes:
+            by_code[c]["session_id"] = session_id
+        self.store.set(key, reports=reports)
+        return True
+
     # --- tier / banner resolution -------------------------------------------
 
     def _resolve_tier(self, tier_name: str) -> dict:
@@ -2109,6 +2165,129 @@ class RaidSummaryCog(commands.Cog):
         # this list keeps one until the task finishes (see done_callback).
         self._bulk_tasks.append(task)
         task.add_done_callback(lambda t: self._bulk_tasks.remove(t) if t in self._bulk_tasks else None)
+
+    async def _run_cache_refresh(self, channel, tier_data: dict):
+        """
+        Background task (same "long-running, can't rely on the interaction
+        token" reasoning as _run_bulk_import) that forces EVERY report on
+        record for this tier - regardless of raid_type, since an alt/fun
+        raid's cached fights can be just as contaminated by off-tier
+        content as a main raid's - to be re-fetched from WCL from scratch
+        via wcl_client.invalidate_report(). Used after a fight-inclusion
+        rule changes (e.g. config.EXCLUDED_ENCOUNTER_IDS gaining an entry)
+        so already-imported reports pick up the correction without a full
+        re-import.
+
+        Deliberately does NOT touch any already-posted #raid-summary
+        thread message - those are frozen at post time by design (see
+        raid_summary.py's module docstring on why records aren't
+        recomputed retroactively). Only the underlying WCL cache is
+        corrected - which is exactly what /tier-recap reads fresh from on
+        every draft/regenerate, so this is sufficient to fix the tier
+        retrospective's numbers (unique roster, fastest clear/raid-night,
+        every summed stat) without editing anything already public.
+        """
+        codes = self.get_tier_reports(tier_data["name"], raid_type=None)
+        total = len(codes)
+        await channel.send(f"▶️ Cache refresh started: {total} report(s) for **{tier_data['name']}**.")
+        refreshed = 0
+        for i, code in enumerate(codes, start=1):
+            await self._wait_for_rate_limit_budget()
+            self.bot.wcl.invalidate_report(code)
+            try:
+                summary = await self.bot.wcl.get_report_summary(code)
+            except Exception:
+                log.exception("Cache refresh: failed to refetch report %s", code)
+                await channel.send(f"❌ [{i}/{total}] `{code}` — couldn't refetch this report, skipped.")
+                continue
+            if not summary.get("fights"):
+                await channel.send(f"⚠️ [{i}/{total}] `{code}` — no fights left after refresh.")
+            refreshed += 1
+            await asyncio.sleep(1)  # stay easy on WCL even between budget checks
+
+        await channel.send(
+            f"🏁 Cache refresh finished: {refreshed}/{total} report(s) re-fetched. Run `/tier-recap` again "
+            f"(🔄 Regenerate if a draft already exists) to see corrected numbers - already-posted "
+            f"#raid-summary threads are NOT retroactively edited."
+        )
+
+    @app_commands.command(
+        name="raidsummary-refresh-cache",
+        description="Re-fetch already-imported reports from WCL to pick up a fight-filtering change (moderator only)",
+    )
+    @app_commands.describe(tier="Which tier's already-imported reports to refresh")
+    @app_commands.choices(
+        tier=[
+            app_commands.Choice(name=config.CURRENT_TIER["name"], value=config.CURRENT_TIER["name"]),
+            app_commands.Choice(name=config.PREVIOUS_TIER["name"], value=config.PREVIOUS_TIER["name"]),
+        ],
+    )
+    async def raidsummary_refresh_cache(self, interaction: discord.Interaction, tier: str):
+        if not await self._is_mod(interaction.guild, interaction.user.id):
+            await interaction.response.send_message("Only moderators can refresh the report cache.", ephemeral=True)
+            return
+
+        tier_data = self._resolve_tier(tier)
+        codes = self.get_tier_reports(tier_data["name"], raid_type=None)
+        if not codes:
+            await interaction.response.send_message(f"No reports on record for **{tier_data['name']}**.", ephemeral=True)
+            return
+
+        await interaction.response.send_message(
+            f"Starting cache refresh of {len(codes)} report(s) for **{tier_data['name']}** - progress will be "
+            f"posted in this channel. This does NOT edit any already-posted #raid-summary thread - it only "
+            f"re-fetches and corrects the underlying WCL cache that /tier-recap reads from. Safe to leave running.",
+            ephemeral=True,
+        )
+        task = asyncio.create_task(self._run_cache_refresh(interaction.channel, tier_data))
+        self._bulk_tasks.append(task)
+        task.add_done_callback(lambda t: self._bulk_tasks.remove(t) if t in self._bulk_tasks else None)
+
+    @app_commands.command(
+        name="raidsummary-merge-weeks",
+        description="Fold 2+ already-imported reports into ONE raid week for /tier-recap (moderator only)",
+    )
+    @app_commands.describe(
+        tier="Which tier these reports belong to",
+        reports="The WCL report links/codes to merge into one week, separated by spaces/commas/newlines",
+    )
+    @app_commands.choices(
+        tier=[
+            app_commands.Choice(name=config.CURRENT_TIER["name"], value=config.CURRENT_TIER["name"]),
+            app_commands.Choice(name=config.PREVIOUS_TIER["name"], value=config.PREVIOUS_TIER["name"]),
+        ],
+    )
+    async def raidsummary_merge_weeks(self, interaction: discord.Interaction, tier: str, reports: str):
+        if not await self._is_mod(interaction.guild, interaction.user.id):
+            await interaction.response.send_message("Only moderators can merge raid weeks.", ephemeral=True)
+            return
+
+        codes = [_extract_report_code(r) for r in re.split(r"[,\s]+", reports.strip()) if r]
+        if len(codes) < 2:
+            await interaction.response.send_message(
+                "Give at least 2 report links/codes to merge into one week.", ephemeral=True
+            )
+            return
+
+        tier_data = self._resolve_tier(tier)
+        on_record = set(self.get_tier_reports(tier_data["name"], raid_type=None))
+        missing = [c for c in codes if c not in on_record]
+        if missing:
+            await interaction.response.send_message(
+                f"These aren't on record for **{tier_data['name']}** (post/import them first): "
+                + ", ".join(f"`{c}`" for c in missing),
+                ephemeral=True,
+            )
+            return
+
+        self.merge_tier_reports(tier_data["name"], codes)
+        await interaction.response.send_message(
+            f"✅ Merged {len(codes)} reports into one raid week for **{tier_data['name']}**: "
+            + ", ".join(f"`{c}`" for c in codes)
+            + "\nRun `/tier-recap` again (🔄 Regenerate if a draft already exists) to see the corrected week "
+              "numbering and combined raid-night duration.",
+            ephemeral=True,
+        )
 
     # --- editing / adding loot later ----------------------------------------
 

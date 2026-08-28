@@ -363,6 +363,16 @@ class WarcraftLogsClient:
         # re-uploaded/edited), delete that file or its entry manually.
         self._report_cache = ApplicationStore(path=report_cache_path)
 
+    def invalidate_report(self, report_code: str):
+        """Drops a report's ENTIRE cached entry (summary + any lazily-cached
+        aura_uptime/boss_only_totals/role_composition sub-keys living
+        alongside it), forcing every one of those to be re-fetched from WCL
+        next time they're needed. Used when a fight-inclusion/exclusion rule
+        changes (e.g. config.EXCLUDED_ENCOUNTER_IDS) so already-imported
+        reports pick up the correction without a full re-import - see
+        cogs/tier_retrospective.py's cache-refresh command."""
+        self._report_cache.delete(report_code)
+
     async def _get_token(self) -> str:
         if self._token and time.time() < self._token_expires_at - 30:
             return self._token
@@ -994,6 +1004,13 @@ class WarcraftLogsClient:
                 self._report_cache.set(report_code, **empty)
                 return empty
 
+            # Off-tier content (old raids farmed in the same log - see
+            # config.EXCLUDED_ENCOUNTER_IDS's docstring) is dropped here,
+            # at the very first point the raw WCL fight list is touched -
+            # every fight-derived thing downstream (timing spans, kill
+            # counts, damage/healing/deaths, role composition) is built
+            # from this filtered list, so nothing needs its own separate
+            # exclusion logic.
             fights = [
                 {
                     "id": f["id"],
@@ -1007,6 +1024,8 @@ class WarcraftLogsClient:
                     "fight_percentage": f.get("fightPercentage"),
                 }
                 for f in (report.get("fights") or [])
+                if f.get("encounterID") not in config.EXCLUDED_ENCOUNTER_IDS
+                and not (f.get("encounterID") is None and (f.get("name") or "") in config.EXCLUDED_TRASH_FIGHT_NAMES)
             ]
             all_fight_ids = [f["id"] for f in fights]
             kill_fight_ids = [f["id"] for f in fights if f["kill"]]

@@ -364,6 +364,41 @@ TRACKED_ABILITY_ICON_SPELL_IDS = {
 TOP_INTERRUPTERS_ICON_SPELL_ID = 1766
 TOP_DISPELLERS_ICON_SPELL_ID = 17201
 
+# --- Off-tier content excluded from EVERY WCL fetch (wcl_client.get_report_summary) ---
+# Some guilds keep farming old raid content (badges/gold/legacy gear)
+# alongside their current tier, in the SAME WCL report as the actual raid
+# night. Left in, that content contaminates every "bosses + trash" stat
+# this bot computes (damage/healing/deaths/activity/potions/interrupts/
+# dispels/attendance/unique-roster) since those are all summed over EVERY
+# fight in the report, not just the current tier's - most visibly, an alt
+# that only tagged along for a Gruul/Magtheridon farm run showing up in
+# the "unique characters this tier" count. Filtered out at the earliest
+# point (get_report_summary's own fight-list construction), before any
+# other code ever sees these fights, so every consumer benefits with no
+# per-feature patching. Applied unconditionally (not tier-specific) since
+# it's cheap insurance against the same contamination recurring in a
+# future tier.
+#
+# Encounter IDs confirmed against fresh.warcraftlogs.com's own zone-
+# rankings pages (the exact "Fresh" Classic host this bot's API calls use)
+# for Gruul's Lair/Magtheridon's Lair (zone 1048) - the four "council"
+# adds fought alongside High King Maulgar (Krosh Firehand, Olm the
+# Summoner, Kiggler the Crazed, Blindeye the Seer) share his encounter ID,
+# confirmed live against a real report (2026-08) - not a separate fight.
+EXCLUDED_ENCOUNTER_IDS = {
+    50649,  # High King Maulgar (incl. the four council adds)
+    50650,  # Gruul the Dragonkiller
+    50651,  # Magtheridon
+}
+
+# Trash-pull fight NAMES to exclude alongside the encounters above (trash
+# fights carry no encounter_id at all, so they can only be matched by
+# their own display name) - confirmed against a real report (2026-08).
+EXCLUDED_TRASH_FIGHT_NAMES = {
+    "Lair Brute",       # Gruul's Lair trash
+    "Hellfire Warder",  # Magtheridon's Lair trash
+}
+
 # WoW item quality (as returned by Wowhead) -> embed/accent color.
 ITEM_QUALITY_COLORS = {
     0: 0x9D9D9D,  # poor (grey)
