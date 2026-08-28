@@ -453,6 +453,17 @@ class AttendanceCog(commands.Cog):
         record = self.bot.store.get(ALT_LINKS_KEY)
         return (record or {}).get("links", {})
 
+    def get_alt_links(self) -> dict:
+        """
+        Public accessor (cross-cog - see cogs/tier_retrospective.py's
+        attendance calculation) for the same {alt_name_lowercased:
+        main_name} map _get_alt_links() reads, so another cog can resolve
+        a WCL character name to its main for attendance purposes without
+        reaching into this cog's "private" method or duplicating
+        ALT_LINKS_KEY's store key itself.
+        """
+        return self._get_alt_links()
+
     def _save_alt_links(self, links: dict):
         self.bot.store.set(ALT_LINKS_KEY, links=links)
 

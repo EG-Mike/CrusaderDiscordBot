@@ -375,12 +375,28 @@ class TierRetrospectiveCog(commands.Cog):
         # reports (see session grouping above) still attended that WEEK,
         # and shouldn't be double-counted relative to raiders in a normal
         # un-merged week just because their week happens to have 2 reports.
+        #
+        # Names are resolved through the SAME alt->main links
+        # /checkattendance link maintains (cogs/attendance.py's
+        # ALT_LINKS_KEY, via get_alt_links()) before counting - a raider
+        # who played their main one week and an alt another week is one
+        # attendee, not two fractional ones. Deliberately attendance-only
+        # (confirmed with the moderator, 2026-08): every OTHER per-player
+        # stat here (damage/healing/deaths/potions/medals) stays keyed by
+        # raw character name, and unique_chars above is deliberately raw
+        # character identity too - that one exists specifically to catch
+        # people tagging along on alts (see config.EXCLUDED_ENCOUNTER_IDS's
+        # docstring), so collapsing it through alt links would defeat its
+        # own purpose.
+        attendance_cog = self.bot.get_cog("AttendanceCog")
+        alt_links = attendance_cog.get_alt_links() if attendance_cog else {}
+
         for members in sessions.values():
             attendees = set()
             for m in members:
                 for name, kills in (m["summary"].get("kill_counts") or {}).items():
                     if kills >= 1:
-                        attendees.add(name)
+                        attendees.add(alt_links.get(name.lower(), name))
             for name in attendees:
                 attendance_counts[name] = attendance_counts.get(name, 0) + 1
 
