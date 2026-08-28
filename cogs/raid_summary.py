@@ -2250,6 +2250,7 @@ class RaidSummaryCog(commands.Cog):
     @app_commands.describe(
         tier="Which tier these reports belong to",
         reports="The WCL report links/codes to merge into one week, separated by spaces/commas/newlines",
+        reconstruct_post="Also consolidate their separate #raid-summary posts into ONE thread (default: yes)",
     )
     @app_commands.choices(
         tier=[
@@ -2257,7 +2258,8 @@ class RaidSummaryCog(commands.Cog):
             app_commands.Choice(name=config.PREVIOUS_TIER["name"], value=config.PREVIOUS_TIER["name"]),
         ],
     )
-    async def raidsummary_merge_weeks(self, interaction: discord.Interaction, tier: str, reports: str):
+    async def raidsummary_merge_weeks(self, interaction: discord.Interaction, tier: str, reports: str,
+                                       reconstruct_post: bool = True):
         if not await self._is_mod(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can merge raid weeks.", ephemeral=True)
             return
@@ -2280,14 +2282,170 @@ class RaidSummaryCog(commands.Cog):
             )
             return
 
+        await interaction.response.defer(ephemeral=True, thinking=True)
         self.merge_tier_reports(tier_data["name"], codes)
-        await interaction.response.send_message(
+
+        lines = [
             f"✅ Merged {len(codes)} reports into one raid week for **{tier_data['name']}**: "
             + ", ".join(f"`{c}`" for c in codes)
-            + "\nRun `/tier-recap` again (🔄 Regenerate if a draft already exists) to see the corrected week "
-              "numbering and combined raid-night duration.",
-            ephemeral=True,
+        ]
+        if reconstruct_post:
+            result = await self._reconstruct_merged_post(interaction, codes, tier_data)
+            if result["ok"]:
+                deleted_note = (
+                    f"deleted the now-redundant thread(s): {', '.join(result['deleted'])}."
+                    if result["deleted"] else "no other thread needed deleting."
+                )
+                lines.append(f"🧵 Consolidated into {result['survivor_thread'].mention} - {deleted_note}")
+            else:
+                lines.append(
+                    f"⚠️ Couldn't consolidate the #raid-summary posts: {result['error']} "
+                    f"(the week-numbering/tier-recap merge above still went through)."
+                )
+        lines.append(
+            "\nRun `/tier-recap` again (🔄 Regenerate if a draft already exists) to see the corrected week "
+            "numbering and combined raid-night duration."
         )
+        await interaction.followup.send("\n".join(lines), ephemeral=True)
+
+    def _find_post_record(self, report_code: str):
+        """
+        Returns (message_id, record) for the stored /raidsummary post
+        record whose report_code matches, or None if no such record exists
+        (e.g. the report was never posted through this bot, or predates
+        the record-persisting feature). raid_summary_store.json holds
+        several unrelated record shapes under the same file (RECORDS_KEY's
+        single stats blob, TIER_REPORTS_KEY_PREFIX's per-tier report
+        lists) - filtering on "thread_id" being present, not just
+        report_code, keeps this from ever matching one of those by
+        accident.
+        """
+        for key, record in self.store.items():
+            if isinstance(record, dict) and record.get("report_code") == report_code and "thread_id" in record:
+                return int(key), record
+        return None
+
+    async def _reconstruct_merged_post(self, interaction: discord.Interaction, codes: list, tier_data: dict) -> dict:
+        """
+        Consolidates 2+ already-posted #raid-summary threads (for reports
+        just folded into one raid week by merge_tier_reports) into ONE
+        thread - otherwise the forum keeps a stray extra post per merged
+        report, out of week order (the forum's own list is sorted by post
+        date, not raid date). Keeps the EARLIEST report's thread (edited
+        in place via _reconcile_pages, so its existing replies/reactions
+        survive) with each later report's own content appended after it,
+        then deletes the later report(s)' thread(s) entirely.
+
+        Deliberately reuses each report's own ALREADY-COMPUTED
+        pre_loot_blocks/header_ctx (persisted at post time by
+        _assemble_and_post_summary) instead of recomputing anything from
+        WCL data. Several sections - boss kill lines, clear-time lines -
+        show a 🆕/⚡ "new record" badge that's a DELTA against the tracked
+        record AT POST TIME; that record has since been overwritten to
+        equal that same kill, so recomputing now would compare each kill
+        to itself (delta always 0) and silently turn a real "First kill!"/
+        "Fastest kill!" into a misleading "Tied our fastest!". Reusing the
+        frozen blocks each report already earned avoids that entirely -
+        confirmed with the moderator (2026-08): keep each report's own
+        already-earned badges as-is, don't re-litigate them against the
+        merged whole. Loot is deliberately dropped from the merged post
+        (not carried over from either original post) - also confirmed
+        with the moderator (2026-08), who'll re-add loot via the 🎁 Add/
+        Update Loot button going forward.
+
+        Returns {"ok": True, "survivor_thread", "deleted": [thread names]}
+        or {"ok": False, "error": "..."} - a missing stored record (one of
+        these reports predates this feature, or was never posted through
+        this bot) is reported as a soft failure so the caller can still
+        keep the tier-recap week-merge even when this half can't run.
+        """
+        entries = []
+        for code in codes:
+            found = self._find_post_record(code)
+            if found is None:
+                return {"ok": False, "error": f"no saved /raidsummary post found for `{code}`"}
+            message_id, record = found
+            entries.append({"code": code, "message_id": message_id, "record": record})
+
+        # Chronological order (report_date is already 'YYYY-MM-DD' on every
+        # stored header_ctx) - the EARLIEST report's thread survives.
+        entries.sort(key=lambda e: e["record"]["header_ctx"].get("report_date") or "")
+        survivor = entries[0]
+        others = entries[1:]
+
+        total_tier_bosses = len(tier_data["bosses"])
+        merged_killed = sum(e["record"]["header_ctx"]["killed_count"] for e in entries)
+        merged_attempted = sum(e["record"]["header_ctx"]["attempted_count"] for e in entries)
+        merged_pulls = sum(e["record"]["header_ctx"]["total_pulls"] for e in entries)
+        merged_clear_time_lines = [
+            line for e in entries for line in (e["record"]["header_ctx"].get("clear_time_lines") or [])
+        ]
+        merged_dates = " & ".join(e["record"]["header_ctx"].get("report_date") or "?" for e in entries)
+
+        merged_header_ctx = {
+            "clear_label": "Full Clear!" if merged_killed == total_tier_bosses else "Progress Raid",
+            "tier_name": survivor["record"]["header_ctx"]["tier_name"],
+            "report_date": merged_dates,
+            "killed_count": merged_killed,
+            "attempted_count": merged_attempted,
+            "total_pulls": merged_pulls,
+            "loot_count": 0,
+            "loot_pending": False,
+            "duration_line": "",  # each night's own duration is shown inline below instead
+            "clear_time_lines": merged_clear_time_lines,
+        }
+
+        merged_pre_loot_blocks = []
+        for i, e in enumerate(entries, start=1):
+            date = e["record"]["header_ctx"].get("report_date") or "?"
+            night_duration = e["record"]["header_ctx"].get("duration_line") or ""
+            header_text = f"### 🌙 Night {i} — {date}"
+            if night_duration:
+                header_text += f"\n{night_duration}"
+            merged_pre_loot_blocks.append(self._text_block(header_text))
+            merged_pre_loot_blocks.extend(e["record"]["pre_loot_blocks"])
+
+        merged_note = " / ".join(n for n in (e["record"].get("note") for e in entries) if n) or None
+        merged_media_link = next((e["record"].get("media_link") for e in entries if e["record"].get("media_link")), None)
+
+        merged_record = dict(survivor["record"])
+        merged_record["pre_loot_blocks"] = merged_pre_loot_blocks
+        merged_record["loot_blocks"] = []
+        merged_record["header_ctx"] = merged_header_ctx
+        merged_record["note"] = merged_note
+        merged_record["media_link"] = merged_media_link
+        merged_record["merged_report_codes"] = [e["code"] for e in entries]
+
+        page_views = self._render_pages(
+            merged_pre_loot_blocks, [], merged_header_ctx, merged_note, merged_media_link,
+            merged_record.get("banner_url"),
+        )
+        ok = await self._reconcile_pages(interaction, survivor["message_id"], merged_record, page_views)
+        if not ok:
+            return {"ok": False, "error": "something went wrong updating the surviving thread - check the bot's logs"}
+
+        try:
+            thread = self.bot.get_channel(merged_record["thread_id"]) or await self.bot.fetch_channel(merged_record["thread_id"])
+        except (discord.NotFound, discord.Forbidden):
+            return {"ok": False, "error": "surviving thread's content was updated, but it couldn't be re-fetched to finish up"}
+
+        try:
+            new_name = f"{tier_data['name']} — Week (merged) — {merged_dates}"
+            await thread.edit(name=new_name[:100])
+        except (discord.Forbidden, discord.HTTPException):
+            pass  # cosmetic - the content merge above already succeeded, a rename failure shouldn't undo that
+
+        deleted_names = []
+        for e in others:
+            self.store.delete(e["message_id"])
+            try:
+                other_thread = self.bot.get_channel(e["record"]["thread_id"]) or await self.bot.fetch_channel(e["record"]["thread_id"])
+                deleted_names.append(other_thread.name)
+                await other_thread.delete()
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                pass
+
+        return {"ok": True, "survivor_thread": thread, "deleted": deleted_names}
 
     # --- editing / adding loot later ----------------------------------------
 
