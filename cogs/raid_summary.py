@@ -172,6 +172,7 @@ from discord.ext import commands
 import config
 import icons
 import gargul_loot
+from storage import ApplicationStore
 
 log = logging.getLogger("wow-apply-bot.raidsummary")
 
@@ -569,6 +570,15 @@ class RaidSummaryCog(commands.Cog):
         self.logs_channel_id = int(logs_channel_id) if logs_channel_id else None  # optional - enables the report picker
         self._bulk_tasks = []  # keeps /raidsummary-bulk's background task(s) alive - see raidsummary_bulk
 
+        # Own dedicated JSON store, separate from the shared bot.store
+        # (applications.json) every other cog uses - same "one small file
+        # per subsystem" pattern wcl_client.py (wcl_report_cache.json) and
+        # wowhead.py (wowhead_item_cache.json) already use, rather than
+        # mixing raid-summary's kill/clear/parse/uptime/tier-stat records
+        # and per-message Edit/Add-Loot data into the same file as
+        # applications/attendance/announcements.
+        self.store = ApplicationStore(path="raid_summary_store.json")
+
     async def cog_load(self):
         # Registers both buttons' custom_ids so they keep working across
         # bot restarts - same pattern as announcements.py's draft/published
@@ -591,7 +601,7 @@ class RaidSummaryCog(commands.Cog):
     # --- kill/clear-time/parse records -------------------------------------
 
     def _get_records(self) -> dict:
-        record = self.bot.store.get(RECORDS_KEY)
+        record = self.store.get(RECORDS_KEY)
         if record is None:
             return {"encounters": {}, "clears": {}, "parses": {}, "buffs": {}, "tier_stats": {}}
         return {
@@ -603,7 +613,7 @@ class RaidSummaryCog(commands.Cog):
         }
 
     def _save_records(self, records: dict):
-        self.bot.store.set(
+        self.store.set(
             RECORDS_KEY, encounters=records["encounters"], clears=records["clears"],
             parses=records["parses"], buffs=records["buffs"], tier_stats=records["tier_stats"],
         )
@@ -622,11 +632,11 @@ class RaidSummaryCog(commands.Cog):
         new WCL calls needed.
         """
         key = f"{TIER_REPORTS_KEY_PREFIX}{tier_name}"
-        existing = self.bot.store.get(key) or {"codes": []}
+        existing = self.store.get(key) or {"codes": []}
         codes = existing.get("codes", [])
         if report_code not in codes:
             codes.append(report_code)
-        self.bot.store.set(key, codes=codes)
+        self.store.set(key, codes=codes)
 
     # --- tier / banner resolution -------------------------------------------
 
@@ -1889,7 +1899,7 @@ class RaidSummaryCog(commands.Cog):
         # summary later without re-touching WCL/Wowhead or the records
         # above - see the module docstring.
         last_message = posted_messages[-1]
-        self.bot.store.set(
+        self.store.set(
             last_message.id,
             thread_id=thread.id,
             report_code=report_code,
@@ -2104,15 +2114,15 @@ class RaidSummaryCog(commands.Cog):
 
         record["page_message_ids"] = new_ids
         if new_ids[-1] != last_message_id:
-            self.bot.store.delete(last_message_id)
-        self.bot.store.set(new_ids[-1], **record)
+            self.store.delete(last_message_id)
+        self.store.set(new_ids[-1], **record)
         return True
 
     async def _on_edit_click(self, interaction: discord.Interaction):
         if not await self._is_mod(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can edit raid summaries.", ephemeral=True)
             return
-        record = self.bot.store.get(interaction.message.id)
+        record = self.store.get(interaction.message.id)
         if record is None:
             await interaction.response.send_message(
                 "Couldn't find this summary's saved data - it may predate the edit feature.", ephemeral=True
@@ -2122,7 +2132,7 @@ class RaidSummaryCog(commands.Cog):
         await interaction.response.send_modal(modal)
 
     async def _apply_edit(self, interaction: discord.Interaction, last_message_id: int, note, media_link):
-        record = self.bot.store.get(last_message_id)
+        record = self.store.get(last_message_id)
         if record is None:
             await interaction.followup.send("Couldn't find this summary's saved data.", ephemeral=True)
             return
@@ -2140,7 +2150,7 @@ class RaidSummaryCog(commands.Cog):
         if not await self._is_mod(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can add loot.", ephemeral=True)
             return
-        record = self.bot.store.get(interaction.message.id)
+        record = self.store.get(interaction.message.id)
         if record is None:
             await interaction.response.send_message(
                 "Couldn't find this summary's saved data - it may predate the Add Loot feature.", ephemeral=True
