@@ -51,7 +51,7 @@ def _normalize_role(role_key: str) -> str:
 _SUMMARY_KEYS = {
     "zone", "start_time", "end_time", "fights", "kill_counts",
     "kill_fight_roles", "parses", "deaths", "damage_done", "healing_done",
-    "overheal_pct", "activity", "potion_casts", "interrupts", "dispels",
+    "overheal_pct", "overheal_raw", "activity", "potion_casts", "interrupts", "dispels",
 }
 
 CHARACTER_QUERY = """
@@ -732,20 +732,29 @@ class WarcraftLogsClient:
         return dict(totals)
 
     async def _fetch_healing_done(self, session, headers, report_code: str, fight_ids: list) -> tuple:
-        """Returns (healing_done, overheal_pct) from ONE Healing-table fetch
-        - healing_done is {character_name: total_effective_healing} (the
-        "highest healing done" raid MVP line and Top Healing leaderboard),
-        overheal_pct is {character_name: overheal_percent} for the Least
-        Overhealed leaderboard. overheal_pct is best-effort on top of the
-        already-confirmed healing_done: it ASSUMES each entry also carries
-        a direct "overheal" field alongside "total" (effective healing) -
-        NOT independently verified against a live report (see this file's
-        other best-effort caveats) - a wrong field name just means
-        overheal_pct comes back {} (that leaderboard omits itself), it
-        can't affect the confirmed-working healing_done totals."""
+        """Returns (healing_done, overheal_pct, overheal_raw) from ONE
+        Healing-table fetch - healing_done is {character_name:
+        total_effective_healing} (the "highest healing done" raid MVP line
+        and Top Healing leaderboard), overheal_pct is {character_name:
+        overheal_percent} for the Least Overhealed leaderboard.
+        overheal_raw is {character_name: overheal_amount} - the RAW
+        pre-percentage number, kept alongside overheal_pct specifically so
+        a caller aggregating overheal across MANY reports (e.g. a planned
+        end-of-tier retrospective) can sum raw overheal and raw effective
+        healing separately and divide once at the end - summing or
+        averaging per-report PERCENTAGES across raids of different lengths
+        would be mathematically wrong. overheal_pct/overheal_raw are both
+        best-effort on top of the already-confirmed healing_done: they
+        ASSUME each entry also carries a direct "overheal" field alongside
+        "total" (effective healing) - NOT independently verified against a
+        live report (see this file's other best-effort caveats) - a wrong
+        field name just means both come back {} (those leaderboards omit
+        themselves), it can't affect the confirmed-working healing_done
+        totals."""
         entries = await self._fetch_table_entries(session, headers, report_code, fight_ids, REPORT_HEALING_QUERY)
         totals = Counter()
         overheal_pct = {}
+        overheal_raw = {}
         try:
             for entry in entries:
                 name = entry.get("name")
@@ -755,13 +764,14 @@ class WarcraftLogsClient:
                 totals[name] += effective
                 overheal = entry.get("overheal")
                 if overheal is not None:
+                    overheal_raw[name] = overheal_raw.get(name, 0) + overheal
                     raw_total = effective + overheal
                     if raw_total:
                         overheal_pct[name] = overheal / raw_total * 100
         except Exception:
             log.warning("Unexpected shape for healing table - skipping", exc_info=True)
-            return {}, {}
-        return dict(totals), overheal_pct
+            return {}, {}, {}
+        return dict(totals), overheal_pct, overheal_raw
 
     async def _fetch_casts_table(self, session, headers, report_code: str, fight_ids: list) -> list:
         """Raw per-player Casts-table entries, used for Activity % (see
@@ -947,6 +957,7 @@ class WarcraftLogsClient:
             "damage_done": {name: total_damage},              # best-effort
             "healing_done": {name: total_healing},            # best-effort
             "overheal_pct": {name: overheal_percent},         # best-effort, unverified field name
+            "overheal_raw": {name: overheal_amount},          # best-effort - same source as overheal_pct
             "activity": {name: activity_pct},                 # best-effort
             "potion_casts": {name: use_count},                # best-effort - config.TRACKED_POTION_BUFF_SPELL_IDS combined
             "interrupts": {name: interrupt_count},            # best-effort
@@ -977,7 +988,7 @@ class WarcraftLogsClient:
                 empty = {
                     "zone": None, "start_time": None, "end_time": None, "fights": [],
                     "kill_counts": {}, "kill_fight_roles": {}, "parses": [], "deaths": {},
-                    "damage_done": {}, "healing_done": {}, "overheal_pct": {}, "activity": {},
+                    "damage_done": {}, "healing_done": {}, "overheal_pct": {}, "overheal_raw": {}, "activity": {},
                     "potion_casts": {}, "interrupts": {}, "dispels": {},
                 }
                 self._report_cache.set(report_code, **empty)
@@ -1006,7 +1017,9 @@ class WarcraftLogsClient:
             parses = self._parse_rankings(report.get("rankings"))
             deaths = await self._fetch_deaths(session, headers, report_code, all_fight_ids)
             damage_done = await self._fetch_damage_done(session, headers, report_code, all_fight_ids)
-            healing_done, overheal_pct = await self._fetch_healing_done(session, headers, report_code, all_fight_ids)
+            healing_done, overheal_pct, overheal_raw = await self._fetch_healing_done(
+                session, headers, report_code, all_fight_ids
+            )
 
             # activeTime is a % of the raid's total selected-fight duration
             # (bosses + trash, same fight set as damage/healing/deaths above).
@@ -1039,6 +1052,7 @@ class WarcraftLogsClient:
                 "damage_done": damage_done,
                 "healing_done": healing_done,
                 "overheal_pct": overheal_pct,
+                "overheal_raw": overheal_raw,
                 "activity": activity,
                 "potion_casts": potion_casts,
                 "interrupts": interrupts,
@@ -1203,6 +1217,50 @@ class WarcraftLogsClient:
         cached_entry["aura_uptime"] = {"boss_fight_ids": cache_key_ids, "data": result}
         self._report_cache.set(report_code, **cached_entry)
         return result
+
+    async def get_report_boss_only_totals(self, report_code: str, boss_fight_ids: list) -> dict:
+        """
+        Best-effort {"damage_done": {name: total}, "healing_done": {name:
+        total}, "overheal_raw": {name: overheal_amount}} scoped to ONLY
+        this tier's boss fights (not trash) - a bosses-only counterpart to
+        get_report_summary()'s always-all-fights damage_done/healing_done,
+        added ahead of a planned end-of-tier retrospective post that wants
+        both a bosses+trash AND a bosses-only damage/healing leaderboard
+        summed across a whole tier's raids. overheal_raw (not a %) is kept
+        specifically so a caller aggregating across MANY reports can sum
+        raw overheal and raw effective healing separately and divide once
+        at the end - see _fetch_healing_done's docstring for why summing
+        per-report percentages would be wrong.
+
+        Needs caller-supplied boss_fight_ids (like get_report_aura_uptime),
+        so it's its own lazily-cached call rather than folded into the
+        always-cheap get_report_summary fetch - cached on the same per-
+        report entry, invalidated if a later call passes a different
+        boss_fight_ids (e.g. a report re-summarized under a different tier
+        pick).
+        """
+        summary = await self.get_report_summary(report_code)
+        if not summary.get("fights"):
+            return {}
+
+        cache_key_ids = sorted(boss_fight_ids)
+        cached_entry = self._report_cache.get(report_code) or {}
+        cached = cached_entry.get("boss_only_totals")
+        if cached is not None and cached.get("boss_fight_ids") == cache_key_ids:
+            return cached["data"]
+
+        token = await self._get_token()
+        headers = {"Authorization": f"Bearer {token}"}
+        async with aiohttp.ClientSession() as session:
+            damage_done = await self._fetch_damage_done(session, headers, report_code, boss_fight_ids)
+            healing_done, _overheal_pct, overheal_raw = await self._fetch_healing_done(
+                session, headers, report_code, boss_fight_ids
+            )
+
+        data = {"damage_done": damage_done, "healing_done": healing_done, "overheal_raw": overheal_raw}
+        cached_entry["boss_only_totals"] = {"boss_fight_ids": cache_key_ids, "data": data}
+        self._report_cache.set(report_code, **cached_entry)
+        return data
 
     async def get_report_kill_counts(self, report_code: str) -> dict:
         """
