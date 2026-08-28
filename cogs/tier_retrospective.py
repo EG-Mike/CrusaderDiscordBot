@@ -371,7 +371,7 @@ class TierRetrospectiveCog(commands.Cog):
         return f"{emoji} **{title}**\n" + "\n".join(lines)
 
     def _build_guild_wide_block(self, agg: dict) -> str:
-        lines = [f"## 🏆 {agg['tier_name']} — Tier Retrospective", ""]
+        lines = [f"## 🏆 {agg['tier_name']} — Tier Recap", ""]
         lines.append(f"📆 **{agg['total_weeks']}** raid night{'s' if agg['total_weeks'] != 1 else ''} logged this tier.")
         for instance_name, info in agg["fastest_clears"].items():
             lines.append(
@@ -621,7 +621,7 @@ class TierRetrospectiveCog(commands.Cog):
     # --- the command -----------------------------------------------------
 
     @app_commands.command(
-        name="tier-retrospective",
+        name="tier-recap",
         description="Draft an end-of-tier stats recap in the sandbox channel (moderator only)",
     )
     @app_commands.describe(tier="Which tier to summarize")
@@ -768,7 +768,7 @@ class TierRetrospectiveCog(commands.Cog):
         if record.get("published"):
             await interaction.response.send_message(
                 "This has already been published - regenerating would only update the sandbox draft, "
-                "not the published post. Use /tier-retrospective again for a fresh draft instead.",
+                "not the published post. Use /tier-recap again for a fresh draft instead.",
                 ephemeral=True,
             )
             return
