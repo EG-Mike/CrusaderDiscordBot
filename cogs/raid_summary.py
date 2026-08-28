@@ -618,25 +618,43 @@ class RaidSummaryCog(commands.Cog):
             parses=records["parses"], buffs=records["buffs"], tier_stats=records["tier_stats"],
         )
 
-    def _record_tier_report(self, tier_name: str, report_code: str):
+    def _record_tier_report(self, tier_name: str, report_code: str, raid_type: str):
         """
-        Appends report_code to the running list of every report ever
-        successfully posted under this tier (deduplicated, insertion
-        order preserved) - separate from RECORDS_KEY since this isn't a
-        "best value on record" like everything else there, just a plain
-        roster. Exists so a planned end-of-tier retrospective (summing
-        medals/damage/healing/attendance/deaths across a WHOLE tier) can
-        read the exact report list back later without the moderator
-        re-pasting it, and iterate it straight from wcl_report_cache.json
-        (every report here was already fully fetched at post time) with no
-        new WCL calls needed.
+        Appends {code, raid_type} to the running list of every report ever
+        successfully posted under this tier (deduplicated by code,
+        insertion order preserved) - separate from RECORDS_KEY since this
+        isn't a "best value on record" like everything else there, just a
+        plain roster. raid_type is kept alongside the code so a reader can
+        filter to "main" only - an interactively-posted alt/fun raid for
+        the same tier shouldn't count toward tier-wide records like
+        fastest clear, attendance, or the unique-roster count. Exists so
+        the end-of-tier retrospective (cogs/tier_retrospective.py) can read
+        the exact report list back later without it being re-supplied, and
+        iterate it straight from wcl_report_cache.json (every report here
+        was already fully fetched at post time) with no new WCL calls
+        needed - see get_tier_reports().
         """
         key = f"{TIER_REPORTS_KEY_PREFIX}{tier_name}"
-        existing = self.store.get(key) or {"codes": []}
-        codes = existing.get("codes", [])
-        if report_code not in codes:
-            codes.append(report_code)
-        self.store.set(key, codes=codes)
+        existing = self.store.get(key) or {"reports": []}
+        reports = existing.get("reports", [])
+        if not any(r.get("code") == report_code for r in reports):
+            reports.append({"code": report_code, "raid_type": raid_type})
+        self.store.set(key, reports=reports)
+
+    def get_tier_reports(self, tier_name: str, raid_type: str = "main") -> list:
+        """
+        Public accessor (used cross-cog by cogs/tier_retrospective.py) -
+        returns the list of report codes ever successfully posted under
+        this tier, in the order they were posted. raid_type defaults to
+        "main" since tier-wide records (fastest clear, attendance, unique
+        roster) shouldn't include alt/fun raids - pass None for every
+        report regardless of type.
+        """
+        key = f"{TIER_REPORTS_KEY_PREFIX}{tier_name}"
+        reports = (self.store.get(key) or {"reports": []}).get("reports", [])
+        if raid_type is not None:
+            reports = [r for r in reports if r.get("raid_type") == raid_type]
+        return [r["code"] for r in reports]
 
     # --- tier / banner resolution -------------------------------------------
 
@@ -1912,7 +1930,7 @@ class RaidSummaryCog(commands.Cog):
             banner_url=banner_source,
         )
 
-        self._record_tier_report(tier_name, report_code)
+        self._record_tier_report(tier_name, report_code, raid_type)
 
         return {"ok": True, "thread": thread}
 
