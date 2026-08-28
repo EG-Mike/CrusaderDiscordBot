@@ -480,8 +480,6 @@ class TierRetrospectiveCog(commands.Cog):
 
     def _build_all_blocks(self, agg: dict, guild: discord.Guild, note: str) -> list:
         blocks = [self._build_guild_wide_block(agg)]
-        if note:
-            blocks.append(f"*{note}*")
         blocks.extend(self._build_medal_blocks(agg, guild))
 
         classes_map = agg["classes"]
@@ -530,6 +528,14 @@ class TierRetrospectiveCog(commands.Cog):
         )
         if deaths_block:
             blocks.append(deaths_block)
+
+        # Note/shoutout goes LAST - it's meant for closing remarks (e.g. a
+        # "thanks for a great tier" farewell), not an opener, so it reads
+        # naturally after every stat block rather than interrupting them
+        # right at the top - see _apply_note, which re-inserts it the same
+        # way (appended, not spliced into the middle) when edited later.
+        if note:
+            blocks.append(f"*{note}*")
 
         return blocks
 
@@ -767,7 +773,7 @@ class TierRetrospectiveCog(commands.Cog):
         # italics markers, which nothing else in this post uses.
         blocks = [b for b in blocks if not (b.startswith("*") and b.endswith("*") and not b.startswith("**"))]
         if note:
-            blocks.insert(1, f"*{note}*")
+            blocks.append(f"*{note}*")  # closing remarks - see _build_all_blocks's note on why it goes last
         record["raw_blocks"] = blocks
         record["note"] = note
 
