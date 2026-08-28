@@ -316,14 +316,26 @@ TRACKED_DEBUFFS = ["Sunder Armor", "Expose Armor", "Curse of the Elements", "Cur
 # Buffs tracked on a PLAYER (WCL table dataType: Buffs, hostilityType: Friendlies).
 TRACKED_BUFFS = ["Judgement of Wisdom", "Judgement of Light"]
 
-# Potions counted together as one "Top potion users" leaderboard (WCL table
-# dataType: Casts, matched by ability name same as the buffs/debuffs above).
-TRACKED_POTIONS = ["Destruction Potion", "Haste Potion"]
+# Potions counted together as one "Top potion users" leaderboard. Matched
+# by SPELL ID (unlike TRACKED_DEBUFFS/TRACKED_BUFFS above), not name -
+# confirmed live (2026-08) that a potion's own use-cast never appears in
+# WCL's Casts table at all (checked a real 38-entry Casts table for "Sunder
+# Armor"-style ability-name matching - zero hits), only the temporary BUFF
+# it grants does. wcl_client.get_report_summary tracks usage via that buff
+# instead (WCL table dataType: Buffs, hostilityType: Friendlies, filtered
+# by this exact spell ID - filtering regroups the result to one row per
+# player wearing it, whose totalUses is how many times they drank it, since
+# the buff doesn't stack).
+TRACKED_POTION_BUFF_SPELL_IDS = {
+    "Destruction Potion": 28508,
+    "Haste Potion": 28507,
+}
 
 # Item IDs for the two potions above - used only to show their real Wowhead
 # icons on the "Top potion users" leaderboard (via wowhead.get_item(), the
-# same lookup loot icons already use), not for WCL matching (that's by name,
-# see TRACKED_POTIONS). Confirmed against Wowhead's TBC Classic item pages.
+# same lookup loot icons already use) - unrelated to the spell IDs above
+# (those are the granted BUFF; these are the consumed ITEM). Confirmed
+# against Wowhead's TBC Classic item pages.
 TRACKED_POTION_ITEM_IDS = {
     "Destruction Potion": 22839,
     "Haste Potion": 22838,

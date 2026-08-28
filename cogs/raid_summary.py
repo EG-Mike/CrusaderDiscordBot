@@ -998,8 +998,10 @@ class RaidSummaryCog(commands.Cog):
     async def _build_potions_block(self, potion_casts: dict, guild: discord.Guild, classes_map: dict,
                                     existing_by_name: dict) -> str:
         """Top-3 "Destruction + Haste potions used" leaderboard (config.
-        TRACKED_POTIONS, combined into one count per player by
-        wcl_client._fetch_ability_cast_counts) - headed by both potions'
+        TRACKED_POTION_BUFF_SPELL_IDS, combined into one count per player by
+        wcl_client._fetch_buff_usage_by_player - tracked via the temporary
+        buff each potion grants, not a Casts-table cast, since a potion's
+        own use never appears there by name) - headed by both potions'
         real Wowhead item icons (config.TRACKED_POTION_ITEM_IDS) instead of
         a generic emoji, same provisioning mechanism loot icons use."""
         if not potion_casts:
