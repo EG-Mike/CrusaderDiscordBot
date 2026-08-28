@@ -186,6 +186,10 @@ LOGS_HISTORY_LIMIT = 50
 LOGS_SELECT_LIMIT = 25  # Discord's own per-select-menu option cap
 
 RECORDS_KEY = "raid_summary_records"
+# Prefix for the per-tier "every report code ever posted under this tier"
+# roster - see _record_tier_report. Full store key is this + the tier's
+# own name (e.g. "raid_summary_tier_reports:SSC/TK").
+TIER_REPORTS_KEY_PREFIX = "raid_summary_tier_reports:"
 EDIT_BUTTON_CUSTOM_ID = "raidsummary_edit_btn"
 ADD_LOOT_BUTTON_CUSTOM_ID = "raidsummary_addloot_btn"
 ADD_LOOT_WAIT_SECONDS = 300
@@ -603,6 +607,26 @@ class RaidSummaryCog(commands.Cog):
             RECORDS_KEY, encounters=records["encounters"], clears=records["clears"],
             parses=records["parses"], buffs=records["buffs"], tier_stats=records["tier_stats"],
         )
+
+    def _record_tier_report(self, tier_name: str, report_code: str):
+        """
+        Appends report_code to the running list of every report ever
+        successfully posted under this tier (deduplicated, insertion
+        order preserved) - separate from RECORDS_KEY since this isn't a
+        "best value on record" like everything else there, just a plain
+        roster. Exists so a planned end-of-tier retrospective (summing
+        medals/damage/healing/attendance/deaths across a WHOLE tier) can
+        read the exact report list back later without the moderator
+        re-pasting it, and iterate it straight from wcl_report_cache.json
+        (every report here was already fully fetched at post time) with no
+        new WCL calls needed.
+        """
+        key = f"{TIER_REPORTS_KEY_PREFIX}{tier_name}"
+        existing = self.bot.store.get(key) or {"codes": []}
+        codes = existing.get("codes", [])
+        if report_code not in codes:
+            codes.append(report_code)
+        self.bot.store.set(key, codes=codes)
 
     # --- tier / banner resolution -------------------------------------------
 
@@ -1688,6 +1712,18 @@ class RaidSummaryCog(commands.Cog):
             log.warning("Aura uptime lookup failed for %s", report_code, exc_info=True)
             aura_uptime = {}
 
+        # Not used by anything rendered in THIS summary - fetched purely to
+        # warm the per-report cache ahead of a planned end-of-tier
+        # retrospective (bosses-only damage/healing/overheal summed across
+        # a whole tier's raids). Doing this now, on every post, means that
+        # future feature reads entirely from cache with zero new WCL calls
+        # instead of needing to re-fetch every already-posted report - see
+        # get_report_boss_only_totals's docstring.
+        try:
+            await self.bot.wcl.get_report_boss_only_totals(report_code, boss_fight_ids)
+        except Exception:
+            log.warning("Boss-only totals lookup failed for %s", report_code, exc_info=True)
+
         # Fetched once and reused for every icon this post provisions (loot,
         # potions, buff/debuff uptime) - see _fetch_existing_app_emojis.
         existing_by_name = await self._fetch_existing_app_emojis()
@@ -1865,6 +1901,8 @@ class RaidSummaryCog(commands.Cog):
             media_link=media_link,
             banner_url=banner_source,
         )
+
+        self._record_tier_report(tier_name, report_code)
 
         return {"ok": True, "thread": thread}
 
