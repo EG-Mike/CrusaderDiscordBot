@@ -774,19 +774,26 @@ class WarcraftLogsClient:
             return {}
         return result
 
-    async def _fetch_flat_count_table(self, session, headers, report_code: str, fight_ids: list, query: str) -> dict:
-        """Best-effort {character_name: total} for a table dataType whose
-        entries are already flat per-player counts (Interrupts, Dispels) -
-        same shape Deaths/DamageDone already use."""
-        entries = await self._fetch_table_entries(session, headers, report_code, fight_ids, query)
+    async def _fetch_nested_count_table(self, session, headers, report_code: str, fight_ids: list, query: str) -> dict:
+        """Best-effort {character_name: total} for Interrupts/Dispels -
+        confirmed live (2026-08) that these do NOT come back as a flat
+        per-player list like Deaths/DamageDone: the top-level "entries" is
+        a single wrapper object whose OWN "entries" list is one row per
+        interrupted/dispelled ability (e.g. a boss's "Fireball" cast, or a
+        dispelled "Poison Shield" buff), and each of THOSE carries a
+        "details" list of the players who did it, with their own per-
+        ability "total" - two levels deeper than assumed originally."""
+        wrapper_entries = await self._fetch_table_entries(session, headers, report_code, fight_ids, query)
         result = {}
         try:
-            for entry in entries:
-                name = entry.get("name")
-                if name:
-                    result[name] = result.get(name, 0) + (entry.get("total") or 0)
+            for wrapper in wrapper_entries:
+                for ability_row in wrapper.get("entries") or []:
+                    for detail in ability_row.get("details") or []:
+                        name = detail.get("name")
+                        if name:
+                            result[name] = result.get(name, 0) + (detail.get("total") or 0)
         except Exception:
-            log.warning("Unexpected shape for count table - skipping", exc_info=True)
+            log.warning("Unexpected shape for nested count table - skipping", exc_info=True)
             return {}
         return result
 
@@ -945,8 +952,8 @@ class WarcraftLogsClient:
             potion_casts = await self._fetch_ability_cast_counts(
                 session, headers, report_code, all_fight_ids, set(config.TRACKED_POTIONS)
             )
-            interrupts = await self._fetch_flat_count_table(session, headers, report_code, all_fight_ids, REPORT_INTERRUPTS_QUERY)
-            dispels = await self._fetch_flat_count_table(session, headers, report_code, all_fight_ids, REPORT_DISPELS_QUERY)
+            interrupts = await self._fetch_nested_count_table(session, headers, report_code, all_fight_ids, REPORT_INTERRUPTS_QUERY)
+            dispels = await self._fetch_nested_count_table(session, headers, report_code, all_fight_ids, REPORT_DISPELS_QUERY)
 
             zone = report.get("zone")
             summary = {
