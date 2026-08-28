@@ -420,9 +420,11 @@ class TierRetrospectiveCog(commands.Cog):
         ]
         return f"{emoji} **{title}**\n" + "\n".join(lines)
 
-    def _build_guild_wide_block(self, agg: dict) -> str:
-        lines = [f"## 🏆 {agg['tier_name']} — Tier Recap", ""]
-        lines.append(f"📆 **{agg['total_weeks']}** raid night{'s' if agg['total_weeks'] != 1 else ''} logged this tier.")
+    def _build_title_block(self, agg: dict) -> str:
+        return f"## 🏆 {agg['tier_name']} — Tier Recap"
+
+    def _build_stats_block(self, agg: dict) -> str:
+        lines = [f"📆 **{agg['total_weeks']}** raid night{'s' if agg['total_weeks'] != 1 else ''} logged this tier."]
         for instance_name, info in agg["fastest_clears"].items():
             lines.append(
                 f"⏱️ Fastest **{instance_name}** clear: **{_format_duration_words(info['ms'])}** "
@@ -479,7 +481,13 @@ class TierRetrospectiveCog(commands.Cog):
         return "📅 **Attendance**\n" + "\n".join(lines)
 
     def _build_all_blocks(self, agg: dict, guild: discord.Guild, note: str) -> list:
-        blocks = [self._build_guild_wide_block(agg)]
+        # Note/shoutout sits right below the title and above the stats -
+        # see _apply_note, which re-inserts it at the same position
+        # (index 1) when edited later.
+        blocks = [self._build_title_block(agg)]
+        if note:
+            blocks.append(f"*{note}*")
+        blocks.append(self._build_stats_block(agg))
         blocks.extend(self._build_medal_blocks(agg, guild))
 
         classes_map = agg["classes"]
@@ -528,14 +536,6 @@ class TierRetrospectiveCog(commands.Cog):
         )
         if deaths_block:
             blocks.append(deaths_block)
-
-        # Note/shoutout goes LAST - it's meant for closing remarks (e.g. a
-        # "thanks for a great tier" farewell), not an opener, so it reads
-        # naturally after every stat block rather than interrupting them
-        # right at the top - see _apply_note, which re-inserts it the same
-        # way (appended, not spliced into the middle) when edited later.
-        if note:
-            blocks.append(f"*{note}*")
 
         return blocks
 
@@ -773,7 +773,7 @@ class TierRetrospectiveCog(commands.Cog):
         # italics markers, which nothing else in this post uses.
         blocks = [b for b in blocks if not (b.startswith("*") and b.endswith("*") and not b.startswith("**"))]
         if note:
-            blocks.append(f"*{note}*")  # closing remarks - see _build_all_blocks's note on why it goes last
+            blocks.insert(1, f"*{note}*")  # below the title, above the stats - see _build_all_blocks
         record["raw_blocks"] = blocks
         record["note"] = note
 
