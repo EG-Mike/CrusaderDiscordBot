@@ -311,7 +311,7 @@ PARSE_HIGHLIGHT_THRESHOLD = 99
 # Enemies) - shown with both an "all fights" (bosses+trash) and a
 # "boss fights only" uptime %, plus whichever raider contributed the most
 # of the boss-fight uptime. See cogs/raid_summary.py's _build_uptime_lines.
-TRACKED_DEBUFFS = ["Sunder Armor", "Expose Armor", "Curse of the Elements", "Curse of Recklessness"]
+TRACKED_DEBUFFS = ["Sunder Armor", "Expose Armor", "Faerie Fire", "Curse of the Elements", "Curse of Recklessness"]
 
 # Buffs tracked on a PLAYER (WCL table dataType: Buffs, hostilityType: Friendlies).
 TRACKED_BUFFS = ["Judgement of Wisdom", "Judgement of Light"]
@@ -348,13 +348,21 @@ TRACKED_POTION_ITEM_IDS = {
 # these, so any correct rank's ID works fine here). Confirmed against
 # Wowhead's TBC Classic spell pages.
 TRACKED_ABILITY_ICON_SPELL_IDS = {
-    "Sunder Armor": 25225,
-    "Expose Armor": 11198,
-    "Curse of the Elements": 27228,
-    "Curse of Recklessness": 27226,
+    "Sunder Armor": 24317,
+    "Expose Armor": 8647,
+    "Faerie Fire": 25602,
+    "Curse of the Elements": 44332,
+    "Curse of Recklessness": 16231,
     "Judgement of Wisdom": 20354,
     "Judgement of Light": 27162,
 }
+
+# Decorative icons (not tied to WCL matching at all) for the two count-based
+# fun-stat leaderboards that don't map to one single tracked spell/item -
+# Kick's icon for "Top Interrupters" (any class's interrupt lands there, but
+# Kick is the recognizable one), Dispel Magic's for "Top Dispellers".
+TOP_INTERRUPTERS_ICON_SPELL_ID = 1766
+TOP_DISPELLERS_ICON_SPELL_ID = 17201
 
 # WoW item quality (as returned by Wowhead) -> embed/accent color.
 ITEM_QUALITY_COLORS = {

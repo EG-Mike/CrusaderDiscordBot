@@ -124,26 +124,35 @@ Design, per discussion:
     against however many messages existed before (see _reconcile_pages -
     edits messages in place, sends new ones if longer, deletes leftovers if
     shorter).
-  - Fun stats: top-3 leaderboards for Activity % (wcl_client's Summary-table
-    fetch), combined Destruction+Haste potion use (Casts table, headed by
-    both potions' real Wowhead item icons), interrupts, and dispels - see
-    _build_top3_block/_build_potions_block. Below those, a "Buff/Debuff
-    Uptime" section for config.TRACKED_DEBUFFS (Sunder/Expose Armor, Curse
-    of the Elements/Recklessness - kept on the boss) and config.
-    TRACKED_BUFFS (Judgement of Wisdom/Light - kept on a player), each
-    shown with both an "all fights" (bosses+trash) and a "boss fights only"
-    uptime %, the raider who contributed the most of the boss-fight uptime,
-    and a delta/⚡-new-best badge against records["buffs"] (boss-only
-    percentage only - trash uptime is too inconsistent raid-to-raid to be a
-    meaningful personal best) - see _build_uptime_lines and
-    wcl_client.get_report_aura_uptime. All four ability lists are matched
-    against WCL by NAME, not spell ID, since a rank's exact ID varies by
-    who cast it while the name doesn't - see config.py's comment above
-    TRACKED_DEBUFFS. Each tracked debuff/buff also gets a real Wowhead spell
-    icon (config.TRACKED_ABILITY_ICON_SPELL_IDS - any correct rank's ID
-    works there since the icon doesn't change across ranks), fetched once
-    and provisioned as a bot-owned emoji the same way loot/potion icons are
-    (icons.ensure_spell_emoji).
+  - Fun stats: top-3 leaderboards for Activity %, combined Destruction+
+    Haste potion use (headed by both potions' real Wowhead item icons),
+    interrupts, dispels (both headed by a decorative Wowhead spell icon -
+    Kick/Dispel Magic), overall damage, overall healing, and least-
+    overhealed % (healers only - see _build_overheal_block). All share one
+    renderer (_build_ranked_block) that also checks the #1 entry against
+    this TIER's all-time best for that stat (records["tier_stats"][tier
+    name][stat_key], via _check_stat_record) and tags it "🏆 New raid
+    record!" when beaten - scoped per tier since e.g. a comp-dependent
+    stat like damage isn't a fair cross-tier comparison, same reasoning
+    kill-time/clear-time records are already scoped to one boss/instance
+    rather than kept globally.
+
+    Below those, a "Buff/Debuff Uptime" section for config.TRACKED_DEBUFFS
+    (Sunder/Expose Armor, Faerie Fire, Curse of the Elements/Recklessness -
+    kept on the boss) and config.TRACKED_BUFFS (Judgement of Wisdom/Light -
+    kept on a player), each shown with both an "all fights" (bosses+trash)
+    and a "boss fights only" uptime %, the raider who contributed the most
+    of the boss-fight uptime, and a delta/⚡-new-best badge against
+    records["buffs"][tier name] (boss-only percentage only - trash uptime
+    is too inconsistent raid-to-raid to be a meaningful personal best) -
+    see _build_uptime_lines and wcl_client.get_report_aura_uptime. All
+    tracked ability lists are matched against WCL by NAME, not spell ID,
+    since a rank's exact ID varies by who cast it while the name doesn't -
+    see config.py's comment above TRACKED_DEBUFFS. Each tracked debuff/buff
+    also gets a real Wowhead spell icon (config.TRACKED_ABILITY_ICON_SPELL_IDS
+    - any correct rank's ID works there since the icon doesn't change
+    across ranks), fetched once and provisioned as a bot-owned emoji the
+    same way loot/potion icons are (icons.ensure_spell_emoji).
   - Self-contained like every other cog here - a future feature is a new
     cog file, not changes to this one.
 """
@@ -191,6 +200,11 @@ ADD_LOOT_WAIT_SECONDS = 300
 # trusted - see _create_summary() - and pointed at the 🎁 Add/Update Loot
 # button's file upload instead, which has no such limit.
 GARGUL_TEXT_MAX_LENGTH = 4000
+
+# Sanity cap on /raidsummary-bulk's report list - generous headroom over the
+# ~15-16 reports it's actually meant for (one tier's worth of raid nights),
+# just a guard against pasting the wrong thing rather than a tuned limit.
+MAX_BULK_REPORTS = 50
 
 QUALITY_EMOJI = {0: "⬜", 1: "⬜", 2: "🟩", 3: "🟦", 4: "🟪", 5: "🟧"}
 DEFAULT_QUALITY_EMOJI = "⬜"
@@ -549,6 +563,7 @@ class RaidSummaryCog(commands.Cog):
         self.guild_name = os.environ.get("GUILD_NAME")  # optional - enables the guild-rank section
         logs_channel_id = os.environ.get("RAID_LOGS_CHANNEL_ID")
         self.logs_channel_id = int(logs_channel_id) if logs_channel_id else None  # optional - enables the report picker
+        self._bulk_tasks = []  # keeps /raidsummary-bulk's background task(s) alive - see raidsummary_bulk
 
     async def cog_load(self):
         # Registers both buttons' custom_ids so they keep working across
@@ -574,18 +589,19 @@ class RaidSummaryCog(commands.Cog):
     def _get_records(self) -> dict:
         record = self.bot.store.get(RECORDS_KEY)
         if record is None:
-            return {"encounters": {}, "clears": {}, "parses": {}, "buffs": {}}
+            return {"encounters": {}, "clears": {}, "parses": {}, "buffs": {}, "tier_stats": {}}
         return {
             "encounters": record.get("encounters", {}),
             "clears": record.get("clears", {}),
             "parses": record.get("parses", {}),
             "buffs": record.get("buffs", {}),
+            "tier_stats": record.get("tier_stats", {}),
         }
 
     def _save_records(self, records: dict):
         self.bot.store.set(
             RECORDS_KEY, encounters=records["encounters"], clears=records["clears"],
-            parses=records["parses"], buffs=records["buffs"],
+            parses=records["parses"], buffs=records["buffs"], tier_stats=records["tier_stats"],
         )
 
     # --- tier / banner resolution -------------------------------------------
@@ -950,53 +966,149 @@ class RaidSummaryCog(commands.Cog):
             f"{len(composition['healers'])} Healers, {len(composition['dps'])} DPS"
         )
 
-    def _build_deaths_block(self, deaths: dict, guild: discord.Guild, classes_map: dict) -> str:
+    def _check_stat_record(self, records: dict, tier_name: str, stat_key: str, direction: str,
+                            value: float, delta_fmt) -> tuple:
+        """
+        Generic "raid record" check for a top-N leaderboard's #1 entry,
+        scoped per tier (records["tier_stats"][tier_name][stat_key]) - a
+        number that would be a record in one tier isn't comparable to
+        another, same reasoning the kill-time/clear-time records are
+        already scoped to a specific boss/instance rather than kept raid-
+        wide. direction is "high" (bigger is better - damage, healing,
+        activity%, potions, interrupts, dispels, deaths) or "low" (smaller
+        is better - overheal%).
+
+        Returns (badge_text, update_or_None) - update is what the caller
+        persists into records["tier_stats"][tier_name][stat_key] after a
+        successful post (None if this raid's #1 didn't beat the record, or
+        there wasn't one yet to beat - mirrors _build_clear_time_line's "no
+        record yet, just start tracking silently, no badge" behavior).
+        """
+        prior = records["tier_stats"].get(tier_name, {}).get(stat_key)
+        if prior is None:
+            return "", {"value": value}
+
+        beat = value > prior["value"] if direction == "high" else value < prior["value"]
+        if not beat:
+            return "", None
+
+        delta = abs(value - prior["value"])
+        return f" — 🏆 **New raid record!** (by {delta_fmt(delta)})", {"value": value}
+
+    def _build_ranked_block(self, title: str, icon: str, values: dict, guild: discord.Guild, classes_map: dict,
+                             value_fmt, records: dict = None, tier_name: str = None, stat_key: str = None,
+                             direction: str = "high", delta_fmt=None, top_n: int = 3) -> tuple:
+        """
+        Shared top-N leaderboard renderer (medal + class icon + name +
+        value_fmt(value) per line) used for every count/percent fun-stat
+        and the damage/death/healing/overheal leaderboards - only top_n,
+        sort direction, and whether a record is tracked differ per caller.
+
+        When records/tier_name/stat_key are all given, the #1 entry's
+        value is checked against this tier's all-time record for that stat
+        (see _check_stat_record) and gets a "New raid record!" badge if it
+        beats it. delta_fmt defaults to value_fmt if not given - pass a
+        plainer one when value_fmt also appends something like "(% of
+        raid)" that wouldn't make sense on a bare delta.
+
+        direction "high" sorts descending (top_n BIGGEST values - damage,
+        activity%, ...); "low" sorts ascending (top_n SMALLEST - overheal%,
+        where being lowest is the achievement) - rank medals always go to
+        index 0, i.e. whichever end is the "winning" one for that stat.
+
+        Returns (block_text, record_update_or_None) - update is what the
+        caller persists into records["tier_stats"] after a successful
+        post, same pattern as every other record type in this file.
+        """
+        if not values:
+            return "", None
+        top = sorted(values.items(), key=lambda kv: kv[1], reverse=(direction != "low"))[:top_n]
+        update = None
+        lines = []
+        for i, (name, value) in enumerate(top):
+            badge = ""
+            if i == 0 and records is not None and stat_key:
+                badge, update = self._check_stat_record(
+                    records, tier_name, stat_key, direction, value, delta_fmt or value_fmt
+                )
+            lines.append(
+                f"{RANK_MEDALS[i]} {self._name_icon(guild, classes_map.get(name))}**{name}** — {value_fmt(value)}{badge}"
+            )
+        return f"{icon} **{title}**\n" + "\n".join(lines), update
+
+    def _build_deaths_block(self, deaths: dict, guild: discord.Guild, classes_map: dict,
+                             records: dict, tier_name: str) -> tuple:
         if not deaths:
-            return ""
+            return "", None
         total = sum(deaths.values())
-        top = sorted(deaths.items(), key=lambda kv: -kv[1])[:5]
-        lines = [
-            f"{RANK_MEDALS[i]} {self._name_icon(guild, classes_map.get(name))}**{name}** — "
-            f"{count} death{'s' if count != 1 else ''}"
-            for i, (name, count) in enumerate(top)
-        ]
-        return (
-            f"💀 **Death's Leaderboard** — {total} total death{'s' if total != 1 else ''}\n"
-            + "\n".join(lines)
+        title = f"Death's Leaderboard — {total} total death{'s' if total != 1 else ''}"
+        return self._build_ranked_block(
+            title, "💀", deaths, guild, classes_map,
+            lambda v: f"{int(v)} death{'s' if int(v) != 1 else ''}",
+            records=records, tier_name=tier_name, stat_key="most_deaths", direction="high",
+            delta_fmt=lambda v: f"{int(round(v))}",
         )
 
-    def _build_damage_block(self, damage_done: dict, guild: discord.Guild, classes_map: dict) -> str:
-        """Top 5 by total damage across the whole report (bosses AND
+    def _build_damage_block(self, damage_done: dict, guild: discord.Guild, classes_map: dict,
+                             records: dict, tier_name: str) -> tuple:
+        """Top 3 by total damage across the whole report (bosses AND
         trash) - matches WCL's own "Overall" damage-done ranking view,
         including each entry's exact share of the raid's total damage."""
         if not damage_done:
-            return ""
+            return "", None
         total_damage = sum(damage_done.values()) or 1
-        top = sorted(damage_done.items(), key=lambda kv: -kv[1])[:5]
-        lines = [
-            f"{RANK_MEDALS[i]} {self._name_icon(guild, classes_map.get(name))}**{name}** — "
-            f"{amount:,} damage ({amount / total_damage * 100:.2f}%)"
-            for i, (name, amount) in enumerate(top)
-        ]
-        return "⚔️ **Top Overall Damage (bosses + trash)**\n" + "\n".join(lines)
+        return self._build_ranked_block(
+            "Top Overall Damage (bosses + trash)", "⚔️", damage_done, guild, classes_map,
+            lambda v: f"{int(v):,} damage ({v / total_damage * 100:.2f}%)",
+            records=records, tier_name=tier_name, stat_key="damage_done", direction="high",
+            delta_fmt=lambda v: f"{int(round(v)):,} damage",
+        )
 
-    def _build_top3_block(self, title: str, emoji: str, values: dict, guild: discord.Guild, classes_map: dict,
-                           unit_fmt) -> str:
-        """Shared top-3 leaderboard renderer for the simple count/percent
-        fun stats (Activity %, potions, interrupts, dispels) - same medal-
-        emoji style as _build_damage_block/_build_deaths_block's top-5
-        lists, just capped at 3 per the raid-summary design discussion."""
-        if not values:
+    def _build_healing_block(self, healing_done: dict, guild: discord.Guild, classes_map: dict,
+                              records: dict, tier_name: str) -> tuple:
+        """Top 3 by total healing done across the whole report (bosses AND
+        trash) - same scope/style as _build_damage_block's damage version."""
+        if not healing_done:
+            return "", None
+        total_healing = sum(healing_done.values()) or 1
+        return self._build_ranked_block(
+            "Top Healing Done (bosses + trash)", "💚", healing_done, guild, classes_map,
+            lambda v: f"{int(v):,} healing ({v / total_healing * 100:.2f}%)",
+            records=records, tier_name=tier_name, stat_key="healing_done", direction="high",
+            delta_fmt=lambda v: f"{int(round(v)):,} healing",
+        )
+
+    def _build_overheal_block(self, overheal_pct: dict, healer_names: set, guild: discord.Guild,
+                               classes_map: dict, records: dict, tier_name: str) -> tuple:
+        """Top 3 LOWEST overheal % (bosses+trash) among raiders who filled
+        a healer role this raid (composition["healers"] - see
+        wcl_client.get_report_role_composition) - restricted to healers so
+        a DPS's single incidental self-heal doesn't show up as a
+        misleadingly "perfect" 0%-overheal leader on a tiny sample size."""
+        filtered = {name: pct for name, pct in overheal_pct.items() if name in healer_names}
+        if not filtered:
+            return "", None
+        return self._build_ranked_block(
+            "Least Overhealed % (bosses + trash)", "💧", filtered, guild, classes_map,
+            lambda v: f"{v:.1f}%",
+            records=records, tier_name=tier_name, stat_key="overheal_pct_lowest", direction="low",
+            delta_fmt=lambda v: f"{v:.1f}%",
+        )
+
+    async def _resolve_spell_icon(self, spell_id: int, existing_by_name: dict) -> str:
+        """One-off spell-icon resolution for a leaderboard header that
+        isn't tied to per-line WCL matching (Top Interrupters/Dispellers) -
+        same provisioning mechanism _build_uptime_lines uses per tracked
+        ability, just for a single decorative icon instead."""
+        if not spell_id:
             return ""
-        top = sorted(values.items(), key=lambda kv: -kv[1])[:3]
-        lines = [
-            f"{RANK_MEDALS[i]} {self._name_icon(guild, classes_map.get(name))}**{name}** — {unit_fmt(amount)}"
-            for i, (name, amount) in enumerate(top)
-        ]
-        return f"{emoji} **{title}**\n" + "\n".join(lines)
+        spell = await self.bot.wowhead.get_spell(spell_id)
+        if not spell.get("icon_url"):
+            return ""
+        return await icons.ensure_spell_emoji(self.bot, existing_by_name, spell_id, spell["icon_url"])
 
     async def _build_potions_block(self, potion_casts: dict, guild: discord.Guild, classes_map: dict,
-                                    existing_by_name: dict) -> str:
+                                    existing_by_name: dict, records: dict, tier_name: str) -> tuple:
         """Top-3 "Destruction + Haste potions used" leaderboard (config.
         TRACKED_POTION_BUFF_SPELL_IDS, combined into one count per player by
         wcl_client._fetch_buff_usage_by_player - tracked via the temporary
@@ -1005,19 +1117,21 @@ class RaidSummaryCog(commands.Cog):
         real Wowhead item icons (config.TRACKED_POTION_ITEM_IDS) instead of
         a generic emoji, same provisioning mechanism loot icons use."""
         if not potion_casts:
-            return ""
+            return "", None
 
         icon_prefix = ""
         for item_id in config.TRACKED_POTION_ITEM_IDS.values():
             item = await self.bot.wowhead.get_item(item_id)
             if item.get("icon_url"):
                 icon_prefix += await icons.ensure_item_emoji(self.bot, existing_by_name, item_id, item["icon_url"])
-        return self._build_top3_block(
-            "Top Potion Users (Destruction + Haste)", icon_prefix or "🧪",
-            potion_casts, guild, classes_map, lambda v: f"{v} used",
+        return self._build_ranked_block(
+            "Top Potion Users (Destruction + Haste)", icon_prefix or "🧪", potion_casts, guild, classes_map,
+            lambda v: f"{int(v)} used",
+            records=records, tier_name=tier_name, stat_key="potions_used", direction="high",
+            delta_fmt=lambda v: f"{int(round(v))}",
         )
 
-    async def _build_uptime_lines(self, aura_uptime: dict, records: dict, guild: discord.Guild,
+    async def _build_uptime_lines(self, aura_uptime: dict, records: dict, tier_name: str, guild: discord.Guild,
                                    classes_map: dict, existing_by_name: dict) -> tuple:
         """
         Returns (lines, updates) for the "Buff/Debuff Uptime" section -
@@ -1029,17 +1143,21 @@ class RaidSummaryCog(commands.Cog):
         at all this raid (both percentages None) is omitted, same as an
         un-attempted boss in _build_boss_lines.
 
-        The record compared against/updated (records["buffs"]) is always
-        the BOSS-ONLY percentage - trash uptime is too inconsistent raid-to-
-        raid to be a meaningful "personal best" - mirrors how clear-time
-        records are boss/instance-scoped, not raid-wide. updates is
-        {ability_name: new_best_boss_pct} for the caller to persist after a
-        successful post, same pattern as _build_clear_time_lines.
+        The record compared against/updated (records["buffs"][tier_name]) is
+        always the BOSS-ONLY percentage - trash uptime is too inconsistent
+        raid-to-raid to be a meaningful "personal best" - mirrors how clear-
+        time records are boss/instance-scoped, not raid-wide. Scoped per
+        tier (same reasoning as _check_stat_record: a boss's own comp/
+        strategy differs enough tier-to-tier that a cross-tier "record"
+        wouldn't be a fair comparison) - updates is
+        {ability_name: new_best_boss_pct} for the caller to persist under
+        this tier after a successful post, same pattern as
+        _build_clear_time_lines.
         """
         if not aura_uptime:
             return [], {}
 
-        stored = records["buffs"]
+        stored = records["buffs"].get(tier_name, {})
         lines, updates = [], {}
         for name in config.TRACKED_DEBUFFS + config.TRACKED_BUFFS:
             data = aura_uptime.get(name) or {}
@@ -1241,6 +1359,41 @@ class RaidSummaryCog(commands.Cog):
             return ""
         return "**Guild ranks this tier**\n" + "\n".join(lines)
 
+    def _report_timing(self, summary: dict) -> dict:
+        """
+        Returns {"date": 'YYYY-MM-DD' or '?', "duration_line": str} from
+        the report's first REAL boss pull, not the report's own recorded
+        start time (see module docstring's "First pull" note - those can
+        differ by several minutes of trash/travel, and WCL's fight times
+        are relative offsets from the report's absolute start). Shared by
+        _assemble_and_post_summary (for the tldr's duration line) and the
+        bulk-import job (which needs just the date, before that method
+        even runs, to build its "Week N - <date>" thread name) - both call
+        this against the SAME cached get_report_summary() result, so
+        computing it twice costs nothing extra.
+        """
+        report_date = "?"
+        duration_line = ""
+        encounter_fights = [f for f in summary["fights"] if f.get("encounter_id") is not None]
+        first_pull_relative_ms = min(
+            (f["start_time"] for f in encounter_fights if f["start_time"] is not None), default=None
+        )
+        if summary["start_time"] and summary["end_time"] and first_pull_relative_ms is not None:
+            first_pull_absolute_ms = summary["start_time"] + first_pull_relative_ms
+            raid_duration_ms = summary["end_time"] - first_pull_absolute_ms
+            report_date = datetime.fromtimestamp(first_pull_absolute_ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+            first_pull_clock = (
+                datetime.fromtimestamp(first_pull_absolute_ms / 1000, tz=timezone.utc).astimezone(AMSTERDAM_TZ).strftime("%H:%M")
+            )
+            raid_end_clock = (
+                datetime.fromtimestamp(summary["end_time"] / 1000, tz=timezone.utc).astimezone(AMSTERDAM_TZ).strftime("%H:%M")
+            )
+            duration_line = (
+                f"🕐 First pull: **{first_pull_clock}** · Raid ended: **{raid_end_clock}** · "
+                f"Total duration: **{_format_duration_compact(raid_duration_ms)}**"
+            )
+        return {"date": report_date, "duration_line": duration_line}
+
     def _build_links_block(self, report_code: str) -> str:
         return (
             "**Links**\n"
@@ -1409,7 +1562,12 @@ class RaidSummaryCog(commands.Cog):
                                gargul_export_text: str, media_link: str, note: str):
         """The actual posting logic, called from RaidSummaryCreateModal.on_submit
         once the modal's free-text fields are in. interaction has already
-        been deferred by the modal by this point."""
+        been deferred by the modal by this point. Everything from fetching
+        the WCL report through posting/committing records is shared with
+        the bulk-import job (raidsummary_bulk) via _assemble_and_post_summary
+        - this method only owns the interactive-specific bits: the loot-
+        paste validation (only reachable from the modal) and surfacing the
+        result as an ephemeral followup."""
         forum_channel = self.bot.get_channel(self.forum_channel_id)
         if forum_channel is None or not isinstance(forum_channel, discord.ForumChannel):
             # Already checked once before the modal was shown - re-checked
@@ -1447,24 +1605,49 @@ class RaidSummaryCog(commands.Cog):
                 await interaction.followup.send("Couldn't read the loot export text.", ephemeral=True)
                 return
 
-        # --- fetch the WCL report (single cached fetch, shared with attendance) ---
         report_code = _extract_report_code(report)
+        tier_data = self._resolve_tier(tier)
+        result = await self._assemble_and_post_summary(
+            interaction.guild, forum_channel, tier_data, report_code, clear_status, raid_type,
+            loot_rows, media_link, note,
+        )
+        if not result["ok"]:
+            await interaction.followup.send(result["error"], ephemeral=True)
+            return
+
+        await interaction.followup.send(f"Posted: {result['thread'].mention}", ephemeral=True)
+
+    async def _assemble_and_post_summary(self, guild: discord.Guild, forum_channel: discord.ForumChannel,
+                                          tier_data: dict, report_code: str, clear_status: str, raid_type: str,
+                                          loot_rows: list, media_link: str, note: str,
+                                          thread_name_override: str = None) -> dict:
+        """
+        Shared core of posting a raid summary - everything from fetching
+        the WCL report through creating the forum thread and committing
+        every record type (kill/clear times, parses, uptime, tier-stat
+        leaderboards). Used by both _create_summary (the interactive
+        /raidsummary flow) and the bulk-import job (_run_bulk_import),
+        which differ only in how they surface progress/errors (an
+        ephemeral followup vs a plain channel message, since the bulk
+        job's interaction token is long expired by the time later reports
+        in the list get processed) and in whether the thread name is auto-
+        derived from the report's own date or overridden (bulk import's
+        "Week N" naming - see _report_timing).
+
+        Returns {"ok": True, "thread": thread} on success, or
+        {"ok": False, "error": "<user-facing message>"} on any EXPECTED
+        failure (bad report code, no fights, Discord post failure) -
+        never raises for those, so both callers can turn the same message
+        into a followup or a channel post without duplicating error text.
+        """
         try:
             summary = await self.bot.wcl.get_report_summary(report_code)
         except Exception:
             log.exception("Failed to fetch WCL report summary for %s", report_code)
-            await interaction.followup.send(
-                f"Couldn't fetch WCL report `{report_code}` - check the link/code and try again.",
-                ephemeral=True,
-            )
-            return
+            return {"ok": False, "error": f"Couldn't fetch WCL report `{report_code}` - check the link/code and try again."}
         if not summary.get("fights"):
-            await interaction.followup.send(
-                f"WCL report `{report_code}` has no fights - double check the link.", ephemeral=True
-            )
-            return
+            return {"ok": False, "error": f"WCL report `{report_code}` has no fights - double check the link."}
 
-        # --- resolve loot item data ---
         resolved_loot = await self._resolve_loot(loot_rows)
 
         # Raid composition (also the source of class icons used throughout
@@ -1477,7 +1660,6 @@ class RaidSummaryCog(commands.Cog):
             composition = None
         classes_map = (composition or {}).get("classes", {})
 
-        tier_data = self._resolve_tier(tier)
         fights_by_encounter = self._group_fights_by_encounter(summary["fights"])
         records = self._get_records()
         boss_lines, newly_killed_ids, new_fastest_kills = self._build_boss_lines(
@@ -1486,33 +1668,8 @@ class RaidSummaryCog(commands.Cog):
         killed_count, attempted_count, total_pulls = self._tier_stats(tier_data, fights_by_encounter)
         clear_label = "Full Clear!" if clear_status == "full_clear" else "Progress Raid"
 
-        # "First pull" is the first REAL boss pull, not the report's own
-        # start (which can include several minutes of trash/travel before
-        # the first pull) - Fight.start_time is relative to the report's
-        # absolute start, so it has to be added back on to get a real clock
-        # time. Total duration is measured from that same first-pull anchor
-        # to the raid's end, so the three numbers on this line are always
-        # mutually consistent.
-        report_date = "?"
-        duration_line = ""
-        encounter_fights = [f for f in summary["fights"] if f.get("encounter_id") is not None]
-        first_pull_relative_ms = (
-            min((f["start_time"] for f in encounter_fights if f["start_time"] is not None), default=None)
-        )
-        if summary["start_time"] and summary["end_time"] and first_pull_relative_ms is not None:
-            first_pull_absolute_ms = summary["start_time"] + first_pull_relative_ms
-            raid_duration_ms = summary["end_time"] - first_pull_absolute_ms
-            report_date = datetime.fromtimestamp(first_pull_absolute_ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
-            first_pull_clock = (
-                datetime.fromtimestamp(first_pull_absolute_ms / 1000, tz=timezone.utc).astimezone(AMSTERDAM_TZ).strftime("%H:%M")
-            )
-            raid_end_clock = (
-                datetime.fromtimestamp(summary["end_time"] / 1000, tz=timezone.utc).astimezone(AMSTERDAM_TZ).strftime("%H:%M")
-            )
-            duration_line = (
-                f"🕐 First pull: **{first_pull_clock}** · Raid ended: **{raid_end_clock}** · "
-                f"Total duration: **{_format_duration_compact(raid_duration_ms)}**"
-            )
+        timing = self._report_timing(summary)
+        report_date, duration_line = timing["date"], timing["duration_line"]
 
         clear_time_lines, clear_time_updates = self._build_clear_time_lines(tier_data, fights_by_encounter, records)
 
@@ -1538,7 +1695,7 @@ class RaidSummaryCog(commands.Cog):
         header_ctx = {
             "clear_label": clear_label, "tier_name": tier_data["name"], "report_date": report_date,
             "killed_count": killed_count, "attempted_count": attempted_count, "total_pulls": total_pulls,
-            "loot_count": len(resolved_loot), "loot_pending": gargul_export_text is None,
+            "loot_count": len(resolved_loot), "loot_pending": not loot_rows,
             "duration_line": duration_line, "clear_time_lines": clear_time_lines,
         }
 
@@ -1552,11 +1709,11 @@ class RaidSummaryCog(commands.Cog):
         # Computed before _build_parses_block, which tags a "Noteworthy
         # parse" as a personal best using this same data.
         personal_bests_block, parse_updates = self._build_personal_bests_block(
-            summary["parses"], summary["fights"], records, interaction.guild
+            summary["parses"], summary["fights"], records, guild
         )
         parses_block = self._build_parses_block(
             summary["parses"], summary["fights"], summary["damage_done"], summary["healing_done"],
-            interaction.guild, classes_map, parse_updates,
+            guild, classes_map, parse_updates,
         )
         if parses_block:
             pre_loot_blocks.append(self._text_block(parses_block))
@@ -1565,43 +1722,79 @@ class RaidSummaryCog(commands.Cog):
         guild_rank_block = await self._build_guild_rank_block(tier_data, fights_by_encounter)
         if guild_rank_block:
             pre_loot_blocks.append(self._text_block(guild_rank_block))
-        damage_block = self._build_damage_block(summary["damage_done"], interaction.guild, classes_map)
+        tier_name = tier_data["name"]
+        healer_names = set((composition or {}).get("healers") or [])
+
+        damage_block, damage_record_update = self._build_damage_block(
+            summary["damage_done"], guild, classes_map, records, tier_name
+        )
         if damage_block:
             pre_loot_blocks.append(self._text_block(damage_block))
-        deaths_block = self._build_deaths_block(summary["deaths"], interaction.guild, classes_map)
+        deaths_block, deaths_record_update = self._build_deaths_block(
+            summary["deaths"], guild, classes_map, records, tier_name
+        )
         if deaths_block:
             pre_loot_blocks.append(self._text_block(deaths_block))
+        healing_block, healing_record_update = self._build_healing_block(
+            summary["healing_done"], guild, classes_map, records, tier_name
+        )
+        if healing_block:
+            pre_loot_blocks.append(self._text_block(healing_block))
+        overheal_block, overheal_record_update = self._build_overheal_block(
+            summary.get("overheal_pct", {}), healer_names, guild, classes_map, records, tier_name
+        )
+        if overheal_block:
+            pre_loot_blocks.append(self._text_block(overheal_block))
 
-        activity_block = self._build_top3_block(
-            "Top Activity %", "⚡", summary.get("activity", {}), interaction.guild, classes_map,
-            lambda v: f"{v:.1f}%",
+        activity_block, activity_record_update = self._build_ranked_block(
+            "Top Activity %", "⚡", summary.get("activity", {}), guild, classes_map,
+            lambda v: f"{v:.1f}%", records=records, tier_name=tier_name, stat_key="activity_pct",
+            direction="high", delta_fmt=lambda v: f"{v:.2f}%",
         )
         if activity_block:
             pre_loot_blocks.append(self._text_block(activity_block))
-        potions_block = await self._build_potions_block(
-            summary.get("potion_casts", {}), interaction.guild, classes_map, existing_by_name
+        potions_block, potions_record_update = await self._build_potions_block(
+            summary.get("potion_casts", {}), guild, classes_map, existing_by_name, records, tier_name
         )
         if potions_block:
             pre_loot_blocks.append(self._text_block(potions_block))
-        interrupts_block = self._build_top3_block(
-            "Top Interrupters", "⛔", summary.get("interrupts", {}), interaction.guild, classes_map,
-            lambda v: f"{v} interrupt{'s' if v != 1 else ''}",
+
+        interrupts_icon = await self._resolve_spell_icon(config.TOP_INTERRUPTERS_ICON_SPELL_ID, existing_by_name) or "⛔"
+        interrupts_block, interrupts_record_update = self._build_ranked_block(
+            "Top Interrupters", interrupts_icon, summary.get("interrupts", {}), guild, classes_map,
+            lambda v: f"{int(v)} interrupt{'s' if int(v) != 1 else ''}",
+            records=records, tier_name=tier_name, stat_key="interrupts", direction="high",
+            delta_fmt=lambda v: f"{int(round(v))}",
         )
         if interrupts_block:
             pre_loot_blocks.append(self._text_block(interrupts_block))
-        dispels_block = self._build_top3_block(
-            "Top Dispellers", "🧹", summary.get("dispels", {}), interaction.guild, classes_map,
-            lambda v: f"{v} dispel{'s' if v != 1 else ''}",
+
+        dispels_icon = await self._resolve_spell_icon(config.TOP_DISPELLERS_ICON_SPELL_ID, existing_by_name) or "🧹"
+        dispels_block, dispels_record_update = self._build_ranked_block(
+            "Top Dispellers", dispels_icon, summary.get("dispels", {}), guild, classes_map,
+            lambda v: f"{int(v)} dispel{'s' if int(v) != 1 else ''}",
+            records=records, tier_name=tier_name, stat_key="dispels", direction="high",
+            delta_fmt=lambda v: f"{int(round(v))}",
         )
         if dispels_block:
             pre_loot_blocks.append(self._text_block(dispels_block))
+
         uptime_lines, uptime_updates = await self._build_uptime_lines(
-            aura_uptime, records, interaction.guild, classes_map, existing_by_name
+            aura_uptime, records, tier_name, guild, classes_map, existing_by_name
         )
         if uptime_lines:
             pre_loot_blocks.append(self._text_block("**Buff/Debuff Uptime**\n" + "\n".join(uptime_lines)))
 
-        loot_lines = await self._build_loot_lines(resolved_loot, interaction.guild, classes_map, existing_by_name)
+        tier_stat_updates = {
+            k: v for k, v in {
+                "damage_done": damage_record_update, "most_deaths": deaths_record_update,
+                "healing_done": healing_record_update, "overheal_pct_lowest": overheal_record_update,
+                "activity_pct": activity_record_update, "potions_used": potions_record_update,
+                "interrupts": interrupts_record_update, "dispels": dispels_record_update,
+            }.items() if v is not None
+        }
+
+        loot_lines = await self._build_loot_lines(resolved_loot, guild, classes_map, existing_by_name)
         loot_blocks = self._build_loot_blocks(loot_lines)
 
         banner_source, banner_file = self._load_banner(tier_data["name"])
@@ -1609,7 +1802,7 @@ class RaidSummaryCog(commands.Cog):
 
         applied_tags = self._resolve_applied_tags(forum_channel, tier_data["name"], clear_status, raid_type)
 
-        thread_name = f"{tier_data['name']} — {report_date}"
+        thread_name = thread_name_override or f"{tier_data['name']} — {report_date}"
         try:
             create_kwargs = {"name": thread_name, "view": page_views[0], "applied_tags": applied_tags}
             if banner_file:
@@ -1621,15 +1814,15 @@ class RaidSummaryCog(commands.Cog):
                 posted_messages.append(await thread.send(view=view))
         except Exception:
             log.exception("Failed to post raid summary to forum")
-            await interaction.followup.send(
-                "Something went wrong posting the summary - check the bot's permissions on the "
-                "raid-summary forum channel (Send Messages, Create Posts, Embed Links).",
-                ephemeral=True,
-            )
-            return
+            return {
+                "ok": False,
+                "error": ("Something went wrong posting the summary - check the bot's permissions on the "
+                          "raid-summary forum channel (Send Messages, Create Posts, Embed Links)."),
+            }
 
-        # Only commit kill/clear-time/parse/uptime records once the post actually succeeded.
-        if newly_killed_ids or new_fastest_kills or clear_time_updates or parse_updates or uptime_updates:
+        # Only commit kill/clear-time/parse/uptime/tier-stat records once the post actually succeeded.
+        if (newly_killed_ids or new_fastest_kills or clear_time_updates or parse_updates
+                or uptime_updates or tier_stat_updates):
             for encounter_id in newly_killed_ids:
                 records["encounters"].setdefault(str(encounter_id), {})["first_seen_report"] = report_code
                 records["encounters"][str(encounter_id)]["first_seen_date"] = report_date
@@ -1646,10 +1839,14 @@ class RaidSummaryCog(commands.Cog):
                 boss_bests = records["parses"].setdefault(str(encounter_id), {})
                 for name, pct in name_map.items():
                     boss_bests[name] = {"best_percent": pct, "report_code": report_code, "date": report_date}
+            tier_buffs = records["buffs"].setdefault(tier_name, {})
             for ability_name, new_best_pct in uptime_updates.items():
-                records["buffs"][ability_name] = {
+                tier_buffs[ability_name] = {
                     "best_uptime_pct": new_best_pct, "report_code": report_code, "date": report_date,
                 }
+            tier_stats_bucket = records["tier_stats"].setdefault(tier_name, {})
+            for stat_key, update in tier_stat_updates.items():
+                tier_stats_bucket[stat_key] = {**update, "report_code": report_code, "date": report_date}
             self._save_records(records)
 
         # Persisted so the ✏️ Edit / 🎁 Add Loot buttons can rebuild the
@@ -1669,7 +1866,158 @@ class RaidSummaryCog(commands.Cog):
             banner_url=banner_source,
         )
 
-        await interaction.followup.send(f"Posted: {thread.mention}", ephemeral=True)
+        return {"ok": True, "thread": thread}
+
+    # --- bulk (one-time) import of historic reports --------------------------
+
+    async def _wait_for_rate_limit_budget(self, min_fraction_remaining: float = 0.15):
+        """
+        Checks WCL's own live rate-limit counter (wcl_client.get_rate_limit_status)
+        before an expensive per-report fetch and sleeps until the hourly
+        window resets if less than min_fraction_remaining of the budget is
+        left - used by the bulk-import job so a long overnight run paces
+        itself against whatever the account's ACTUAL plan allows instead of
+        a guessed fixed delay (WCL v2's API is points-based, cost varies by
+        query complexity, so a fixed delay would either be overly
+        conservative on a generous plan or still run out on a smaller one).
+        If the check itself fails (best-effort, see that method), falls
+        back to a short fixed pause rather than blocking forever or
+        barrelling ahead blind.
+        """
+        status = await self.bot.wcl.get_rate_limit_status()
+        if status is None:
+            await asyncio.sleep(5)
+            return
+        limit = status.get("limit_per_hour")
+        spent = status.get("points_spent")
+        if not limit or spent is None:
+            return
+        remaining_fraction = (limit - spent) / limit
+        if remaining_fraction < min_fraction_remaining:
+            wait_seconds = (status.get("points_reset_in") or 3600) + 5
+            log.info(
+                "Bulk import: WCL rate-limit budget low (%.0f%% left) - sleeping %ds for reset",
+                remaining_fraction * 100, wait_seconds,
+            )
+            await asyncio.sleep(wait_seconds)
+
+    async def _run_bulk_import(self, channel, forum_channel: discord.ForumChannel, tier_data: dict,
+                                report_codes: list, raid_type: str):
+        """
+        Background task (deliberately NOT awaited by the slash command
+        handler, and never touches the triggering interaction) that posts
+        one raid-summary thread per report code, in order, titled
+        "<tier> - Week <N> - <date>" (oldest = week 1, per raidsummary_bulk).
+        Discord's interaction/webhook token expires 15 minutes after the
+        command was invoked - far too short for a run explicitly meant to
+        go overnight - so progress/failures are posted as plain messages in
+        `channel` instead of interaction followups, and Full Clear/Progress
+        is auto-derived from this tier's boss-kill data (every configured
+        boss killed = Full Clear) since there's no moderator present to
+        pick from the dropdown for a batch of historic reports. Paced
+        against WCL's live rate-limit counter (_wait_for_rate_limit_budget)
+        plus a small fixed pause between reports either way, to stay easy
+        on Discord's own forum-thread-creation rate limit too.
+        """
+        total = len(report_codes)
+        await channel.send(f"▶️ Bulk import started: {total} report(s) for **{tier_data['name']}**.")
+        posted = 0
+        for i, raw in enumerate(report_codes, start=1):
+            report_code = _extract_report_code(raw)
+            await self._wait_for_rate_limit_budget()
+
+            try:
+                summary = await self.bot.wcl.get_report_summary(report_code)
+            except Exception:
+                log.exception("Bulk import: failed to fetch report %s", report_code)
+                await channel.send(f"❌ [{i}/{total}] `{report_code}` — couldn't fetch this report, skipped.")
+                continue
+            if not summary.get("fights"):
+                await channel.send(f"❌ [{i}/{total}] `{report_code}` — no fights, skipped.")
+                continue
+
+            report_date = self._report_timing(summary)["date"]
+            thread_name = f"{tier_data['name']} - Week {i} - {report_date}"
+
+            fights_by_encounter = self._group_fights_by_encounter(summary["fights"])
+            killed_count, _, _ = self._tier_stats(tier_data, fights_by_encounter)
+            clear_status = "full_clear" if killed_count == len(tier_data["bosses"]) else "progress"
+
+            try:
+                result = await self._assemble_and_post_summary(
+                    channel.guild, forum_channel, tier_data, report_code, clear_status, raid_type,
+                    [], None, None, thread_name_override=thread_name,
+                )
+            except Exception:
+                log.exception("Bulk import: unexpected error on report %s", report_code)
+                await channel.send(f"❌ [{i}/{total}] `{report_code}` — unexpected error, check the bot's logs.")
+                continue
+
+            if not result["ok"]:
+                await channel.send(f"❌ [{i}/{total}] `{report_code}` — {result['error']}")
+                continue
+
+            posted += 1
+            await channel.send(f"✅ [{i}/{total}] {thread_name} — {result['thread'].mention}")
+            await asyncio.sleep(3)  # stay easy on Discord's own forum-thread-creation rate limit
+
+        await channel.send(f"🏁 Bulk import finished: {posted}/{total} posted.")
+
+    @app_commands.command(
+        name="raidsummary-bulk",
+        description="One-time bulk import: post a raid summary per WCL report, oldest first (moderator only)",
+    )
+    @app_commands.describe(
+        tier="Which tier these reports belong to",
+        raid_type="Main raid or alt/fun raid",
+        reports=f"Ordered WCL report links/codes, OLDEST FIRST, separated by spaces/commas/newlines (max {MAX_BULK_REPORTS})",
+    )
+    @app_commands.choices(
+        tier=[
+            app_commands.Choice(name=config.CURRENT_TIER["name"], value=config.CURRENT_TIER["name"]),
+            app_commands.Choice(name=config.PREVIOUS_TIER["name"], value=config.PREVIOUS_TIER["name"]),
+        ],
+        raid_type=[
+            app_commands.Choice(name="Main Raid", value="main"),
+            app_commands.Choice(name="Alt Raid", value="alt"),
+        ],
+    )
+    async def raidsummary_bulk(self, interaction: discord.Interaction, tier: str, raid_type: str, reports: str):
+        if not await self._is_mod(interaction.guild, interaction.user.id):
+            await interaction.response.send_message("Only moderators can bulk-import raid summaries.", ephemeral=True)
+            return
+
+        forum_channel = self.bot.get_channel(self.forum_channel_id)
+        if forum_channel is None or not isinstance(forum_channel, discord.ForumChannel):
+            await interaction.response.send_message(
+                "RAID_SUMMARY_FORUM_CHANNEL_ID isn't set to a real forum channel the bot can see.", ephemeral=True
+            )
+            return
+
+        report_codes = [r for r in re.split(r"[,\s]+", reports.strip()) if r]
+        if not report_codes:
+            await interaction.response.send_message("No report links/codes found in that list.", ephemeral=True)
+            return
+        if len(report_codes) > MAX_BULK_REPORTS:
+            await interaction.response.send_message(
+                f"That's {len(report_codes)} reports - please do at most {MAX_BULK_REPORTS} per run.", ephemeral=True
+            )
+            return
+
+        tier_data = self._resolve_tier(tier)
+        await interaction.response.send_message(
+            f"Starting bulk import of {len(report_codes)} report(s) for **{tier_data['name']}** - progress will "
+            f"be posted in this channel. This paces itself against WarcraftLogs' own API rate limit, so it can "
+            f"take a while on a big batch - safe to leave running.",
+            ephemeral=True,
+        )
+        task = asyncio.create_task(
+            self._run_bulk_import(interaction.channel, forum_channel, tier_data, report_codes, raid_type)
+        )
+        # A task with no strong reference can be garbage-collected mid-run -
+        # this list keeps one until the task finishes (see done_callback).
+        self._bulk_tasks.append(task)
+        task.add_done_callback(lambda t: self._bulk_tasks.remove(t) if t in self._bulk_tasks else None)
 
     # --- editing / adding loot later ----------------------------------------
 
