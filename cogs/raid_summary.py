@@ -618,6 +618,32 @@ class RaidSummaryCog(commands.Cog):
             parses=records["parses"], buffs=records["buffs"], tier_stats=records["tier_stats"],
         )
 
+    def _normalize_tier_reports(self, stored: dict) -> list:
+        """
+        Returns the [{"code", "raid_type"}, ...] list from a tier-reports
+        store entry, transparently upgrading the legacy flat {"codes":
+        [...]} shape (written before raid_type tracking existed - a bare
+        list of report codes with no per-entry raid_type) into the current
+        one. Every report recorded under that old shape was necessarily
+        "main" - it predates /raidsummary-bulk gaining a raid_type option
+        at all, and every raid summary posted before then went through the
+        interactive flow's own main/alt picker, but only the FIRST bulk
+        import run (before this method existed) is actually known to have
+        hit this path, and that one was confirmed main-raid.
+
+        Used by both _record_tier_report (write) and get_tier_reports
+        (read) so a write against legacy data upgrades the stored shape
+        in place instead of silently discarding it - self._get(key) or
+        {"reports": []}) followed by a bare .get("reports", []) would
+        instead see no "reports" key on legacy data, start a fresh empty
+        list, and overwrite (not merge into) the stored value on the next
+        save, permanently losing every code recorded before the shape
+        changed.
+        """
+        if "reports" in stored:
+            return list(stored["reports"])
+        return [{"code": c, "raid_type": "main"} for c in stored.get("codes", [])]
+
     def _record_tier_report(self, tier_name: str, report_code: str, raid_type: str):
         """
         Appends {code, raid_type} to the running list of every report ever
@@ -635,8 +661,7 @@ class RaidSummaryCog(commands.Cog):
         needed - see get_tier_reports().
         """
         key = f"{TIER_REPORTS_KEY_PREFIX}{tier_name}"
-        existing = self.store.get(key) or {"reports": []}
-        reports = existing.get("reports", [])
+        reports = self._normalize_tier_reports(self.store.get(key) or {})
         if not any(r.get("code") == report_code for r in reports):
             reports.append({"code": report_code, "raid_type": raid_type})
         self.store.set(key, reports=reports)
@@ -651,7 +676,7 @@ class RaidSummaryCog(commands.Cog):
         report regardless of type.
         """
         key = f"{TIER_REPORTS_KEY_PREFIX}{tier_name}"
-        reports = (self.store.get(key) or {"reports": []}).get("reports", [])
+        reports = self._normalize_tier_reports(self.store.get(key) or {})
         if raid_type is not None:
             reports = [r for r in reports if r.get("raid_type") == raid_type]
         return [r["code"] for r in reports]
