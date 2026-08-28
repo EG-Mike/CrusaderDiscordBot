@@ -51,7 +51,7 @@ def _normalize_role(role_key: str) -> str:
 _SUMMARY_KEYS = {
     "zone", "start_time", "end_time", "fights", "kill_counts",
     "kill_fight_roles", "parses", "deaths", "damage_done", "healing_done",
-    "activity", "potion_casts", "interrupts", "dispels",
+    "overheal_pct", "activity", "potion_casts", "interrupts", "dispels",
 }
 
 CHARACTER_QUERY = """
@@ -325,6 +325,20 @@ query GuildZoneRankings($name: String!, $serverSlug: String!, $serverRegion: Str
         }
       }
     }
+  }
+}
+"""
+
+# Root-level (not scoped to any report/character/guild) - WCL's own live
+# rate-limit counter for the current hourly window. Used by cogs/raid_summary.py's
+# one-time bulk-import command to pace itself against the account's actual
+# remaining budget - see get_rate_limit_status.
+RATE_LIMIT_QUERY = """
+query RateLimit {
+  rateLimitData {
+    limitPerHour
+    pointsSpentThisHour
+    pointsResetIn
   }
 }
 """
@@ -717,20 +731,37 @@ class WarcraftLogsClient:
             return {}
         return dict(totals)
 
-    async def _fetch_healing_done(self, session, headers, report_code: str, fight_ids: list) -> dict:
-        """Best-effort {character_name: total_healing} across the whole
-        report - the "highest healing done" raid MVP line."""
+    async def _fetch_healing_done(self, session, headers, report_code: str, fight_ids: list) -> tuple:
+        """Returns (healing_done, overheal_pct) from ONE Healing-table fetch
+        - healing_done is {character_name: total_effective_healing} (the
+        "highest healing done" raid MVP line and Top Healing leaderboard),
+        overheal_pct is {character_name: overheal_percent} for the Least
+        Overhealed leaderboard. overheal_pct is best-effort on top of the
+        already-confirmed healing_done: it ASSUMES each entry also carries
+        a direct "overheal" field alongside "total" (effective healing) -
+        NOT independently verified against a live report (see this file's
+        other best-effort caveats) - a wrong field name just means
+        overheal_pct comes back {} (that leaderboard omits itself), it
+        can't affect the confirmed-working healing_done totals."""
         entries = await self._fetch_table_entries(session, headers, report_code, fight_ids, REPORT_HEALING_QUERY)
         totals = Counter()
+        overheal_pct = {}
         try:
             for entry in entries:
                 name = entry.get("name")
-                if name:
-                    totals[name] += entry.get("total") or 0
+                if not name:
+                    continue
+                effective = entry.get("total") or 0
+                totals[name] += effective
+                overheal = entry.get("overheal")
+                if overheal is not None:
+                    raw_total = effective + overheal
+                    if raw_total:
+                        overheal_pct[name] = overheal / raw_total * 100
         except Exception:
             log.warning("Unexpected shape for healing table - skipping", exc_info=True)
-            return {}
-        return dict(totals)
+            return {}, {}
+        return dict(totals), overheal_pct
 
     async def _fetch_casts_table(self, session, headers, report_code: str, fight_ids: list) -> list:
         """Raw per-player Casts-table entries, used for Activity % (see
@@ -915,6 +946,7 @@ class WarcraftLogsClient:
             "deaths": {name: death_count},                   # best-effort
             "damage_done": {name: total_damage},              # best-effort
             "healing_done": {name: total_healing},            # best-effort
+            "overheal_pct": {name: overheal_percent},         # best-effort, unverified field name
             "activity": {name: activity_pct},                 # best-effort
             "potion_casts": {name: use_count},                # best-effort - config.TRACKED_POTION_BUFF_SPELL_IDS combined
             "interrupts": {name: interrupt_count},            # best-effort
@@ -945,8 +977,8 @@ class WarcraftLogsClient:
                 empty = {
                     "zone": None, "start_time": None, "end_time": None, "fights": [],
                     "kill_counts": {}, "kill_fight_roles": {}, "parses": [], "deaths": {},
-                    "damage_done": {}, "healing_done": {}, "activity": {}, "potion_casts": {},
-                    "interrupts": {}, "dispels": {},
+                    "damage_done": {}, "healing_done": {}, "overheal_pct": {}, "activity": {},
+                    "potion_casts": {}, "interrupts": {}, "dispels": {},
                 }
                 self._report_cache.set(report_code, **empty)
                 return empty
@@ -974,7 +1006,7 @@ class WarcraftLogsClient:
             parses = self._parse_rankings(report.get("rankings"))
             deaths = await self._fetch_deaths(session, headers, report_code, all_fight_ids)
             damage_done = await self._fetch_damage_done(session, headers, report_code, all_fight_ids)
-            healing_done = await self._fetch_healing_done(session, headers, report_code, all_fight_ids)
+            healing_done, overheal_pct = await self._fetch_healing_done(session, headers, report_code, all_fight_ids)
 
             # activeTime is a % of the raid's total selected-fight duration
             # (bosses + trash, same fight set as damage/healing/deaths above).
@@ -1006,6 +1038,7 @@ class WarcraftLogsClient:
                 "deaths": deaths,
                 "damage_done": damage_done,
                 "healing_done": healing_done,
+                "overheal_pct": overheal_pct,
                 "activity": activity,
                 "potion_casts": potion_casts,
                 "interrupts": interrupts,
@@ -1265,3 +1298,40 @@ class WarcraftLogsClient:
         """
         kill_counts = await self.get_report_kill_counts(report_code)
         return {name for name, count in kill_counts.items() if count >= min_kills}
+
+    async def get_rate_limit_status(self):
+        """
+        Best-effort {"limit_per_hour", "points_spent", "points_reset_in"}
+        (the last in seconds) from WCL's own live rate-limit counter - used
+        by cogs/raid_summary.py's one-time bulk-import command to pace
+        itself against the ACTUAL remaining budget instead of a guessed
+        fixed delay, since WCL's v2 API is points-based (cost varies by
+        query complexity, not a flat per-request count) - a fixed delay
+        would either be overly conservative on a generous plan or still
+        run out on a smaller one. Returns None on any failure - the caller
+        treats that as "couldn't check, proceed cautiously" rather than
+        blocking entirely on a lookup failure.
+        """
+        try:
+            token = await self._get_token()
+            headers = {"Authorization": f"Bearer {token}"}
+            async with aiohttp.ClientSession() as session:
+                async with session.post(API_URL, json={"query": RATE_LIMIT_QUERY}, headers=headers) as resp:
+                    resp.raise_for_status()
+                    payload = await resp.json()
+        except Exception:
+            log.warning("Failed to fetch WCL rate limit status", exc_info=True)
+            return None
+
+        if "errors" in payload:
+            log.warning("WCL error fetching rate limit status: %s", payload["errors"])
+            return None
+
+        data = payload.get("data", {}).get("rateLimitData") or {}
+        if "limitPerHour" not in data:
+            return None
+        return {
+            "limit_per_hour": data.get("limitPerHour"),
+            "points_spent": data.get("pointsSpentThisHour"),
+            "points_reset_in": data.get("pointsResetIn"),
+        }
