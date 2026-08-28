@@ -597,9 +597,13 @@ class TierRetrospectiveCog(commands.Cog):
           - "draft": unpublished sandbox draft - "📝 Draft" footer, full
             Edit Note/Regenerate/Publish button row.
           - "published_marker": the sandbox draft AFTER publishing - "✅
-            Published to #channel" footer, Edit Note only (mirrors
-            announcements.py's _render_published_draft_marker - Publish/
-            Regenerate make no sense once it's already out).
+            Published to #channel" footer, Edit Note + Regenerate (no
+            Publish - mirrors announcements.py's
+            _render_published_draft_marker, except Regenerate stays live
+            here since a re-aggregation can legitimately need to reach an
+            already-published recap too, e.g. a stat-calculation fix -
+            see _on_regenerate_click, which re-syncs the live public post
+            AND this marker together when clicked from this state).
           - "published": the actual public copy posted to the target
             channel - no footer, no buttons at all (public audience, not
             just moderators - mirrors announcements.py's
@@ -652,6 +656,11 @@ class TierRetrospectiveCog(commands.Cog):
         )
         note_button.callback = self._on_note_click
         action_row.add_item(note_button)
+        regen_button = discord.ui.Button(
+            label="🔄 Regenerate", style=discord.ButtonStyle.secondary, custom_id="tier_retro_regen_btn"
+        )
+        regen_button.callback = self._on_regenerate_click
+        action_row.add_item(regen_button)
         view.add_item(action_row)
 
     async def cog_load(self):
@@ -837,13 +846,6 @@ class TierRetrospectiveCog(commands.Cog):
         if record is None:
             await interaction.response.send_message("Couldn't find this draft's record.", ephemeral=True)
             return
-        if record.get("published"):
-            await interaction.response.send_message(
-                "This has already been published - regenerating would only update the sandbox draft, "
-                "not the published post. Use /tier-recap again for a fresh draft instead.",
-                ephemeral=True,
-            )
-            return
 
         await interaction.response.defer(ephemeral=True, thinking=True)
         raid_cog = self.bot.get_cog("RaidSummaryCog")
@@ -860,19 +862,47 @@ class TierRetrospectiveCog(commands.Cog):
             return
 
         raw_blocks = self._build_all_blocks(agg, interaction.guild, note=record.get("note"))
-        page_views = self._render_pages(raw_blocks, destination="draft")
-
-        sandbox_channel = self.bot.get_channel(int(self.sandbox_channel_id))
-        new_ids = await self._reconcile_pages(sandbox_channel, record["page_message_ids"], page_views)
-
+        record["raw_blocks"] = raw_blocks
         last_message_id = interaction.message.id
+
+        # Also works on an already-published recap (e.g. re-running after a
+        # stat-calculation fix, like resolving alt characters to their
+        # main for attendance) - re-syncs BOTH copies the same way
+        # _apply_note does: the actual public post (no buttons - see
+        # "published" destination) AND the sandbox "published_marker" this
+        # button was clicked on, each tracked under its own message-ID
+        # list since they live in different channels.
+        if record.get("published"):
+            pub_channel = self.bot.get_channel(record["published_channel_id"])
+            if pub_channel is not None:
+                pub_views = self._render_pages(raw_blocks, destination="published")
+                record["published_message_ids"] = await self._reconcile_pages(
+                    pub_channel, record["published_message_ids"], pub_views
+                )
+            sandbox_channel = self.bot.get_channel(int(self.sandbox_channel_id))
+            if sandbox_channel is None:
+                await interaction.followup.send("Couldn't find the sandbox channel.", ephemeral=True)
+                return
+            marker_views = self._render_pages(
+                raw_blocks, destination="published_marker",
+                published_channel_id=record["published_channel_id"], published_by=record.get("published_by"),
+            )
+            new_ids = await self._reconcile_pages(sandbox_channel, record["page_message_ids"], marker_views)
+        else:
+            sandbox_channel = self.bot.get_channel(int(self.sandbox_channel_id))
+            page_views = self._render_pages(raw_blocks, destination="draft")
+            new_ids = await self._reconcile_pages(sandbox_channel, record["page_message_ids"], page_views)
+
         if new_ids[-1] != last_message_id:
             self.store.delete(last_message_id)
-        record["raw_blocks"] = raw_blocks
         record["page_message_ids"] = new_ids
         self.store.set(new_ids[-1], **record)
 
-        await interaction.followup.send("Regenerated with the latest data.", ephemeral=True)
+        message = (
+            "Regenerated with the latest data - the published post has been updated too."
+            if record.get("published") else "Regenerated with the latest data."
+        )
+        await interaction.followup.send(message, ephemeral=True)
 
     # --- publishing --------------------------------------------------------
 
