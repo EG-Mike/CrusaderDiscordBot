@@ -34,6 +34,7 @@ EXTENSIONS = [
     "cogs.attendance",
     "cogs.raid_summary",
     "cogs.raid_logs",
+    "cogs.tier_retrospective",
 ]
 
 intents = discord.Intents.default()
