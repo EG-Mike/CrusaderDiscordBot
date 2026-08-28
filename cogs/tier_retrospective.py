@@ -200,7 +200,9 @@ class TierRetrospectiveCog(commands.Cog):
         posted main-raid reports yet.
         """
         tier_name = tier_data["name"]
-        codes = raid_cog.get_tier_reports(tier_name, raid_type="main")
+        entries = raid_cog.get_tier_report_entries(tier_name, raid_type="main")
+        session_by_code = {e["code"]: e["session_id"] for e in entries}
+        codes = [e["code"] for e in entries]
         wcl = self.bot.wcl
 
         reports = []
@@ -232,15 +234,33 @@ class TierRetrospectiveCog(commands.Cog):
             reports.append({
                 "code": code, "summary": summary, "span": span,
                 "fights_by_encounter": fights_by_encounter, "boss_only": boss_only,
-                "composition": composition,
+                "composition": composition, "session_id": session_by_code.get(code, code),
             })
 
         if not reports:
             return None
 
         reports.sort(key=lambda r: (r["span"]["date"], r["code"]))
-        for i, r in enumerate(reports, start=1):
-            r["week"] = i
+
+        # Group reports into "sessions" (raid weeks) - normally 1:1 with a
+        # report, but a moderator can fold two or more reports into one
+        # session via raid_cog.merge_tier_reports() for a week split
+        # across multiple calendar nights (e.g. SSC cleared one night, TK
+        # cleared a different night the same week - see that method's
+        # docstring). Every report's WEEK NUMBER comes from its session,
+        # never the report itself, so merged reports always land on the
+        # same week.
+        sessions = {}
+        for r in reports:
+            sessions.setdefault(r["session_id"], []).append(r)
+
+        def _session_date(members):
+            return min(m["span"]["date"] for m in members)
+
+        session_ids_sorted = sorted(sessions.keys(), key=lambda sid: (_session_date(sessions[sid]), sid))
+        week_by_session = {sid: i for i, sid in enumerate(session_ids_sorted, start=1)}
+        for r in reports:
+            r["week"] = week_by_session[r["session_id"]]
 
         classes_map = {}
         for r in reports:
@@ -268,8 +288,6 @@ class TierRetrospectiveCog(commands.Cog):
                 night_ms = r["span"]["last_kill_ms"] - r["span"]["first_pull_ms"]
                 if night_ms > 0:
                     total_raid_time_ms += night_ms
-                    if fastest_raidnight is None or night_ms < fastest_raidnight["ms"]:
-                        fastest_raidnight = {"ms": night_ms, "week": r["week"], "date": r["span"]["date"]}
 
             for instance_name, boss_names in sub_instances.items():
                 encounter_ids = [tier_data["bosses"][n] for n in boss_names if n in tier_data["bosses"]]
@@ -288,6 +306,27 @@ class TierRetrospectiveCog(commands.Cog):
                 prior = fastest_clears.get(instance_name)
                 if prior is None or duration_ms < prior["ms"]:
                     fastest_clears[instance_name] = {"ms": duration_ms, "week": r["week"], "date": r["span"]["date"]}
+
+        # Fastest raid night is measured per SESSION (see grouping above),
+        # not per individual WCL report - when a week's clear is split
+        # across two reports (SSC one night, TK another), the correct
+        # comparison is the SUM of each member report's own first-pull-to-
+        # last-kill span, never a min-to-max across both reports' absolute
+        # timestamps (which would wrongly count the gap between the two
+        # nights - e.g. a full day - as raid time). For an un-merged
+        # session (the common case, one report = one week) this reduces to
+        # exactly that report's own span, same as before.
+        for sid, members in sessions.items():
+            member_spans_ms = [
+                m["span"]["last_kill_ms"] - m["span"]["first_pull_ms"] for m in members
+                if m["span"]["last_kill_ms"] is not None and m["span"]["first_pull_ms"] is not None
+                and m["span"]["last_kill_ms"] > m["span"]["first_pull_ms"]
+            ]
+            if not member_spans_ms:
+                continue
+            session_ms = sum(member_spans_ms)
+            if fastest_raidnight is None or session_ms < fastest_raidnight["ms"]:
+                fastest_raidnight = {"ms": session_ms, "week": week_by_session[sid], "date": _session_date(members)}
 
         # --- personal: medals ---------------------------------------------
 
@@ -330,16 +369,27 @@ class TierRetrospectiveCog(commands.Cog):
                 deaths_total[name] = deaths_total.get(name, 0) + v
             for name, v in (s.get("potion_casts") or {}).items():
                 potion_totals[name] = potion_totals.get(name, 0) + v
-            for name, kills in (s.get("kill_counts") or {}).items():
-                if kills >= 1:
-                    attendance_counts[name] = attendance_counts.get(name, 0) + 1
+
+        # Attendance is counted per SESSION (raid week), not per report -
+        # a raider who only made SSC's night in a week split across two
+        # reports (see session grouping above) still attended that WEEK,
+        # and shouldn't be double-counted relative to raiders in a normal
+        # un-merged week just because their week happens to have 2 reports.
+        for members in sessions.values():
+            attendees = set()
+            for m in members:
+                for name, kills in (m["summary"].get("kill_counts") or {}).items():
+                    if kills >= 1:
+                        attendees.add(name)
+            for name in attendees:
+                attendance_counts[name] = attendance_counts.get(name, 0) + 1
 
         for name, v in healing_net.items():
             healing_gross[name] = healing_gross.get(name, 0) + v
 
         return {
             "tier_name": tier_name,
-            "total_weeks": len(reports),
+            "total_weeks": len(sessions),
             "fastest_clears": fastest_clears,
             "fastest_raidnight": fastest_raidnight,
             "unique_chars": unique_chars,
