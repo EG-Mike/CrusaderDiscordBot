@@ -582,9 +582,38 @@ class RaidLogsCog(commands.Cog):
         )
 
     async def _post_summary_prompt(self, channel_id, entry: dict, raid_type: str, tier_guess, who_label: str, is_auto: bool):
+        """
+        Posts the "📝 Post Raid Summary" continue-button that's the whole
+        point of Summarize - without it, nobody has any way to reach
+        RaidSummaryOptionsView for this log, so the raid summary simply
+        never gets posted. channel_id (MODERATOR_CHANNEL_ID/
+        ATTENDANCE_CHANNEL_ID, or this cog's own repost channel for an alt
+        raid) can be stale in the gateway cache (e.g. right after a bot
+        restart, before that channel's been touched again) - self.bot.
+        get_channel() alone would then return None and, before this,
+        this method just logged a warning and silently gave up, so the
+        button never appeared ANYWHERE and the log was stuck with no way
+        to finish it short of a moderator digging through logs. Falls back
+        to an explicit fetch_channel() first, then to this cog's own
+        repost channel (always configured - checked in cog_load) as a
+        last resort, so the button always ends up posted somewhere a
+        moderator will actually see it.
+        """
         channel = self.bot.get_channel(channel_id) if channel_id else None
+        if channel is None and channel_id:
+            try:
+                channel = await self.bot.fetch_channel(channel_id)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                channel = None
+
         if channel is None:
-            log.warning("Couldn't find channel %s to post the raid-summary prompt", channel_id)
+            log.warning(
+                "Couldn't find channel %s to post the raid-summary prompt - falling back to the repost channel",
+                channel_id,
+            )
+            channel = self.bot.get_channel(self.repost_channel_id) if self.repost_channel_id else None
+        if channel is None:
+            log.warning("No repost channel configured either - raid-summary prompt for %s was dropped", entry["report_code"])
             return
 
         auto_note = (
