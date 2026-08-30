@@ -85,21 +85,37 @@ def spell_wowhead_url(spell_id: int) -> str:
 
 class WowheadClient:
     def __init__(self, cache_path: str = "wowhead_item_cache.json"):
-        # Item name/icon/quality never changes once looked up, so this cache
-        # is permanent (unlike wcl_client's report cache, nothing here ever
-        # needs invalidating).
+        # Item name/icon/quality never changes once looked up, so a
+        # SUCCESSFUL lookup is cached permanently (unlike wcl_client's
+        # report cache, a real result here never needs invalidating). A
+        # FAILED lookup (icon_slug None - see _fetch's fallback) is
+        # deliberately never written here - see get_item()'s docstring for
+        # why a fallback used to get cached just as permanently as a real
+        # result, which is exactly backwards.
         self._cache = ApplicationStore(path=cache_path)
 
     async def get_item(self, item_id: int) -> dict:
         """Returns {"id", "name", "icon_slug", "icon_url", "wowhead_url", "quality"}.
         Falls back to a generic placeholder (never raises) if the lookup fails
-        or comes back in an unexpected shape."""
+        or comes back in an unexpected shape.
+
+        A cached entry with icon_slug=None is treated as a cache MISS, not a
+        hit - it can only mean a past lookup failed (a successful one always
+        has an icon_slug), and this used to get cached exactly like a real
+        result, permanently freezing every "Item #<id>" placeholder forever
+        even after whatever caused the failure (e.g. the anti-bot-challenge
+        User-Agent issue - see the module docstring) got fixed, since
+        nothing ever re-tried it. Retrying here on every call this comes up
+        costs nothing once a real result lands (see _fetch), since that's
+        the one case that DOES get cached and short-circuits every call
+        after."""
         cached = self._cache.get(item_id)
-        if cached is not None:
+        if cached is not None and cached.get("icon_slug") is not None:
             return cached
 
         result = await self._fetch(item_id)
-        self._cache.set(item_id, **result)
+        if result.get("icon_slug") is not None:
+            self._cache.set(item_id, **result)
         return result
 
     async def _fetch(self, item_id: int) -> dict:
@@ -141,18 +157,20 @@ class WowheadClient:
 
     async def get_spell(self, spell_id: int) -> dict:
         """Returns {"id", "name", "icon_slug", "icon_url", "wowhead_url"} for
-        a spell - same permanent-cache/never-raises contract as get_item(),
-        used to give cogs/raid_summary.py's buff/debuff-uptime section a
-        real icon per tracked ability (config.TRACKED_ABILITY_ICON_SPELL_IDS).
-        Cached under a "spell:<id>" string key in the same store as items
-        (plain int item IDs), so the two never collide."""
+        a spell - same permanent-cache-on-success/retry-on-failure contract
+        as get_item() (see its docstring), used to give
+        cogs/raid_summary.py's buff/debuff-uptime section a real icon per
+        tracked ability (config.TRACKED_ABILITY_ICON_SPELL_IDS). Cached
+        under a "spell:<id>" string key in the same store as items (plain
+        int item IDs), so the two never collide."""
         cache_key = f"spell:{spell_id}"
         cached = self._cache.get(cache_key)
-        if cached is not None:
+        if cached is not None and cached.get("icon_slug") is not None:
             return cached
 
         result = await self._fetch_spell(spell_id)
-        self._cache.set(cache_key, **result)
+        if result.get("icon_slug") is not None:
+            self._cache.set(cache_key, **result)
         return result
 
     async def _fetch_spell(self, spell_id: int) -> dict:

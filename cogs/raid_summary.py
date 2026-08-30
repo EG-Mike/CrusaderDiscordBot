@@ -1554,9 +1554,6 @@ class RaidSummaryCog(commands.Cog):
             text += f"\n\n*{note.strip()}*"
         return text
 
-    def _build_footer_text(self, media_link: str) -> str:
-        return media_link.strip() if media_link else ""
-
     # --- block building / pagination ---------------------------------------
 
     def _text_block(self, content: str) -> dict:
@@ -1636,30 +1633,48 @@ class RaidSummaryCog(commands.Cog):
 
     def _render_pages(self, pre_loot_blocks: list, loot_blocks: list, header_ctx: dict,
                        note: str, media_link: str, banner_source: str) -> list:
-        """Builds the full page list (LayoutViews) from frozen pre-loot/loot
-        blocks plus fresh tldr/footer content - used for the initial post
-        and every later edit/add-loot, so they never drift apart. Loot (+
-        the footer, if any) is always paginated separately from the header
-        content, so it always starts on a fresh message rather than sharing
-        space with whatever's left on the last header page - normally
-        message #2. pre_loot_blocks[0] is always the links block (WCL log +
-        Wipefest) - see the command handler, which builds it that way so it
-        stays anchored to the top post without needing its own parameter."""
+        """Builds the full page list from frozen pre-loot/loot blocks plus
+        fresh tldr content - used for the initial post and every later
+        edit/add-loot, so they never drift apart. Loot is always paginated
+        separately from the header content, so it always starts on a fresh
+        message rather than sharing space with whatever's left on the last
+        header page - normally message #2. pre_loot_blocks[0] is always the
+        links block (WCL log + Wipefest) - see the command handler, which
+        builds it that way so it stays anchored to the top post without
+        needing its own parameter.
+
+        Returns a list of {"content": str|None, "view": LayoutView|None}
+        page specs, NOT plain views - every content page has view set and
+        content None (Components V2, same as before). If media_link is
+        given, one more page is appended with content=media_link and
+        view=None instead: Components V2 messages never auto-unfurl a URL
+        (that's suppressed page-wide by the IS_COMPONENTS_V2 flag every
+        other page here carries - confirmed against Discord's own docs on
+        the flag), which is why a pasted YouTube/Twitch/image link used to
+        show as a bare clickable link with no preview/player. A trailing
+        PLAIN message (no components, no IS_COMPONENTS_V2 flag) gets
+        Discord's normal automatic embed/unfurl instead, same as pasting
+        that link directly into any channel - the only way to get a real
+        playable preview for it. Every caller that turns page specs into
+        actual Discord messages (thread-creation, _reconcile_pages) has to
+        send content=/view= from each spec rather than assuming view alone.
+        """
         tldr_block = self._text_block(self._build_tldr_text(header_ctx, note))
-        footer_text = self._build_footer_text(media_link)
-        tail_extra = [self._text_block(footer_text)] if footer_text else []
 
         head_pages = self._paginate_blocks([tldr_block] + pre_loot_blocks)
-        tail_pages = self._paginate_blocks(loot_blocks + tail_extra) if (loot_blocks or tail_extra) else []
+        tail_pages = self._paginate_blocks(loot_blocks) if loot_blocks else []
         all_pages = head_pages + tail_pages
 
-        views = []
+        pages = []
         for i, page in enumerate(all_pages):
             is_first, is_last = i == 0, i == len(all_pages) - 1
-            views.append(
-                self._render_page(page, banner_source=banner_source if is_first else None, with_action_buttons=is_last)
-            )
-        return views
+            view = self._render_page(page, banner_source=banner_source if is_first else None, with_action_buttons=is_last)
+            pages.append({"content": None, "view": view})
+
+        media_link = media_link.strip() if media_link else ""
+        if media_link:
+            pages.append({"content": media_link, "view": None})
+        return pages
 
     # --- the command ---------------------------------------------------
 
@@ -1772,6 +1787,80 @@ class RaidSummaryCog(commands.Cog):
         failure (bad report code, no fights, Discord post failure) -
         never raises for those, so both callers can turn the same message
         into a followup or a channel post without duplicating error text.
+        """
+        content = await self._compute_summary_content(guild, tier_data, report_code, clear_status, loot_rows, media_link, note)
+        if not content["ok"]:
+            return content
+
+        applied_tags = self._resolve_applied_tags(forum_channel, tier_data["name"], clear_status, raid_type)
+        thread_name = thread_name_override or f"{tier_data['name']} — {content['report_date']}"
+        pages = content["page_views"]
+        try:
+            # pages[0] is always a Components V2 content page (a real
+            # boss-by-boss report always has at least the links block - a
+            # trailing media-link page, if any, is never page 0) - see
+            # _render_pages.
+            create_kwargs = {"name": thread_name, "view": pages[0]["view"], "applied_tags": applied_tags}
+            if content["banner_file"]:
+                create_kwargs["file"] = content["banner_file"]
+            thread_result = await forum_channel.create_thread(**create_kwargs)
+            thread = thread_result.thread
+            posted_messages = [thread_result.message]
+            for page in pages[1:]:
+                posted_messages.append(await thread.send(content=page["content"], view=page["view"]))
+        except Exception:
+            log.exception("Failed to post raid summary to forum")
+            return {
+                "ok": False,
+                "error": ("Something went wrong posting the summary - check the bot's permissions on the "
+                          "raid-summary forum channel (Send Messages, Create Posts, Embed Links)."),
+            }
+
+        self._commit_record_updates(content["records"], content["record_updates"], report_code, content["report_date"], content["tier_name"])
+
+        # Persisted so the ✏️ Edit / 🎁 Add Loot / 🔄 Regenerate buttons can
+        # rebuild the summary later without re-touching WCL/Wowhead or the
+        # records above - see the module docstring. loot_rows (the raw
+        # Gargul-parsed rows, not the rendered loot_blocks) is kept too so a
+        # later regenerate can re-resolve item names/icons against Wowhead
+        # data as of THEN, not whatever Wowhead returned at post time - see
+        # raidsummary_regenerate.
+        last_message = posted_messages[-1]
+        self.store.set(
+            last_message.id,
+            thread_id=thread.id,
+            report_code=report_code,
+            page_message_ids=[m.id for m in posted_messages],
+            pre_loot_blocks=content["pre_loot_blocks"],
+            loot_blocks=content["loot_blocks"],
+            header_ctx=content["header_ctx"],
+            note=note,
+            media_link=media_link,
+            banner_url=content["banner_source"],
+            loot_rows=loot_rows,
+        )
+
+        self._record_tier_report(tier_data["name"], report_code, raid_type)
+
+        return {"ok": True, "thread": thread}
+
+    async def _compute_summary_content(self, guild: discord.Guild, tier_data: dict, report_code: str,
+                                        clear_status: str, loot_rows: list, media_link: str, note: str) -> dict:
+        """
+        Everything needed to render a raid summary's pages - fetching the
+        WCL report, resolving loot/composition, building every block - but
+        NOT posting/reconciling anything to Discord. Split out of
+        _assemble_and_post_summary so raidsummary_regenerate can rebuild an
+        ALREADY-POSTED summary's content from fresh WCL/Wowhead data and
+        push it into the existing thread (via _reconcile_pages) instead of
+        creating a new one, without this logic living in two places that
+        could drift apart.
+
+        Returns {"ok": True, "page_views", "pre_loot_blocks", "loot_blocks",
+        "header_ctx", "banner_source", "banner_file", "report_date",
+        "tier_name", "records", "record_updates"} on success, or
+        {"ok": False, "error": "..."} - see _assemble_and_post_summary's
+        own docstring for the failure contract this preserves.
         """
         try:
             summary = await self.bot.wcl.get_report_summary(report_code)
@@ -1964,75 +2053,62 @@ class RaidSummaryCog(commands.Cog):
         banner_source, banner_file = self._load_banner(tier_data["name"])
         page_views = self._render_pages(pre_loot_blocks, loot_blocks, header_ctx, note, media_link, banner_source)
 
-        applied_tags = self._resolve_applied_tags(forum_channel, tier_data["name"], clear_status, raid_type)
+        return {
+            "ok": True,
+            "page_views": page_views, "pre_loot_blocks": pre_loot_blocks, "loot_blocks": loot_blocks,
+            "header_ctx": header_ctx, "banner_source": banner_source, "banner_file": banner_file,
+            "report_date": report_date, "tier_name": tier_name, "records": records,
+            "record_updates": {
+                "newly_killed_ids": newly_killed_ids, "new_fastest_kills": new_fastest_kills,
+                "clear_time_updates": clear_time_updates, "parse_updates": parse_updates,
+                "uptime_updates": uptime_updates, "tier_stat_updates": tier_stat_updates,
+            },
+        }
 
-        thread_name = thread_name_override or f"{tier_data['name']} — {report_date}"
-        try:
-            create_kwargs = {"name": thread_name, "view": page_views[0], "applied_tags": applied_tags}
-            if banner_file:
-                create_kwargs["file"] = banner_file
-            thread_result = await forum_channel.create_thread(**create_kwargs)
-            thread = thread_result.thread
-            posted_messages = [thread_result.message]
-            for view in page_views[1:]:
-                posted_messages.append(await thread.send(view=view))
-        except Exception:
-            log.exception("Failed to post raid summary to forum")
-            return {
-                "ok": False,
-                "error": ("Something went wrong posting the summary - check the bot's permissions on the "
-                          "raid-summary forum channel (Send Messages, Create Posts, Embed Links)."),
-            }
-
-        # Only commit kill/clear-time/parse/uptime/tier-stat records once the post actually succeeded.
-        if (newly_killed_ids or new_fastest_kills or clear_time_updates or parse_updates
+    def _commit_record_updates(self, records: dict, updates: dict, report_code: str, report_date: str, tier_name: str):
+        """
+        Applies a _compute_summary_content() result's record_updates (kill/
+        clear-time/parse/uptime/tier-stat leaderboards) onto `records` and
+        persists it - shared by both a fresh post (_assemble_and_post_summary)
+        and a regenerate (raidsummary_regenerate), so the two never compute
+        this commit differently. Only ever called once the corresponding
+        Discord post/edit has actually succeeded - see both callers.
+        """
+        newly_killed_ids = updates["newly_killed_ids"]
+        new_fastest_kills = updates["new_fastest_kills"]
+        clear_time_updates = updates["clear_time_updates"]
+        parse_updates = updates["parse_updates"]
+        uptime_updates = updates["uptime_updates"]
+        tier_stat_updates = updates["tier_stat_updates"]
+        if not (newly_killed_ids or new_fastest_kills or clear_time_updates or parse_updates
                 or uptime_updates or tier_stat_updates):
-            for encounter_id in newly_killed_ids:
-                records["encounters"].setdefault(str(encounter_id), {})["first_seen_report"] = report_code
-                records["encounters"][str(encounter_id)]["first_seen_date"] = report_date
-            for encounter_id, duration_ms in new_fastest_kills.items():
-                entry = records["encounters"].setdefault(str(encounter_id), {})
-                entry["fastest_ms"] = duration_ms
-                entry["fastest_report"] = report_code
-                entry["fastest_date"] = report_date
-            for instance_name, new_fastest_ms in clear_time_updates.items():
-                records["clears"][instance_name] = {
-                    "fastest_ms": new_fastest_ms, "fastest_report": report_code, "fastest_date": report_date,
-                }
-            for encounter_id, name_map in parse_updates.items():
-                boss_bests = records["parses"].setdefault(str(encounter_id), {})
-                for name, pct in name_map.items():
-                    boss_bests[name] = {"best_percent": pct, "report_code": report_code, "date": report_date}
-            tier_buffs = records["buffs"].setdefault(tier_name, {})
-            for ability_name, new_best_pct in uptime_updates.items():
-                tier_buffs[ability_name] = {
-                    "best_uptime_pct": new_best_pct, "report_code": report_code, "date": report_date,
-                }
-            tier_stats_bucket = records["tier_stats"].setdefault(tier_name, {})
-            for stat_key, update in tier_stat_updates.items():
-                tier_stats_bucket[stat_key] = {**update, "report_code": report_code, "date": report_date}
-            self._save_records(records)
+            return
 
-        # Persisted so the ✏️ Edit / 🎁 Add Loot buttons can rebuild the
-        # summary later without re-touching WCL/Wowhead or the records
-        # above - see the module docstring.
-        last_message = posted_messages[-1]
-        self.store.set(
-            last_message.id,
-            thread_id=thread.id,
-            report_code=report_code,
-            page_message_ids=[m.id for m in posted_messages],
-            pre_loot_blocks=pre_loot_blocks,
-            loot_blocks=loot_blocks,
-            header_ctx=header_ctx,
-            note=note,
-            media_link=media_link,
-            banner_url=banner_source,
-        )
-
-        self._record_tier_report(tier_name, report_code, raid_type)
-
-        return {"ok": True, "thread": thread}
+        for encounter_id in newly_killed_ids:
+            records["encounters"].setdefault(str(encounter_id), {})["first_seen_report"] = report_code
+            records["encounters"][str(encounter_id)]["first_seen_date"] = report_date
+        for encounter_id, duration_ms in new_fastest_kills.items():
+            entry = records["encounters"].setdefault(str(encounter_id), {})
+            entry["fastest_ms"] = duration_ms
+            entry["fastest_report"] = report_code
+            entry["fastest_date"] = report_date
+        for instance_name, new_fastest_ms in clear_time_updates.items():
+            records["clears"][instance_name] = {
+                "fastest_ms": new_fastest_ms, "fastest_report": report_code, "fastest_date": report_date,
+            }
+        for encounter_id, name_map in parse_updates.items():
+            boss_bests = records["parses"].setdefault(str(encounter_id), {})
+            for name, pct in name_map.items():
+                boss_bests[name] = {"best_percent": pct, "report_code": report_code, "date": report_date}
+        tier_buffs = records["buffs"].setdefault(tier_name, {})
+        for ability_name, new_best_pct in uptime_updates.items():
+            tier_buffs[ability_name] = {
+                "best_uptime_pct": new_best_pct, "report_code": report_code, "date": report_date,
+            }
+        tier_stats_bucket = records["tier_stats"].setdefault(tier_name, {})
+        for stat_key, update in tier_stat_updates.items():
+            tier_stats_bucket[stat_key] = {**update, "report_code": report_code, "date": report_date}
+        self._save_records(records)
 
     # --- bulk (one-time) import of historic reports --------------------------
 
@@ -2308,10 +2384,157 @@ class RaidSummaryCog(commands.Cog):
             return
 
         kill_count = sum(1 for f in summary["fights"] if f["kill"])
+        breakdown = self._diagnose_encounter_ids(summary["fights"])
         await interaction.followup.send(
             f"`{report_code}` refetched and re-cached fresh from WCL - {len(summary['fights'])} fight(s), "
-            f"{kill_count} kill(s). /raidsummary (or the 🎁 Add/Update Loot button on an already-posted "
-            "summary) will now see this data.",
+            f"{kill_count} kill(s) overall. /raidsummary (or the 🎁 Add/Update Loot button on an "
+            f"already-posted summary) will now see this data.\n\n{breakdown}",
+            ephemeral=True,
+        )
+
+    def _diagnose_encounter_ids(self, fights: list) -> str:
+        """
+        Per-encounter_id breakdown of a report's fights (kills/wipes,
+        whichever tier's `bosses` dict that ID matches, if any) - the
+        overall kill_count /raidsummary-refresh-report reports is unscoped
+        (every kill in the report, any encounter), while /raidsummary's own
+        "Boss-by-boss" section only ever shows bosses whose encounter_id is
+        in the CHOSEN tier's config.py `bosses` dict (see
+        _build_boss_lines/_tier_stats) - so "refresh-report says N kills,
+        /raidsummary shows 0" with no live-report warning almost always
+        means the IDs in config.py don't actually match what WCL is
+        returning for these fights (stale/wrong ID, or the wrong tier was
+        picked in /raidsummary's dropdown), not a caching problem. This
+        prints the real IDs WCL sent back next to their fight/name so that
+        mismatch is visible directly, instead of guessed at.
+        """
+        id_to_tier_boss = {}
+        for tier in (config.CURRENT_TIER, config.PREVIOUS_TIER):
+            for boss_name, encounter_id in tier["bosses"].items():
+                id_to_tier_boss[encounter_id] = f"{tier['name']} → {boss_name}"
+
+        groups = {}
+        for f in fights:
+            eid = f.get("encounter_id")
+            if eid is None:
+                continue
+            g = groups.setdefault(eid, {"name": f.get("name") or "?", "kills": 0, "wipes": 0})
+            if f["kill"]:
+                g["kills"] += 1
+            else:
+                g["wipes"] += 1
+
+        if not groups:
+            return "No boss-encounter fights (only trash/no encounter_id) found in this report."
+
+        lines = ["**Encounter IDs WCL returned for this report:**"]
+        for eid, g in sorted(groups.items()):
+            match = id_to_tier_boss.get(eid, "⚠️ not in either tier's `bosses` dict in config.py")
+            lines.append(f"`{eid}` — {g['name']} ({g['kills']} kill(s), {g['wipes']} wipe(s)) — {match}")
+        return "\n".join(lines)
+
+    @app_commands.command(
+        name="raidsummary-regenerate",
+        description="Rebuild an already-posted raid summary from fresh WCL/Wowhead data, in place (moderator only)",
+    )
+    @app_commands.describe(report="Report link or bare code of the ALREADY-POSTED summary to regenerate")
+    async def raidsummary_regenerate(self, interaction: discord.Interaction, report: str):
+        """
+        Recomputes an already-posted /raidsummary thread's ENTIRE content
+        (boss-by-boss, damage/deaths/parses, comp, uptime, loot - everything
+        except the note/media link, which stay as last edited) from a fresh
+        WCL fetch + current Wowhead data, and edits the existing thread's
+        messages in place via _reconcile_pages - no delete-and-repost
+        needed. Note/media_link are carried over unchanged (same as a plain
+        ✏️ Edit would leave them); loot is rebuilt from the last raw Gargul
+        export stored on the record (see loot_rows in
+        _assemble_and_post_summary/_on_add_loot_click) so a Wowhead lookup
+        that failed at post time and got fixed since (see wowhead.py's
+        module docstring) shows real item names/icons this time instead of
+        "Item #<id>" forever.
+
+        Unlike a normal /raidsummary post, this DOES force-refetch WCL
+        first (invalidate_report) - the whole point is picking up data that
+        was wrong/incomplete when this was first posted (e.g. the report
+        was still live - see wcl_client.get_report_summary), so serving the
+        same cache would just reproduce the same bug.
+
+        Kill/clear-time/parse/uptime/tier-stat records ARE recommitted here
+        (see _commit_record_updates) - deliberately different from
+        _reconstruct_merged_post's week-merge, which reuses each report's
+        OWN already-earned badges to avoid comparing a kill to itself. Here
+        there's only ever one post's worth of data being corrected, and if
+        the original post's badges were wrong (e.g. missed a "First kill!"
+        because the live-report bug meant no kill was recorded at all),
+        recomputing now is the fix, not a bug.
+        """
+        if not await self._is_mod(interaction.guild, interaction.user.id):
+            await interaction.response.send_message("Only moderators can regenerate a raid summary.", ephemeral=True)
+            return
+
+        report_code = _extract_report_code(report)
+        found = self._find_post_record(report_code)
+        if found is None:
+            await interaction.response.send_message(
+                f"No saved /raidsummary post found for `{report_code}` - it may predate this feature, or was "
+                "never posted through this bot. Post it fresh with /raidsummary instead.",
+                ephemeral=True,
+            )
+            return
+        last_message_id, record = found
+
+        try:
+            tier_data = self._resolve_tier(record["header_ctx"]["tier_name"])
+        except ValueError:
+            await interaction.response.send_message(
+                f"Couldn't resolve this post's tier (`{record['header_ctx'].get('tier_name')}`) against "
+                "config.py's current CURRENT_TIER/PREVIOUS_TIER.", ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        self.bot.wcl.invalidate_report(report_code)
+
+        # clear_status isn't stored raw on the record (only the rendered
+        # "Full Clear!"/"Progress Raid" label), and it feeds header_ctx's
+        # clear_label - re-derived the same way /raidsummary-bulk does:
+        # data-driven off whether every one of this tier's configured
+        # bosses is now dead, not whatever it was labeled at original post
+        # time (which may itself have been wrong for the same reason this
+        # command exists).
+        try:
+            probe_summary = await self.bot.wcl.get_report_summary(report_code)
+        except Exception:
+            log.exception("Failed to refetch WCL report %s for regenerate", report_code)
+            await interaction.followup.send(f"Couldn't fetch WCL report `{report_code}` - check the link/code.", ephemeral=True)
+            return
+        fights_by_encounter = self._group_fights_by_encounter(probe_summary.get("fights") or [])
+        killed_count, _, _ = self._tier_stats(tier_data, fights_by_encounter)
+        clear_status = "full_clear" if killed_count == len(tier_data["bosses"]) else "progress"
+
+        loot_rows = record.get("loot_rows") or []
+        content = await self._compute_summary_content(
+            interaction.guild, tier_data, report_code, clear_status, loot_rows,
+            record.get("media_link"), record.get("note"),
+        )
+        if not content["ok"]:
+            await interaction.followup.send(content["error"], ephemeral=True)
+            return
+
+        record["pre_loot_blocks"] = content["pre_loot_blocks"]
+        record["loot_blocks"] = content["loot_blocks"]
+        record["header_ctx"] = content["header_ctx"]
+        record["banner_url"] = content["banner_source"]
+        record["loot_rows"] = loot_rows
+
+        ok = await self._reconcile_pages(interaction, last_message_id, record, content["page_views"])
+        if not ok:
+            return
+
+        self._commit_record_updates(content["records"], content["record_updates"], report_code, content["report_date"], content["tier_name"])
+        await interaction.followup.send(
+            f"Regenerated - {content['header_ctx']['killed_count']}/{len(tier_data['bosses'])} bosses shown, "
+            f"{content['header_ctx']['loot_count']} loot item(s).",
             ephemeral=True,
         )
 
@@ -2524,12 +2747,24 @@ class RaidSummaryCog(commands.Cog):
     async def _reconcile_pages(self, interaction: discord.Interaction, last_message_id: int,
                                 record: dict, page_views: list) -> bool:
         """
-        Shared by _apply_edit (note/media) and _on_add_loot_click (loot) -
-        edits existing thread messages page-by-page in place, sends new
-        ones if the update made the summary longer, deletes leftovers if
-        shorter, and re-persists the record under the (possibly new) last
-        message's ID. Returns True on success (caller sends its own
-        follow-up on success; this sends its own on failure).
+        Shared by _apply_edit (note/media), _on_add_loot_click (loot), and
+        raidsummary_regenerate (everything) - edits existing thread
+        messages page-by-page in place, sends new ones if the update made
+        the summary longer, deletes leftovers if shorter, and re-persists
+        the record under the (possibly new) last message's ID. Returns
+        True on success (caller sends its own follow-up on success; this
+        sends its own on failure).
+
+        page_views is a list of {"content", "view"} specs, not raw views -
+        see _render_pages. A media-link page (content set, view None) is
+        a genuinely different KIND of message (no IS_COMPONENTS_V2 flag)
+        from every other page here (view set, content None) - Discord
+        doesn't allow that flag to change on an edit, so if a position
+        used to hold one kind and now needs the other (e.g. a media link
+        just got added/removed, shifting which index is the trailing
+        page), the discord.HTTPException that edit attempt raises is
+        treated the same as a vanished message: delete-and-resend rather
+        than failing the whole reconcile.
         """
         try:
             thread = self.bot.get_channel(record["thread_id"]) or await self.bot.fetch_channel(record["thread_id"])
@@ -2542,16 +2777,23 @@ class RaidSummaryCog(commands.Cog):
         old_ids = record["page_message_ids"]
         new_ids = []
         try:
-            for i, view in enumerate(page_views):
+            for i, page in enumerate(page_views):
+                content, view = page["content"], page["view"]
                 if i < len(old_ids):
                     try:
                         message = await thread.fetch_message(old_ids[i])
-                        await message.edit(view=view)
+                        await message.edit(content=content, view=view)
                         new_ids.append(message.id)
                         continue
-                    except (discord.NotFound, discord.Forbidden):
+                    except discord.NotFound:
                         pass
-                new_ids.append((await thread.send(view=view)).id)
+                    except (discord.Forbidden, discord.HTTPException):
+                        try:
+                            stale = await thread.fetch_message(old_ids[i])
+                            await stale.delete()
+                        except (discord.NotFound, discord.Forbidden):
+                            pass
+                new_ids.append((await thread.send(content=content, view=view)).id)
 
             for stale_id in old_ids[len(page_views):]:
                 try:
@@ -2660,6 +2902,7 @@ class RaidSummaryCog(commands.Cog):
         loot_lines = await self._build_loot_lines(resolved_loot, interaction.guild, classes_map, existing_by_name)
 
         record["loot_blocks"] = self._build_loot_blocks(loot_lines)
+        record["loot_rows"] = loot_rows
         record["header_ctx"]["loot_count"] = len(resolved_loot)
         record["header_ctx"]["loot_pending"] = False
 
