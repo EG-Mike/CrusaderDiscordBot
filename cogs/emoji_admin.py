@@ -27,9 +27,18 @@ import aiohttp
 
 log = logging.getLogger("wow-apply-bot.emoji_admin")
 
-WOWHEAD_LINK_RE = re.compile(r"wowhead\.com/(?:[a-z0-9]+/)?(item|spell)=(\d+)", re.IGNORECASE)
+WOWHEAD_LINK_RE = re.compile(r"wowhead\.com/(?:([a-z0-9-]+)/)?(item|spell)=(\d+)", re.IGNORECASE)
 ICON_TAG_RE = re.compile(r"<icon[^>]*>([^<]+)</icon>", re.IGNORECASE)
 NAME_TAG_RE = re.compile(r"<name[^>]*>([^<]+)</name>", re.IGNORECASE)
+
+# Same fix as wowhead.py: aiohttp's default User-Agent can trigger Wowhead's
+# anti-bot challenge page (no <icon>/<name> tags), so use a browser UA.
+REQUEST_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    ),
+}
 
 MAX_LINKS_PER_CALL = 15  # keep bulk requests away from emoji-creation rate limits
 
@@ -58,11 +67,17 @@ class EmojiAdminCog(commands.Cog):
         match = WOWHEAD_LINK_RE.search(url)
         if not match:
             return None
-        kind, item_id = match.group(1), match.group(2)
+        expansion, kind, item_id = match.group(1), match.group(2), match.group(3)
 
-        xml_url = f"https://www.wowhead.com/{kind}={item_id}&xml"
+        # Item IDs are stable across expansions, but spell IDs get reused for
+        # unrelated abilities between Classic-era games and retail - querying
+        # the plain (retail) domain for a Classic spell link can silently
+        # resolve to the wrong spell (or nothing). Keep whatever
+        # expansion segment (tbc/wotlk/classic/etc.) the original link used.
+        prefix = f"{expansion}/" if expansion else ""
+        xml_url = f"https://www.wowhead.com/{prefix}{kind}={item_id}&xml"
         try:
-            async with session.get(xml_url) as resp:
+            async with session.get(xml_url, headers=REQUEST_HEADERS) as resp:
                 resp.raise_for_status()
                 text = await resp.text()
         except Exception:
