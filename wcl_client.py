@@ -1078,6 +1078,25 @@ class WarcraftLogsClient:
                 "dispels": dispels,
             }
 
+        # A report whose own endTime is still 0 is a LIVE log - the raid
+        # hasn't been stopped on WarcraftLogs yet, so boss kills/loot from
+        # the tail end of the night (or the whole night, if fetched right as
+        # logging started) are simply not in the data yet. Deliberately NOT
+        # cached in that case (unlike every other outcome here) - caching it
+        # would permanently freeze this incomplete snapshot, since
+        # get_report_summary() always serves from cache first with no TTL;
+        # every future call (including a retry made after the raid actually
+        # ended) would keep returning the same stale "no bosses killed"
+        # picture forever, with no built-in way to notice or recover short
+        # of a moderator manually deleting the cache file. See
+        # cogs/raid_logs.py's module docstring for the same report.endTime
+        # == 0 "still live" signal, already relied on there.
+        if not summary["end_time"]:
+            log.warning(
+                "Report %s still live (endTime=0) - returning this snapshot without caching it", report_code
+            )
+            return summary
+
         self._report_cache.set(report_code, **summary)
         return summary
 

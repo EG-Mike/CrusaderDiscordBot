@@ -1778,6 +1778,18 @@ class RaidSummaryCog(commands.Cog):
         except Exception:
             log.exception("Failed to fetch WCL report summary for %s", report_code)
             return {"ok": False, "error": f"Couldn't fetch WCL report `{report_code}` - check the link/code and try again."}
+        # See wcl_client.get_report_summary's docstring - a report with
+        # endTime still 0 is a live log the raid hasn't been stopped on yet
+        # on WarcraftLogs, so boss kills/loot from later in the night (or
+        # the whole night, if fetched right as logging started) aren't in
+        # the data. NOT refused outright - an abandoned log some raiders
+        # forget to explicitly stop can sit at endTime=0 forever, and this
+        # would otherwise block a summary for it from ever posting - this
+        # snapshot just wasn't cached (see that same docstring), so a
+        # moderator who sees the banner below and wants a corrected post
+        # can invalidate + rerun once the log actually finishes (or via
+        # /raidsummary-refresh-report if it turns out to be stuck live).
+        report_still_live = not summary.get("end_time")
         if not summary.get("fights"):
             return {"ok": False, "error": f"WCL report `{report_code}` has no fights - double check the link."}
 
@@ -1845,6 +1857,13 @@ class RaidSummaryCog(commands.Cog):
         }
 
         pre_loot_blocks = [self._text_block(self._build_links_block(report_code))]
+        if report_still_live:
+            pre_loot_blocks.append(self._text_block(
+                "⚠️ **This report was still live on WarcraftLogs when this summary was generated** - "
+                "boss kills and loot from later in the night may be missing below. Once the log shows "
+                "as finished on WCL, a moderator can run `/raidsummary-refresh-report` with this report "
+                "code, then post a corrected summary."
+            ))
 
         comp_block = self._build_comp_block(composition)
         if comp_block:
@@ -2242,6 +2261,59 @@ class RaidSummaryCog(commands.Cog):
         task = asyncio.create_task(self._run_cache_refresh(interaction.channel, tier_data))
         self._bulk_tasks.append(task)
         task.add_done_callback(lambda t: self._bulk_tasks.remove(t) if t in self._bulk_tasks else None)
+
+    @app_commands.command(
+        name="raidsummary-refresh-report",
+        description="Force-refetch ONE report from WCL before posting a summary for it (moderator only)",
+    )
+    @app_commands.describe(report="Report link or bare code (same as /raidsummary's report field)")
+    async def raidsummary_refresh_report(self, interaction: discord.Interaction, report: str):
+        """
+        Unlike /raidsummary-refresh-cache (which only re-fetches reports
+        ALREADY recorded under a tier - i.e. already-posted summaries, for
+        /tier-recap's benefit), this works on any report code at all,
+        posted or not - specifically for the case a /raidsummary run
+        against a freshly-finished raid came back with no bosses shown as
+        killed (or is missing loot/late-night data): that almost always
+        means the report was fetched while still LIVE on WarcraftLogs
+        (report.endTime still 0 - see wcl_client.get_report_summary), most
+        often because /raidsummary was run within a few seconds of the
+        raid ending, before the last pull(s) finished uploading. A live
+        report is no longer cached at all (see that same docstring), so
+        simply waiting a bit and running /raidsummary again is normally
+        enough - this command exists for the case that isn't - e.g. the
+        report WAS still live at fetch time from an older build of this bot
+        that didn't have that guard, and got cached wrong regardless.
+        """
+        if not await self._is_mod(interaction.guild, interaction.user.id):
+            await interaction.response.send_message("Only moderators can refresh a report's cache.", ephemeral=True)
+            return
+
+        report_code = _extract_report_code(report)
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        self.bot.wcl.invalidate_report(report_code)
+        try:
+            summary = await self.bot.wcl.get_report_summary(report_code)
+        except Exception:
+            log.exception("Failed to refetch WCL report %s", report_code)
+            await interaction.followup.send(f"Couldn't fetch WCL report `{report_code}` - check the link/code.", ephemeral=True)
+            return
+
+        if not summary.get("end_time"):
+            await interaction.followup.send(
+                f"`{report_code}` refetched, but it's still live on WarcraftLogs (raid not stopped/finished "
+                "uploading yet) - not cached. Wait for it to finish and try /raidsummary again.",
+                ephemeral=True,
+            )
+            return
+
+        kill_count = sum(1 for f in summary["fights"] if f["kill"])
+        await interaction.followup.send(
+            f"`{report_code}` refetched and re-cached fresh from WCL - {len(summary['fights'])} fight(s), "
+            f"{kill_count} kill(s). /raidsummary (or the 🎁 Add/Update Loot button on an already-posted "
+            "summary) will now see this data.",
+            ephemeral=True,
+        )
 
     @app_commands.command(
         name="raidsummary-merge-weeks",
