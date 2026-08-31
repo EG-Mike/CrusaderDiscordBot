@@ -468,13 +468,18 @@ class ApplyCog(commands.Cog):
         showing what the applicant's actual talent build/gear look like
         right now on Blizzard's own armory.
 
-        Returns None if bot.blizzard isn't configured, or if Blizzard has
-        nothing for this character under this realm slug (not found on
-        Blizzard's own realm list, or the character/account has armory
-        data hidden - blizzard_client.py's docstrings cover why this can't
-        tell those cases apart from the API response alone).
+        Returns None if bot.blizzard isn't configured, if
+        config.ARMORY_BLOCK_ENABLED is False (see that constant's comment -
+        defaulted off 2026-08 due to a confirmed Blizzard-side bug serving
+        stale Classic-Era snapshots for TBC Anniversary-migrated realms;
+        this short-circuits before any API call is made, so flipping it off
+        also means zero extra Blizzard API traffic per application), or if
+        Blizzard has nothing for this character under this realm slug (not
+        found on Blizzard's own realm list, or the character/account has
+        armory data hidden - blizzard_client.py's docstrings cover why this
+        can't tell those cases apart from the API response alone).
         """
-        if self.bot.blizzard is None:
+        if self.bot.blizzard is None or not config.ARMORY_BLOCK_ENABLED:
             return None
 
         try:
