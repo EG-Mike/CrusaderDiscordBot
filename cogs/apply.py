@@ -435,6 +435,109 @@ class ApplyCog(commands.Cog):
         lines.append(f"**Guild:** {guild_name or 'None'}")
         return "\n".join(lines)
 
+    def _format_talent_split(self, class_name, points_by_tree):
+        """
+        Formats a talent group's (tree_name, points) pairs (see
+        blizzard_client._bucket_talent_points) into a "31/10/20"-style
+        string ordered to match config.CLASS_SPECS[class_name] (Arms/Fury/
+        Protection order, etc.) whenever all 3 tree names match a known
+        spec for this class - falls back to whatever order the API gave if
+        they don't (e.g. an unrecognized tree name), so a mismatch degrades
+        to a still-readable split rather than silently dropping data.
+        Returns None if points_by_tree is None (see
+        get_character_specializations()'s docstring - the tree-grouping
+        field this needs may not exist in the real API response).
+        """
+        if not points_by_tree:
+            return None
+        order = config.CLASS_SPECS.get(class_name, [])
+        by_name = dict(points_by_tree)
+        if order and all(name in by_name for name in order):
+            return "/".join(str(by_name[name]) for name in order)
+        return "/".join(str(pts) for _, pts in points_by_tree)
+
+    async def _compute_armory_block(self, class_name: str, character_name: str):
+        """
+        Live Blizzard Armory lookup (equipped gear + talent build) - like
+        _compute_tier_and_boss_blocks, this is the only place these are
+        fetched: once, at posting time, baked into "armory_block" text
+        stored on the application and never re-queried by a later render.
+        Deliberately separate from the applicant-confirmed Class/Spec/Role
+        block (_build_class_block), which stays the source of truth for
+        role-assignment logic - this is purely a cross-check for reviewers
+        showing what the applicant's actual talent build/gear look like
+        right now on Blizzard's own armory.
+
+        Returns None if bot.blizzard isn't configured, or if Blizzard has
+        nothing for this character under this realm slug (not found on
+        Blizzard's own realm list, or the character/account has armory
+        data hidden - blizzard_client.py's docstrings cover why this can't
+        tell those cases apart from the API response alone).
+        """
+        if self.bot.blizzard is None:
+            return None
+
+        try:
+            equipment = await self.bot.blizzard.get_character_equipment(self.server_slug, character_name)
+            specializations = await self.bot.blizzard.get_character_specializations(
+                self.server_slug, character_name
+            )
+        except Exception:
+            log.exception("Blizzard armory lookup failed for %s", character_name)
+            return None
+
+        if not equipment and not specializations:
+            return None
+
+        lines = []
+
+        if specializations:
+            spec_lines = []
+            for group in specializations:
+                spec_name = group.get("spec_name")
+                split = self._format_talent_split(class_name, group.get("points_by_tree"))
+                icon = icons.resolve_spec_icon(class_name, spec_name) if spec_name else ""
+                label = f"{icon} {spec_name or 'Unknown spec'}".strip()
+                if split:
+                    label += f" ({split})"
+                elif group.get("total_points"):
+                    label += f" ({group['total_points']} pts)"
+                tag = "Primary" if group.get("is_active") else "Secondary"
+                spec_lines.append(f"**{tag}:** {label}")
+            lines.append("**Talent Build** *(live from Blizzard Armory)*\n" + "\n".join(spec_lines))
+
+        if equipment:
+            try:
+                existing_by_name = {e.name: e for e in await self.bot.fetch_application_emojis()}
+            except Exception:
+                existing_by_name = {}
+
+            gear_lines = []
+            for it in equipment:
+                item_id = it.get("item_id")
+                name = it.get("name") or (f"Item #{item_id}" if item_id else "?")
+                slot = it.get("slot_name") or it.get("slot_type") or "?"
+                icon = ""
+                if item_id:
+                    try:
+                        item_data = await self.bot.blizzard.get_item(item_id)
+                        if item_data.get("icon_url"):
+                            icon = await icons.ensure_item_emoji(
+                                self.bot, existing_by_name, item_id, item_data["icon_url"]
+                            )
+                    except Exception:
+                        pass
+                icon_prefix = f"{icon} " if icon else ""
+                gear_lines.append(f"`{slot}` {icon_prefix}{name}")
+
+            if gear_lines:
+                value = "\n".join(gear_lines)
+                if len(value) > 1000:
+                    value = value[:1000] + "\n… (truncated, see full profile)"
+                lines.append("**Equipped Gear** *(live from Blizzard Armory)*\n" + value)
+
+        return "\n\n".join(lines) if lines else None
+
     def _build_also_play_block(self, class_name, other_specs) -> str:
         if not other_specs:
             return "-"
@@ -608,6 +711,10 @@ class ApplyCog(commands.Cog):
         ))
         container.add_item(discord.ui.Separator())
 
+        if application.get("armory_block"):
+            container.add_item(discord.ui.TextDisplay(application["armory_block"]))
+            container.add_item(discord.ui.Separator())
+
         if application.get("tier_block"):
             container.add_item(discord.ui.TextDisplay(application["tier_block"]))
             container.add_item(discord.ui.Separator())
@@ -693,6 +800,7 @@ class ApplyCog(commands.Cog):
         )
         also_play_block = self._build_also_play_block(char_data["class_name"], other_specs)
         tier_block, boss_block, hidden_block = await self._compute_tier_and_boss_blocks(char_data)
+        armory_block = await self._compute_armory_block(char_data["class_name"], char_data["name"])
 
         application = {
             "applicant_id": interaction.user.id,
@@ -710,6 +818,7 @@ class ApplyCog(commands.Cog):
             "tier_block": tier_block,
             "boss_block": boss_block,
             "hidden_block": hidden_block,
+            "armory_block": armory_block,
             "profile_url": char_data.get("profile_url"),
             "screenshot_urls": screenshot_urls or [],
         }
@@ -735,6 +844,7 @@ class ApplyCog(commands.Cog):
             tier_block=tier_block,
             boss_block=boss_block,
             hidden_block=hidden_block,
+            armory_block=armory_block,
             profile_url=application["profile_url"],
             screenshot_urls=application["screenshot_urls"],
         )
@@ -1615,6 +1725,49 @@ class ApplyCog(commands.Cog):
         if failed:
             summary += f" {failed} failed - check the console log."
         await interaction.followup.send(summary, ephemeral=True)
+
+    # --- Blizzard armory diagnostic -------------------------------------
+
+    @app_commands.command(
+        name="apply-test-blizzard",
+        description="Step-by-step test of a character's Blizzard Armory data (gear+talents) (moderator only)",
+    )
+    @app_commands.describe(character="Character name to test (must exist on this guild's realm)")
+    async def apply_test_blizzard(self, interaction: discord.Interaction, character: str):
+        """
+        Diagnostic-only command for blizzard_client.py's character-profile
+        methods (get_character_equipment/get_character_specializations) -
+        same purpose as cogs/raid_summary.py's raidsummary_test_blizzard:
+        this sandbox could never reach api.blizzard.com to confirm the
+        equipment/specializations JSON shape live (see
+        blizzard_client.py's module docstring, and
+        get_character_specializations()'s docstring specifically - the
+        specializations/talent-split shape is a real unconfirmed guess,
+        unlike equipment). Dumps raw response bodies plus each endpoint's
+        parsed result so a namespace/field-name/realm-slug mismatch is
+        immediately visible instead of just silently showing no armory
+        block the way a normal /apply run would (by design - see
+        _compute_armory_block's docstring).
+        """
+        if not await self._is_mod(interaction.guild, interaction.user.id):
+            await interaction.response.send_message("Only moderators can run this.", ephemeral=True)
+            return
+        if self.bot.blizzard is None:
+            await interaction.response.send_message(
+                "BLIZZARD_CLIENT_ID/BLIZZARD_CLIENT_SECRET aren't set - the Armory block is "
+                "skipped entirely until those are configured. Register a free client at "
+                "https://develop.battle.net/access/clients, set both env vars, and restart "
+                "the bot to enable this.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        report = await self.bot.blizzard.diagnose_character(self.server_slug, character.strip())
+        # Discord's 2000-char message limit - a long raw-body dump can
+        # exceed it, so this chunks rather than truncating silently.
+        for i in range(0, len(report), 1900):
+            await interaction.followup.send(report[i:i + 1900], ephemeral=True)
 
 
 async def setup(bot: commands.Bot):

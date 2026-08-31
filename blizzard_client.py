@@ -42,6 +42,18 @@ exist.)
   moving from "classic1x-{region}" (Classic Era) to this namespace -
   "static-classic1x-{region}" is Classic ERA instead, for a guild still on
   original/Era Classic rather than TBC+).
+- Character equipment: GET /profile/wow/character/{realmSlug}/{characterName}/equipment
+  ?namespace=profile-classic-{region}&locale=en_US (see
+  get_character_equipment() - reasonably confirmed shape, a documented
+  Profile API endpoint).
+- Character specializations/talents: GET /profile/wow/character/{realmSlug}/
+  {characterName}/specializations?namespace=profile-classic-{region}&locale=en_US
+  (see get_character_specializations() - the endpoint NAME is confirmed
+  (via a real third-party client library's source), but the exact JSON
+  shape for Classic's freeform talent trees is a best-effort guess, not
+  independently verified - see that method's docstring for the honest
+  caveat and how to check/fix it against a real response via
+  diagnose_character()).
 
 Nothing here ever raises - a failed/unexpected lookup just falls back to a
 plain "Item #<id>" with no icon, same philosophy as wowhead.py/icons.py.
@@ -68,6 +80,16 @@ def _api_base(region: str) -> str:
 
 def _namespace(region: str) -> str:
     return f"static-classic-{region}"
+
+
+def _profile_namespace(region: str) -> str:
+    """Namespace for character PROFILE data (equipment, specializations) -
+    separate from _namespace()'s static game-data namespace above. Same
+    "-classic-" progression-realm segment as static-classic-{region}, just
+    under the "profile" family instead of "static" (documented Blizzard
+    convention: every namespace family - static/dynamic/profile - gets its
+    own namespace string for the same realm type)."""
+    return f"profile-classic-{region}"
 
 
 def _parse_icon_asset(media_data: dict) -> tuple:
@@ -245,6 +267,210 @@ class BlizzardClient:
             self._cache.set(cache_key, **result)
         return result
 
+    async def get_character_equipment(self, realm_slug: str, character_name: str) -> list:
+        """
+        Returns a list of equipped items via Blizzard's Character Equipment
+        Summary endpoint: GET /profile/wow/character/{realmSlug}/
+        {characterName}/equipment, namespace profile-classic-{region} (see
+        _profile_namespace) - [{"slot_type", "slot_name", "item_id", "name",
+        "quality"}, ...], quality as an int matching get_item()'s
+        _QUALITY_TYPE_TO_INT convention. realm_slug needs Blizzard's own
+        slug format (lowercase, spaces->hyphens) - callers reuse whatever
+        realm slug they already have for WCL (ApplyCog.server_slug), which
+        should match for an official Fresh/Anniversary realm (WCL mirrors
+        Blizzard's own slug for those), but this is NOT independently
+        confirmed live - same caveat as the rest of this file (see the
+        module docstring). character_name is lowercased before the request
+        per Blizzard's documented convention for profile character
+        endpoints specifically (case-sensitive elsewhere).
+
+        Never raises - returns [] on any failure: missing token, a 404
+        (character not found under this realm/namespace), or a 403 (some
+        profile sub-resources are "Protected" and may need the character
+        OWNER's own OAuth consent rather than just app client-credentials,
+        or may be gated by an in-game armory-visibility toggle - either
+        looks identical to this method, logged but not distinguished
+        further). Use diagnose_character() to see exactly which case
+        applies for a given character.
+        """
+        fallback = []
+        try:
+            token = await self._get_token()
+        except Exception:
+            log.warning("Couldn't get a Blizzard API token - no equipment data for %s", character_name, exc_info=True)
+            return fallback
+
+        headers = {"Authorization": f"Bearer {token}"}
+        base = _api_base(self.region)
+        namespace = _profile_namespace(self.region)
+        params = {"namespace": namespace, "locale": "en_US"}
+        slug = character_name.lower()
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"{base}/profile/wow/character/{realm_slug}/{slug}/equipment",
+                    params=params, headers=headers,
+                ) as resp:
+                    if resp.status in (403, 404):
+                        log.warning(
+                            "Blizzard API returned %s for %s's equipment (namespace %s) - "
+                            "no gear summary available (not found, privacy-protected, or "
+                            "wrong realm slug/namespace)",
+                            resp.status, character_name, namespace,
+                        )
+                        return fallback
+                    resp.raise_for_status()
+                    data = await resp.json()
+        except Exception:
+            log.warning("Blizzard API equipment lookup failed for %s", character_name, exc_info=True)
+            return fallback
+
+        items = []
+        for entry in data.get("equipped_items") or []:
+            item_ref = entry.get("item") or {}
+            slot = entry.get("slot") or {}
+            quality_type = ((entry.get("quality") or {}).get("type") or "").upper()
+            items.append({
+                "slot_type": slot.get("type"),
+                "slot_name": slot.get("name"),
+                "item_id": item_ref.get("id"),
+                "name": entry.get("name"),
+                "quality": _QUALITY_TYPE_TO_INT.get(quality_type),
+            })
+        return items
+
+    async def get_character_specializations(self, realm_slug: str, character_name: str) -> list:
+        """
+        Best-effort talent build lookup via Blizzard's Character
+        Specializations endpoint: GET /profile/wow/character/{realmSlug}/
+        {characterName}/specializations, namespace profile-classic-{region}.
+        The endpoint name is "specializations", NOT "statistics" -
+        .../statistics is a real but unrelated endpoint (raw combat-derived
+        counter stats, not talents). Returns one entry per talent group -
+        TWO entries for a dual-specced Classic character, one for a
+        single-spec character:
+            {"is_active": bool, "spec_name": str|None,
+             "points_by_tree": [(tree_name, points), ...] | None,
+             "total_points": int}
+
+        HONEST CAVEAT (see the module docstring - this sandbox can never
+        reach api.blizzard.com to verify any of this live): unlike
+        get_item()/get_character_equipment() above (built from a real
+        working reference client's source), Classic's old-style freeform
+        3-tree talent system has no confirmed reference for this endpoint's
+        exact JSON shape - only indirect signals (forum-thread mentions
+        that a "specializations" endpoint exists for classic profiles).
+        _parse_specialization_groups() below is written defensively to try
+        a couple of plausible shapes and degrade gracefully rather than
+        crash, but "points_by_tree" (the "31/10/20" split) may well come
+        back None until this is checked against a real response - use
+        diagnose_character() to see the raw JSON and fix the field names in
+        _parse_specialization_groups/_bucket_talent_points if so.
+        spec_name/total_points are more likely to come through correctly
+        since they only need SOME name/points field to exist per group, not
+        a specific tree-grouping field name.
+
+        Never raises - returns [] on any failure (token, 403/404 - see
+        get_character_equipment()'s docstring for what those can mean).
+        """
+        fallback = []
+        try:
+            token = await self._get_token()
+        except Exception:
+            log.warning("Couldn't get a Blizzard API token - no spec data for %s", character_name, exc_info=True)
+            return fallback
+
+        headers = {"Authorization": f"Bearer {token}"}
+        base = _api_base(self.region)
+        namespace = _profile_namespace(self.region)
+        params = {"namespace": namespace, "locale": "en_US"}
+        slug = character_name.lower()
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"{base}/profile/wow/character/{realm_slug}/{slug}/specializations",
+                    params=params, headers=headers,
+                ) as resp:
+                    if resp.status in (403, 404):
+                        log.warning(
+                            "Blizzard API returned %s for %s's specializations (namespace %s) - "
+                            "no talent build data available",
+                            resp.status, character_name, namespace,
+                        )
+                        return fallback
+                    resp.raise_for_status()
+                    data = await resp.json()
+        except Exception:
+            log.warning("Blizzard API specializations lookup failed for %s", character_name, exc_info=True)
+            return fallback
+
+        return _parse_specialization_groups(data)
+
+    async def diagnose_character(self, realm_slug: str, character_name: str) -> str:
+        """
+        Step-by-step verbose report for a diagnostic slash command (see
+        cogs/apply.py's apply_test_blizzard) - same contract as
+        diagnose_item(): dumps raw HTTP status + response bodies for both
+        the equipment and specializations endpoints, plus each one's parsed
+        result, so a namespace/field-name/realm-slug mismatch is
+        immediately visible instead of silently degrading to "no data" the
+        way a normal application post would (by design - see
+        get_character_equipment()/get_character_specializations()'s
+        docstrings). Never raises.
+        """
+        namespace = _profile_namespace(self.region)
+        lines = [
+            f"**Diagnosing character {character_name}** (realm_slug={realm_slug}, "
+            f"region={self.region}, namespace={namespace})"
+        ]
+
+        try:
+            token = await self._get_token()
+            lines.append(f"✅ OAuth token acquired ({token[:8]}...)")
+        except Exception as e:
+            lines.append(f"❌ OAuth token request failed: {e!r}")
+            return "\n".join(lines)
+
+        headers = {"Authorization": f"Bearer {token}"}
+        base = _api_base(self.region)
+        params = {"namespace": namespace, "locale": "en_US"}
+        slug = character_name.lower()
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"{base}/profile/wow/character/{realm_slug}/{slug}/equipment",
+                    params=params, headers=headers,
+                ) as resp:
+                    body = await resp.text()
+                    lines.append(f"Equipment endpoint: HTTP {resp.status}\n```\n{body[:1500]}\n```")
+
+                async with session.get(
+                    f"{base}/profile/wow/character/{realm_slug}/{slug}/specializations",
+                    params=params, headers=headers,
+                ) as resp:
+                    body = await resp.text()
+                    lines.append(f"Specializations endpoint: HTTP {resp.status}\n```\n{body[:1500]}\n```")
+        except Exception as e:
+            lines.append(f"❌ Request failed: {e!r}")
+            return "\n".join(lines)
+
+        try:
+            equipment = await self.get_character_equipment(realm_slug, character_name)
+            lines.append(f"Parsed equipment ({len(equipment)} item(s)): `{equipment}`")
+        except Exception as e:
+            lines.append(f"❌ Equipment parsing raised (this shouldn't happen): {e!r}")
+
+        try:
+            specs = await self.get_character_specializations(realm_slug, character_name)
+            lines.append(f"Parsed specializations: `{specs}`")
+        except Exception as e:
+            lines.append(f"❌ Specialization parsing raised (this shouldn't happen): {e!r}")
+
+        return "\n".join(lines)
+
     async def diagnose_item(self, item_id: int) -> str:
         """
         Step-by-step verbose report for /raidsummary-test-blizzard - unlike
@@ -301,3 +527,72 @@ _QUALITY_TYPE_TO_INT = {
 
 def _is_resolved(result: dict, item_id: int) -> bool:
     return result.get("icon_slug") is not None and result.get("name") != f"Item #{item_id}"
+
+
+def _parse_specialization_groups(data: dict) -> list:
+    """See get_character_specializations()'s docstring for the honesty
+    caveat this whole function operates under. Tries the plausible
+    "specialization_groups" key first (a dual-spec-shaped list, each with
+    its own is_active flag and talents) - falls back to treating the whole
+    payload as one implicit group if that key isn't present, so a
+    single-spec response still parses into something instead of an empty
+    list."""
+    groups = data.get("specialization_groups")
+    if groups is None:
+        groups = [data] if (data.get("talents") or data.get("talent_specialization")) else []
+
+    result = []
+    for group in groups:
+        spec_info = group.get("talent_specialization") or group.get("specialization") or {}
+        spec_name = spec_info.get("name")
+
+        talents = group.get("talents") or []
+        total_points = sum(t.get("spent_points", 0) or 0 for t in talents)
+        points_by_tree = _bucket_talent_points(talents)
+
+        result.append({
+            "is_active": bool(group.get("is_active", len(groups) == 1)),
+            "spec_name": spec_name,
+            "points_by_tree": points_by_tree,
+            "total_points": total_points,
+        })
+    return result
+
+
+def _bucket_talent_points(talents: list):
+    """Best-effort grouping of a talent-group's per-talent spent_points
+    into per-TREE totals (the "31/10/20" split) - returns a list of
+    (tree_name, points) tuples in first-seen order, or None if none of the
+    talent entries carry a tree-identifying field this recognizes. Checked
+    field names, in order: "talent_tree" (dict with a "name") then "tree"
+    (dict or plain string) - guesses at Blizzard's real field name (see
+    get_character_specializations()'s docstring), not confirmed. TBC's 3
+    talent trees are named identically to their matching spec (e.g. the
+    "Arms" tree = the "Arms" spec), so a tree's "name" here doubles as the
+    display name with no extra mapping needed once/if a real field name is
+    found - see _format_talent_split in cogs/apply.py for how the 3 totals
+    get ordered to match config.CLASS_SPECS."""
+    buckets = {}
+    order = []
+    found_any_tree_field = False
+
+    for t in talents:
+        tree = t.get("talent_tree") or t.get("tree")
+        if isinstance(tree, dict):
+            tree_name = tree.get("name")
+        elif isinstance(tree, str):
+            tree_name = tree
+        else:
+            tree_name = None
+
+        if tree_name is None:
+            continue
+        found_any_tree_field = True
+        if tree_name not in buckets:
+            buckets[tree_name] = 0
+            order.append(tree_name)
+        buckets[tree_name] += t.get("spent_points", 0) or 0
+
+    if not found_any_tree_field:
+        return None
+    return [(name, buckets[name]) for name in order]
