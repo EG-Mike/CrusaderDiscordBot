@@ -31,22 +31,25 @@ moderator-driven announcement system.
    applicant never sees another's note or screenshot. If DMs are closed,
    it degrades gracefully: role/spec happens ephemerally in-channel instead,
    and note/screenshot just gets skipped (still addable later, see below).
-5. A summary card posts to a mod-only review channel: class/spec/role (with
+5. A summary card posts to the review channel: class/spec/role (with
    icons), guild, level, tier performance (falling back to the previous
    tier if current-tier logs are too sparse, and saying so explicitly), a
    full per-boss breakdown, any note, and any screenshots - plus a warning
-   if this same person has been denied before. Reacting with ✅/❌ approves
-   or denies it.
+   if this same person has been denied before. **Approve**/**Deny** buttons
+   on the card decide it - only members with the approver role
+   (`config.APPROVER_ROLE_ID`) can click them; see "Restricting who can
+   approve applications" below for opening the channel up read-only to a
+   wider audience.
 6. **Approve**: assigns the "Fresh" role, renames the applicant to their
    character name, and DMs them (including a clickable `/register` mention
    for OXM.gg's raid sign-up bot, if configured). **Deny**: DMs them and
    does nothing else.
-7. A **Reset** button on every application lets a moderator undo a mistaken
-   decision - it clears the reactions and puts it back to pending. The
-   correction rules are deliberate: fixing a wrong denial into an approval
-   still sends the acceptance DM; fixing a wrong approval into a denial
-   just silently revokes the Fresh role, no DM (they were never told they
-   were in, so there's nothing to walk back).
+7. A **Reset** button on every application (same approver-only gate) undoes
+   a mistaken decision and puts it back to pending. The correction rules
+   are deliberate: fixing a wrong denial into an approval still sends the
+   acceptance DM; fixing a wrong approval into a denial just silently
+   revokes the Fresh role, no DM (they were never told they were in, so
+   there's nothing to walk back).
 8. Applicants can add or update their note/screenshot(s) at any time - even
    after the initial flow - with **`/update-application`**, as long as
    their application is still pending.
@@ -282,6 +285,33 @@ that you see is controlled by two settings in `config/deployment.py`:
 An invalid value for either falls back to its default (with a startup
 warning for `LOG_LEVEL`) rather than crashing the bot.
 
+## Restricting who can approve applications
+
+By default the review channel is meant to be mod-only at the Discord
+permission level - nobody else can even see it. If you'd rather open it up
+read-only to a wider audience (e.g. a "Regulars" role, so they can follow
+along on who's applying) without letting them act on applications:
+
+1. In the review channel's permissions, grant the wider audience role
+   `View Channel` and `Read Message History`, and leave `Send Messages`
+   denied (or don't grant it) so it stays a read-only feed for them.
+2. **This alone does NOT stop them from clicking Approve/Deny/Reset.**
+   Discord has no native permission that gates clicking a message's
+   button separately from viewing it - unlike a reaction or a typed
+   message, a button click needs only that the clicker can see the
+   message. `Send Messages`/`Add Reactions` denials have no effect on it
+   at all.
+3. The actual gate is `config.APPROVER_ROLE_ID` in `config/deployment.py`
+   (see that constant's comment) - only a member holding that exact role
+   can click Approve, Deny, or Reset on a review card; everyone else gets
+   an ephemeral "Only approvers can..." message and nothing happens.
+   Set it to your approver role's ID (enable Developer Mode, right-click
+   the role in Server Settings -> Roles, Copy ID). This is deliberately
+   separate from `MOD_ROLE_ID`/`Manage Roles` - a moderator who isn't
+   also an approver can still use every other moderator action in the bot
+   (`/gearcheck archive`, the diagnostic commands), just not these three
+   buttons.
+
 ## Setting up on a new server
 
 ### 1. Create the Discord application and bot
@@ -306,14 +336,22 @@ warning for `LOG_LEVEL`) rather than crashing the bot.
 
 - A **landing channel** (e.g. `#gear-check`) - visible to everyone,
   including new/unverified members.
-- A **review channel** - mod-only, where application cards get posted for
-  ✅/❌ decisions.
+- A **review channel** - where application cards get posted for
+  Approve/Deny decisions. Mod-only by default; see "Restricting who can
+  approve applications" below if you want it visible (read-only) to a
+  wider audience instead.
 - An **announcement sandbox channel** - mod-only, where announcement drafts
   get tweaked before publishing.
 - A **"Fresh" role** - granted automatically on approval.
 - A **moderator role** (or just rely on anyone with `Manage Roles` - both
   work; the mod role is for people who should be able to approve/deny
-  without needing full role-management permissions generally).
+  without needing full role-management permissions generally). This gates
+  most moderator actions in the bot (`/gearcheck archive`, the diagnostic
+  commands) but NOT the review card's Approve/Deny/Reset buttons
+  specifically - those have their own separate gate, see below.
+- An **approver role** - who can actually click Approve/Deny/Reset on a
+  review card. Can be the same role as your moderator role, or a narrower
+  one - see "Restricting who can approve applications" below.
 
 ### 3. Lock the landing channel down (optional but recommended)
 
@@ -321,8 +359,9 @@ If you want new members to see *only* the landing channel until approved:
 in `@everyone`'s permissions, deny `View Channel` on every other
 channel/category, then grant it back specifically to the "Fresh" role on
 each one (an explicit role-level Allow overrides an `@everyone` Deny on the
-same channel). Keep the review and sandbox channels visible only to your
-moderator role.
+same channel). Keep the sandbox channel visible only to your moderator
+role; the review channel can stay mod-only too, or be opened up more
+widely - see "Restricting who can approve applications" above.
 
 ### 4. Get WarcraftLogs API credentials
 

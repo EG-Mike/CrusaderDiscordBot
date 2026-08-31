@@ -1379,6 +1379,15 @@ class ApplyCog(commands.Cog):
             return True
         return any(role.id == self.mod_role_id for role in member.roles)
 
+    async def _is_approver(self, guild, user_id) -> bool:
+        """Gate for the Approve/Deny/Reset buttons specifically - see
+        config.APPROVER_ROLE_ID's comment for why this is separate from
+        the broader _is_mod check every other action in this cog uses."""
+        member = guild.get_member(user_id) or await guild.fetch_member(user_id)
+        if member is None:
+            return False
+        return any(role.id == config.APPROVER_ROLE_ID for role in member.roles)
+
     async def _on_reset_click(self, interaction: discord.Interaction):
         application = self.bot.store.get(interaction.message.id)
         if application is None:
@@ -1386,9 +1395,9 @@ class ApplyCog(commands.Cog):
                 "Couldn't find this application's record.", ephemeral=True
             )
             return
-        if not await self._is_mod(interaction.guild, interaction.user.id):
+        if not await self._is_approver(interaction.guild, interaction.user.id):
             await interaction.response.send_message(
-                "Only moderators can reset an application.", ephemeral=True
+                "Only approvers can reset an application.", ephemeral=True
             )
             return
         if application["status"] == "pending":
@@ -1451,9 +1460,9 @@ class ApplyCog(commands.Cog):
                 ephemeral=True,
             )
             return
-        if not await self._is_mod(interaction.guild, interaction.user.id):
+        if not await self._is_approver(interaction.guild, interaction.user.id):
             await interaction.response.send_message(
-                "Only moderators can approve or deny applications.", ephemeral=True
+                "Only approvers can approve or deny applications.", ephemeral=True
             )
             return
 
@@ -1477,9 +1486,9 @@ class ApplyCog(commands.Cog):
                 ephemeral=True,
             )
             return
-        if not await self._is_mod(interaction.guild, interaction.user.id):
+        if not await self._is_approver(interaction.guild, interaction.user.id):
             await interaction.response.send_message(
-                "Only moderators can approve or deny applications.", ephemeral=True
+                "Only approvers can approve or deny applications.", ephemeral=True
             )
             return
 
