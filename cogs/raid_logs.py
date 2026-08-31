@@ -353,15 +353,63 @@ class RaidLogsCog(commands.Cog):
 
     # --- rendering ----------------------------------------------------------
 
-    def _tier_guess(self, description: str):
-        """Best-effort match of a log's zone text against the two tiers
-        this bot actually tracks (config.CURRENT_TIER/PREVIOUS_TIER) - used
-        only to pre-select (never silently trust) RaidSummaryOptionsView's
-        tier dropdown. Never guesses at a tier this bot has no boss/
-        encounter-ID data for (e.g. older content like Karazhan) - that data
-        has to come from a live WCL debug_zones.py run, not be invented
-        here, so those simply aren't offered as options at all right now,
-        same as plain /raidsummary already behaves."""
+    async def _tier_guess(self, report_code: str, description: str):
+        """Best-effort match against the two tiers this bot actually
+        tracks (config.CURRENT_TIER/PREVIOUS_TIER) - used only to
+        pre-select (never silently trust) RaidSummaryOptionsView's tier
+        dropdown; the moderator still always has to confirm/pick before
+        Continue unlocks (RaidSummaryOptionsView._ready() also requires a
+        clear_status pick, which is never guessed).
+
+        Primary signal (added 2026-08): the report's own WCL zone ID
+        (summary["zone"]["id"] from get_report_summary) against each
+        tier's config zone_id - an exact identifier, not a guess, and the
+        same one this bot already uses everywhere else to know which
+        bosses belong to which tier (config.CURRENT_TIER/PREVIOUS_TIER).
+        "BT/Hyjal" bundles two real WoW instances (Black Temple + Mount
+        Hyjal) under one WCL zone_id, so this correctly recognizes either
+        half of that tier as one match - see config.py's TIER_SUB_INSTANCES
+        comment.
+
+        Falls back to a fuzzy match of the log's own zone DESCRIPTION text
+        only if the WCL fetch fails or the report has no report_code yet -
+        kept from before this method used zone_id, but rarely fires in
+        practice on its own: WCL's auto-generated description usually
+        names just ONE of BT/Hyjal's two real sub-instances ("Black
+        Temple" or "Mount Hyjal"), which this text check alone would MISS
+        (it requires both "bt" AND "hyjal" together, or the literal
+        combined tier name) - this was the actual cause of the tier
+        dropdown almost never coming pre-filled before the zone_id check
+        above was added.
+
+        Never guesses at a tier this bot has no zone_id for (e.g. older
+        content like Karazhan) - that data has to come from a live WCL
+        debug_zones.py run, not be invented here, so those simply aren't
+        offered as options at all right now, same as plain /raidsummary
+        already behaves.
+        """
+        if report_code:
+            try:
+                summary = await self.bot.wcl.get_report_summary(report_code)
+            except Exception:
+                log.warning(
+                    "Couldn't fetch WCL report %s to guess its tier by zone ID - "
+                    "falling back to a text match against its description",
+                    report_code, exc_info=True,
+                )
+            else:
+                zone_id = (summary.get("zone") or {}).get("id")
+                if zone_id is not None:
+                    for tier in (config.CURRENT_TIER, config.PREVIOUS_TIER):
+                        if zone_id == tier.get("zone_id"):
+                            return tier["name"]
+
+        return self._tier_guess_from_description(description)
+
+    def _tier_guess_from_description(self, description: str):
+        """Fallback for _tier_guess above when a live zone_id lookup isn't
+        available - see that method's docstring for why this text match
+        alone is unreliable."""
         if not description:
             return None
         lowered = description.lower()
@@ -605,7 +653,7 @@ class RaidLogsCog(commands.Cog):
         await self._render_and_edit(message, entry)
 
         who_label = triggered_by.display_name if triggered_by else f"auto-complete ({config.RAID_LOG_AUTO_SUMMARIZE_TIME} cutoff)"
-        tier_guess = self._tier_guess(entry.get("description"))
+        tier_guess = await self._tier_guess(entry.get("report_code"), entry.get("description"))
 
         if entry["tag"] == "main":
             await self._run_main_automation(guild, entry, who_label, tier_guess, is_auto)
