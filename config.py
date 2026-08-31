@@ -321,7 +321,20 @@ PARSE_HIGHLIGHT_THRESHOLD = 99
 TRACKED_DEBUFFS = ["Sunder Armor", "Expose Armor", "Faerie Fire", "Curse of the Elements", "Curse of Recklessness"]
 
 # Buffs tracked on a PLAYER (WCL table dataType: Buffs, hostilityType: Friendlies).
-TRACKED_BUFFS = ["Judgement of Wisdom", "Judgement of Light"]
+TRACKED_BUFFS = ["Judgement of Wisdom", "Judgement of Light", "Judgement of the Crusader"]
+
+# Subset of TRACKED_DEBUFFS/TRACKED_BUFFS whose "all fights" (bosses+trash)
+# uptime % isn't shown at all - just the boss-fights-only number - because
+# trash uptime for these isn't a meaningful/wanted stat (moderator request,
+# 2026-08): the "X% bosses / Y% all fights" line _build_uptime_lines
+# normally renders becomes just "X% bosses" for anything in this set. The
+# underlying WCL fetch (wcl_client.get_report_aura_uptime) still computes
+# all_pct for these same as any other tracked ability - this only affects
+# what gets displayed, not what gets queried/recorded (the personal-best
+# record tracked in records["buffs"] was ALREADY boss-only-scoped for
+# every tracked ability, trash uptime never factored into records at all -
+# see _build_uptime_lines' own docstring).
+TRACKED_BOSS_ONLY_ABILITIES = {"Judgement of Wisdom", "Judgement of Light", "Judgement of the Crusader"}
 
 # Potions counted together as one "Top potion users" leaderboard. Matched
 # by SPELL ID (unlike TRACKED_DEBUFFS/TRACKED_BUFFS above), not name -
@@ -360,8 +373,13 @@ TRACKED_ABILITY_ICON_SPELL_IDS = {
     "Faerie Fire": 25602,
     "Curse of the Elements": 44332,
     "Curse of Recklessness": 16231,
-    "Judgement of Wisdom": 20354,
-    "Judgement of Light": 27162,
+    # Corrected (2026-08, moderator) - previously 20354/27162.
+    "Judgement of Wisdom": 27164,
+    "Judgement of Light": 27163,
+    # No entry for "Judgement of the Crusader" - moderator didn't give an
+    # ID for this one specifically (only Wisdom/Light) - it shows with no
+    # icon (graceful degradation, same as any other unconfigured ability)
+    # until one's added here.
 }
 
 # Decorative icons (not tied to WCL matching at all) for the two count-based
@@ -381,9 +399,11 @@ TOP_DISPELLERS_ICON_SPELL_ID = 17201
 # every single raid-summary post (TRACKED_ABILITY_ICON_SPELL_IDS' non-buff
 # entries + both TOP_*_ICON_SPELL_ID constants), so pre-seeding them here
 # means those requests never happen at all rather than relying on the
-# pacing fix to keep them under Wowhead's radar. Judgement of Wisdom/Light
-# aren't here (no override given) - those two still resolve via Wowhead
-# same as before. Keyed by the exact same TRACKED_DEBUFFS/TRACKED_BUFFS
+# pacing fix to keep them under Wowhead's radar. The Judgements aren't
+# here (no override given) - those resolve via bot.blizzard (Blizzard's
+# spell-media endpoint) when configured, falling back to Wowhead
+# otherwise - see cogs/raid_summary.py's _get_spell_icon. Keyed by the
+# exact same TRACKED_DEBUFFS/TRACKED_BUFFS
 # name for the tracked-ability entries; TOP_INTERRUPTERS_ICON_EMOJI/
 # TOP_DISPELLERS_ICON_EMOJI are separate plain constants since those two
 # aren't part of that name-keyed dict. See _resolve_spell_icon/

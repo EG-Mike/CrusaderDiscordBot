@@ -70,6 +70,22 @@ def _namespace(region: str) -> str:
     return f"static-classic-{region}"
 
 
+def _parse_icon_asset(media_data: dict) -> tuple:
+    """Returns (icon_url, icon_slug) from a /data/wow/media/item or
+    /data/wow/media/spell response's "assets" list - shared by get_item()
+    and get_spell_icon(), which both hit a media endpoint of this same
+    shape (confirmed live for items - see get_item()'s docstring; not
+    independently confirmed for spells, but documented as the same
+    "assets": [{"key": "icon", "value": <url>}, ...] shape). (None, None)
+    if no "icon" asset is present."""
+    for asset in media_data.get("assets") or []:
+        if asset.get("key") == "icon" and asset.get("value"):
+            icon_url = asset["value"]
+            icon_slug = icon_url.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+            return icon_url, icon_slug
+    return None, None
+
+
 class BlizzardClient:
     def __init__(self, client_id: str, client_secret: str, region: str = "us",
                  cache_path: str = "blizzard_item_cache.json"):
@@ -169,16 +185,65 @@ class BlizzardClient:
         name = item_data.get("name") or f"Item #{item_id}"
         quality_type = ((item_data.get("quality") or {}).get("type") or "").upper()
         quality = _QUALITY_TYPE_TO_INT.get(quality_type)
-
-        icon_url = None
-        icon_slug = None
-        for asset in media_data.get("assets") or []:
-            if asset.get("key") == "icon" and asset.get("value"):
-                icon_url = asset["value"]
-                icon_slug = icon_url.rsplit("/", 1)[-1].rsplit(".", 1)[0]
-                break
+        icon_url, icon_slug = _parse_icon_asset(media_data)
 
         return {"id": item_id, "name": name, "icon_slug": icon_slug, "icon_url": icon_url, "quality": quality}
+
+    async def get_spell_icon(self, spell_id: int) -> dict:
+        """
+        Returns {"icon_slug", "icon_url"} for a spell/ability's icon via
+        Blizzard's media-only spell endpoint (/data/wow/media/spell/{id} -
+        confirmed to exist via a Blizzard forum thread on spell icons, not
+        independently verified live here either - see the module
+        docstring). Deliberately does NOT return "name" the way get_item()
+        does - callers here (cogs/raid_summary.py's tracked buff/debuff
+        uptime section) already know the ability's real name from
+        config.TRACKED_DEBUFFS/TRACKED_BUFFS (that's what's used to match
+        it against WCL data in the first place - see wcl_client.
+        get_report_aura_uptime), so there's nothing to gain by asking
+        Blizzard for a name here, unlike items where Gargul's export gives
+        us only a bare ID and no name at all.
+
+        Same cache-worthiness contract as get_item() - a result is only
+        cached once it has a real icon_slug, so a failed/not-yet-added
+        lookup retries on every call instead of freezing "no icon" forever.
+        Cached under a "spell:<id>" string key in the same store as items
+        (plain int item IDs), so the two never collide - same convention
+        wowhead.py's cache already uses.
+        """
+        cache_key = f"spell:{spell_id}"
+        cached = self._cache.get(cache_key)
+        if cached is not None and cached.get("icon_slug") is not None:
+            return cached
+
+        fallback = {"icon_slug": None, "icon_url": None}
+        try:
+            token = await self._get_token()
+        except Exception:
+            log.warning("Couldn't get a Blizzard API token - no icon for spell %s", spell_id, exc_info=True)
+            return fallback
+
+        headers = {"Authorization": f"Bearer {token}"}
+        base = _api_base(self.region)
+        params = {"namespace": _namespace(self.region), "locale": "en_US"}
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"{base}/data/wow/media/spell/{spell_id}", params=params, headers=headers) as resp:
+                    if resp.status == 404:
+                        log.warning("Blizzard API has no media for spell %s - no icon", spell_id)
+                        return fallback
+                    resp.raise_for_status()
+                    media_data = await resp.json()
+        except Exception:
+            log.warning("Blizzard API lookup failed for spell %s - no icon", spell_id, exc_info=True)
+            return fallback
+
+        icon_url, icon_slug = _parse_icon_asset(media_data)
+        result = {"icon_slug": icon_slug, "icon_url": icon_url}
+        if icon_slug is not None:
+            self._cache.set(cache_key, **result)
+        return result
 
     async def diagnose_item(self, item_id: int) -> str:
         """
