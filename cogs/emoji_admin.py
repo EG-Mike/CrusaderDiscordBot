@@ -45,9 +45,18 @@ import aiohttp
 
 log = logging.getLogger("wow-apply-bot.emoji_admin")
 
-WOWHEAD_LINK_RE = re.compile(r"wowhead\.com/(?:[a-z0-9]+/)?(item|spell)=(\d+)", re.IGNORECASE)
+WOWHEAD_LINK_RE = re.compile(r"wowhead\.com/(?:[a-z0-9-]+/)?(item|spell)=(\d+)", re.IGNORECASE)
 ICON_TAG_RE = re.compile(r"<icon[^>]*>([^<]+)</icon>", re.IGNORECASE)
 NAME_TAG_RE = re.compile(r"<name[^>]*>([^<]+)</name>", re.IGNORECASE)
+
+# Same fix as wowhead.py: aiohttp's default User-Agent can trigger Wowhead's
+# anti-bot challenge page (no <icon>/<name> tags), so use a browser UA.
+REQUEST_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    ),
+}
 
 MAX_LINKS_PER_CALL = 15  # keep bulk requests away from emoji-creation rate limits
 
@@ -74,10 +83,25 @@ class EmojiAdminCog(commands.Cog):
         """Returns (display_name, icon_url) for one item/spell via
         Wowhead's XML feed, or None if it couldn't be resolved. Pure
         Wowhead lookup - see _resolve_link for where Blizzard's Game Data
-        API is tried first/alongside this."""
+        API is tried first/alongside this.
+
+        Confirmed live (2026-08): Wowhead's &xml feed 403s for any
+        Classic-era access, whether requested via the modern
+        www.wowhead.com/<expansion>/ path or the legacy per-expansion
+        subdomain (tbc.wowhead.com, classic.wowhead.com, ...) - both
+        blocked even with a browser User-Agent. Only the bare, unprefixed
+        (retail) domain is reachable, so that's used for every link
+        regardless of expansion. Trade-off: an item/spell reworked between
+        a Classic-era game and retail can resolve to the wrong icon/name -
+        this is exactly why _resolve_link below prefers Blizzard's Classic-
+        namespace Game Data API for items instead of trusting this retail
+        data whenever Blizzard is configured; spells have no such Blizzard
+        alternative (see _resolve_link's docstring) so they're stuck with
+        this trade-off for now.
+        """
         xml_url = f"https://www.wowhead.com/{kind}={item_id}&xml"
         try:
-            async with session.get(xml_url) as resp:
+            async with session.get(xml_url, headers=REQUEST_HEADERS) as resp:
                 resp.raise_for_status()
                 text = await resp.text()
         except Exception:
