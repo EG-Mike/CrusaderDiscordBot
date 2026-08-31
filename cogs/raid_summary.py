@@ -564,8 +564,11 @@ class RaidSummaryRegenerateView(discord.ui.View):
     directly - a single native dropdown of recently-posted #raid-summary
     threads (see RaidSummaryCog._recent_summary_entries), labeled by tier
     + raid date rather than a report code the moderator would otherwise
-    have to go look up. Picking one runs the exact same regenerate logic
-    (_do_regenerate) a direct `report` argument would have.
+    have to go look up. Picking one runs the same regenerate logic a direct
+    `report` argument would (_regenerate_from_record), just resolved by the
+    exact record picked (_do_regenerate_by_message_id) instead of a
+    possibly-ambiguous report code (_do_regenerate) - see that method's
+    docstring for why the two aren't interchangeable.
     """
     def __init__(self, cog: "RaidSummaryCog", entries: list):
         super().__init__(timeout=180)
@@ -574,7 +577,15 @@ class RaidSummaryRegenerateView(discord.ui.View):
         self.select = discord.ui.Select(
             placeholder="Raid summary to regenerate",
             options=[
-                discord.SelectOption(label=e["label"], value=e["report_code"], description=e["description"])
+                # value is message_id (stringified), NOT report_code -
+                # report_code can repeat across entries (a moderator who
+                # deleted a thread and reposted the same report while
+                # debugging), and Discord rejects a select menu outright if
+                # two options share a value - see _recent_summary_entries'
+                # docstring. _recent_summary_entries already dedupes to one
+                # entry per report_code, but message_id is what's guaranteed
+                # unique regardless.
+                discord.SelectOption(label=e["label"], value=str(e["message_id"]), description=e["description"])
                 for e in entries
             ],
         )
@@ -582,8 +593,8 @@ class RaidSummaryRegenerateView(discord.ui.View):
         self.add_item(self.select)
 
     async def _on_select(self, interaction: discord.Interaction):
-        report_code = self.select.values[0]
-        await self.cog._do_regenerate(interaction, report_code)
+        message_id = int(self.select.values[0])
+        await self.cog._do_regenerate_by_message_id(interaction, message_id)
         # One-shot - strip the dropdown afterward so it can't be re-picked
         # into a second, overlapping regenerate for the same or another
         # report (_reconcile_pages isn't safe to run twice concurrently
@@ -2550,6 +2561,15 @@ class RaidSummaryCog(commands.Cog):
         needs its own response/followup lifecycle exactly like a slash
         command's does, and its callback edits the original (deferred)
         response afterward to strip the dropdown.
+
+        Resolves by report_code via _find_post_record - which returns the
+        FIRST matching record it finds, ambiguous if the same report was
+        posted more than once (see _recent_summary_entries' docstring on
+        why that can happen). Fine for this direct-argument entry point
+        (there's no other way to disambiguate from a bare report code/link
+        anyway); RaidSummaryRegenerateView's picker instead resolves by the
+        exact store key it showed the moderator - see
+        _do_regenerate_by_message_id.
         """
         await interaction.response.defer(ephemeral=True, thinking=True)
 
@@ -2561,8 +2581,38 @@ class RaidSummaryCog(commands.Cog):
                 ephemeral=True,
             )
             return
-        last_message_id, record = found
+        await self._regenerate_from_record(interaction, found[0], found[1])
 
+    async def _do_regenerate_by_message_id(self, interaction: discord.Interaction, message_id: int):
+        """
+        RaidSummaryRegenerateView's entry point - resolves the EXACT record
+        the moderator picked from the dropdown by its store key
+        (message_id), rather than by report_code like _do_regenerate does
+        (see that method's docstring on why report_code alone can be
+        ambiguous). Same defer-first/followup-always contract as
+        _do_regenerate.
+        """
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        record = self.store.get(message_id)
+        if not (isinstance(record, dict) and "thread_id" in record and record.get("report_code")):
+            await interaction.followup.send(
+                "Couldn't find that saved summary anymore - it may have just been edited/removed. "
+                "Run /raidsummary-regenerate again to refresh the list.",
+                ephemeral=True,
+            )
+            return
+        await self._regenerate_from_record(interaction, message_id, record)
+
+    async def _regenerate_from_record(self, interaction: discord.Interaction, last_message_id: int, record: dict):
+        """
+        Shared core once a (last_message_id, record) pair has been
+        resolved, however that happened - see _do_regenerate and
+        _do_regenerate_by_message_id, the two entry points. interaction
+        must already be deferred (both entry points do this themselves) -
+        every reply from here on is a followup.
+        """
+        report_code = record["report_code"]
         try:
             tier_data = self._resolve_tier(record["header_ctx"]["tier_name"])
         except ValueError:
@@ -2702,34 +2752,57 @@ class RaidSummaryCog(commands.Cog):
     def _recent_summary_entries(self, limit: int = LOGS_SELECT_LIMIT) -> list:
         """
         Every stored /raidsummary post (same "thread_id" present" filter as
-        _find_post_record), most-recently-posted first, capped at `limit`
-        (default Discord's own per-select-menu option cap) - backs
-        raidsummary_regenerate's picker dropdown so a moderator can pick a
-        #raid-summary thread by name instead of having to go dig up its
-        report code/link. "Most recent" is by report_date (the raid's own
-        date, already 'YYYY-MM-DD' on every stored header_ctx - sorts
-        correctly as a plain string) rather than message_id/insertion
-        order, so a late historic bulk-import doesn't jump the queue ahead
-        of genuinely recent raids.
+        _find_post_record), deduplicated to ONE entry per report_code and
+        most-recently-posted first, capped at `limit` (default Discord's
+        own per-select-menu option cap) - backs raidsummary_regenerate's
+        picker dropdown so a moderator can pick a #raid-summary thread by
+        name instead of having to go dig up its report code/link.
+
+        Deduplication matters because nothing removes a report's OLDER
+        store record when the same report gets posted again under a new
+        thread (e.g. a moderator deletes a thread in Discord directly and
+        reposts via /raidsummary while debugging) - without it, the picker
+        would offer several entries for the same report_code, and Discord
+        rejects a select menu with two options sharing a value outright
+        (SelectOption.value is set to message_id here, which IS always
+        unique - but offering 3 dead entries for one report is still
+        useless clutter). Keeping the entry with the HIGHEST message_id per
+        report_code picks the most-recently-created record (message_ids are
+        Discord snowflakes - always increasing) - report_date alone can't
+        break this tie since re-posting the SAME report necessarily has the
+        SAME raid date every time.
+
+        "Most recent" for ordering (not tie-breaking) is by report_date
+        (the raid's own date, already 'YYYY-MM-DD' on every stored
+        header_ctx - sorts correctly as a plain string) rather than
+        message_id/insertion order, so a late historic bulk-import doesn't
+        jump the queue ahead of genuinely recent raids.
 
         Returns [{"message_id", "report_code", "label", "description"}] -
         label is what Discord shows before selection, description is the
         greyed-out second line (same split RaidSummaryOptionsView's own
-        report picker uses).
+        report picker uses). The dropdown's OPTION VALUE is message_id
+        (stringified) - see RaidSummaryRegenerateView - not report_code,
+        so picking one always resolves this EXACT record even when older,
+        possibly-dead duplicates for the same report still linger.
         """
-        entries = []
+        by_report_code = {}
         for key, record in self.store.items():
             if not (isinstance(record, dict) and "thread_id" in record and record.get("report_code")):
                 continue
-            header_ctx = record.get("header_ctx") or {}
-            entries.append({
-                "message_id": int(key),
-                "report_code": record["report_code"],
-                "report_date": header_ctx.get("report_date") or "",
-                "label": f"{header_ctx.get('tier_name') or '?'} — {header_ctx.get('report_date') or '?'}"[:100],
-                "description": f"{header_ctx.get('clear_label') or ''} · report {record['report_code']}"[:100],
-            })
-        entries.sort(key=lambda e: e["report_date"], reverse=True)
+            message_id = int(key)
+            existing = by_report_code.get(record["report_code"])
+            if existing is None or message_id > existing["message_id"]:
+                header_ctx = record.get("header_ctx") or {}
+                by_report_code[record["report_code"]] = {
+                    "message_id": message_id,
+                    "report_code": record["report_code"],
+                    "report_date": header_ctx.get("report_date") or "",
+                    "label": f"{header_ctx.get('tier_name') or '?'} — {header_ctx.get('report_date') or '?'}"[:100],
+                    "description": f"{header_ctx.get('clear_label') or ''} · report {record['report_code']}"[:100],
+                }
+
+        entries = sorted(by_report_code.values(), key=lambda e: e["report_date"], reverse=True)
         return entries[:limit]
 
     async def _reconstruct_merged_post(self, interaction: discord.Interaction, codes: list, tier_data: dict) -> dict:
@@ -2881,8 +2954,18 @@ class RaidSummaryCog(commands.Cog):
         try:
             thread = self.bot.get_channel(record["thread_id"]) or await self.bot.fetch_channel(record["thread_id"])
         except (discord.NotFound, discord.Forbidden):
+            # The thread is gone (deleted directly in Discord, most often
+            # while debugging - confirmed live, 2026-08) - the stored
+            # record for it is now permanently dead weight, most visibly in
+            # raidsummary_regenerate's picker (_recent_summary_entries),
+            # which would otherwise keep offering it forever with no way to
+            # tell it's unusable until picked. Removed here rather than
+            # left for the moderator to notice and clean up by hand.
+            self.store.delete(last_message_id)
             await interaction.followup.send(
-                "Couldn't find the original thread - it may have been deleted.", ephemeral=True
+                "Couldn't find the original thread - it may have been deleted. "
+                "(Its saved record has been cleared, so it won't show up again.)",
+                ephemeral=True,
             )
             return False
 
