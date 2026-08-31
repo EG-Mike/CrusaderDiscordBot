@@ -1772,6 +1772,13 @@ class ApplyCog(commands.Cog):
         if not await self._is_mod(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can run this.", ephemeral=True)
             return
+        if not config.DEBUG_COMMANDS_ENABLED:
+            await interaction.response.send_message(
+                "This is a diagnostic tool, disabled by default - set DEBUG_COMMANDS_ENABLED = True in "
+                "config.py to use it.",
+                ephemeral=True,
+            )
+            return
         if self.bot.blizzard is None:
             await interaction.response.send_message(
                 "BLIZZARD_CLIENT_ID/BLIZZARD_CLIENT_SECRET aren't set - the Armory block is "

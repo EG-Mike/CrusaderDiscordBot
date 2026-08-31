@@ -214,6 +214,24 @@ moderator-driven announcement system.
 | `/checkattendance exclude <name> <reason>` | Excuse a player from attendance tracking. |
 | `/checkattendance removeexcluded <id>` | Remove a player from the excused list by its `#ID`. |
 | `/raidsummary` (dropdowns for tier/clear status/raid type/report, then a modal for report-link fallback/loot/note/media) | Post a raid summary thread to the raid-summary forum (loot can be pasted directly, added later, or - for an unusually large export - uploaded as a file via the thread's Add/Update Loot button). |
+| `/raidsummary-refresh-cache <tier>` | Re-fetch every already-imported report for a tier from WCL, e.g. after changing `config.EXCLUDED_ENCOUNTER_IDS`. Never touches an already-posted summary message. |
+| `/raidsummary-refresh-report <report>` | Force-refetch ONE report from WCL before posting/regenerating its summary, without waiting for the next full cache refresh. |
+| `/raidsummary-regenerate [report]` | Rebuild an already-posted summary's entire content from fresh WCL/Wowhead data, in place. |
+| `/raidsummary-merge-weeks <tier> <reports>` | Fold two or more already-imported reports into one raid week for `/tier-recap`'s stats, optionally consolidating their separate summary posts into one thread. |
+| `/tier-recap <tier>` | Draft an end-of-tier stats recap (medals, records, most-improved, etc.) in the sandbox channel, same draft/Edit/Publish flow as `/announce` - built entirely from data already cached by past `/raidsummary` posts, no new WCL calls. |
+
+Five more commands exist purely for diagnosing API/lookup issues or doing a
+one-time data migration/import, and are disabled by default
+(`config.DEBUG_COMMANDS_ENABLED = False`) so they don't clutter the command
+list day-to-day. Set that flag to `True` to use one, then set it back off:
+
+| Command | Description |
+|---|---|
+| `/apply-test-blizzard <character>` | Step-by-step test of a character's Blizzard Armory data (gear/talents) - dumps raw responses to spot a namespace/field mismatch. |
+| `/raidsummary-test-blizzard [item]` | Same, for a single item against Blizzard's Game Data API. |
+| `/raidsummary-test-spell [spell]` | Same, for a single spell's icon. |
+| `/raidsummary-refresh-wowhead` | One-time cache wipe for Wowhead item/spell lookups (was for the retail→`/tbc/` endpoint migration; safe to run anytime, just costs a fresh fetch of everything). |
+| `/raidsummary-bulk <tier> <raid_type> <reports>` | One-time bulk import: posts one raid summary per WCL report, oldest first - for backfilling history when first setting up. |
 
 ## Setting up on a new server
 
@@ -301,9 +319,11 @@ meant to be shared/versioned.
 `config.py`'s `CURRENT_TIER`/`PREVIOUS_TIER` need real WarcraftLogs zone and
 encounter IDs, which aren't always the same as what `worldData.zones`
 reports - the ones actually accepted by `character.zoneRankings` can differ.
-Run `debug_rankings.py "SomeCharacterName"` against a character with real
-logs in that tier and confirm the zone ID matches what's currently in
-`config.py` before trusting the tier-performance section.
+Set `config.DEBUG_COMMANDS_ENABLED = True` temporarily and run
+`/raidsummary-refresh-report` against a real report from that tier - its
+diagnostic breakdown confirms whether the zone/encounter IDs currently in
+`config.py` actually match, before trusting the tier-performance section.
+Turn `DEBUG_COMMANDS_ENABLED` back off once confirmed.
 
 ### 8. Class/role/spec icons (optional, but nicer)
 
@@ -426,23 +446,24 @@ bot.py              - entry point: sets up the bot, shared singletons, loads cog
 config.py           - all tunable config (colors, tiers, specs, icon sources, OXM command ID)
 wcl_client.py        - WarcraftLogs API client (fights/rankings/deaths/roster, cached per-report)
 wowhead.py           - Wowhead item name/icon/link lookup (cached permanently by item ID)
+blizzard_client.py   - optional Blizzard Game Data API client (item/spell icons, character
+                        armory) - preferred over wowhead.py when BLIZZARD_CLIENT_ID/SECRET
+                        are set, otherwise unused
 gargul_loot.py       - parser for Gargul's loot-export CSV format
 storage.py           - tiny JSON-backed persistence (generic - any cog can use it)
 icons.py             - shared icon resolution (guild emoji + auto-provisioned application emoji)
 cogs/
   apply.py           - the whole guild-application feature (self-contained)
   announcements.py   - the whole announcement feature (self-contained)
+  emoji_admin.py     - /add-emoji (Wowhead link -> bot-owned application emoji)
   attendance.py      - the whole attendance-tracking feature (self-contained)
   raid_summary.py    - the whole raid-summary feature (self-contained)
+  tier_retrospective.py - /tier-recap, an end-of-tier stats recap built entirely from
+                        data raid_summary.py already cached (see its own module docstring)
   raid_logs.py       - raid log tagging + attendance/raidsummary automation
                         (self-contained; reuses raid_summary.py's
                         RaidSummaryOptionsView and attendance.py's
                         addlog/refresh methods directly, cross-cog)
-debug_zones.py        - lists every WCL zone/encounter ID visible via the API
-debug_rankings.py     - dumps raw zoneRankings JSON for one character - the
-                        source of truth for a zone ID, since debug_zones.py's
-                        catalog IDs don't always match what zoneRankings itself accepts
-debug_lookup.py       - simple character lookup sanity check
 ```
 
 **Adding a new feature later** (e.g. attendance tracking): create a new
@@ -537,5 +558,5 @@ when adding a new persistent component elsewhere.
   and clean up manually. Only `config.CURRENT_TIER`/`PREVIOUS_TIER` are
   ever offered/guessed as a tier for the Summarize → Post Raid Summary
   hand-off - older content (e.g. Karazhan, Gruul's Lair/Magtheridon's Lair)
-  isn't wired in, since that needs real WCL zone/encounter IDs pulled via
-  `debug_zones.py` against a live account, not guessed.
+  isn't wired in, since that needs real WCL zone/encounter IDs confirmed
+  live against a real account (see step 7 of setup above), not guessed.

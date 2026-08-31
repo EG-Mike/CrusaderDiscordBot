@@ -2371,6 +2371,13 @@ class RaidSummaryCog(commands.Cog):
         if not await self._is_mod(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can bulk-import raid summaries.", ephemeral=True)
             return
+        if not config.DEBUG_COMMANDS_ENABLED:
+            await interaction.response.send_message(
+                "This is a one-time-import tool, disabled by default - set DEBUG_COMMANDS_ENABLED = True in "
+                "config.py to use it.",
+                ephemeral=True,
+            )
+            return
 
         forum_channel = self.bot.get_channel(self.forum_channel_id)
         if forum_channel is None or not isinstance(forum_channel, discord.ForumChannel):
@@ -2558,6 +2565,13 @@ class RaidSummaryCog(commands.Cog):
         if not await self._is_mod(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can refresh the Wowhead cache.", ephemeral=True)
             return
+        if not config.DEBUG_COMMANDS_ENABLED:
+            await interaction.response.send_message(
+                "This is a one-time-migration tool, disabled by default - set DEBUG_COMMANDS_ENABLED = True in "
+                "config.py to use it.",
+                ephemeral=True,
+            )
+            return
 
         self.bot.wowhead.invalidate_all()
         await interaction.response.send_message(
@@ -2589,6 +2603,13 @@ class RaidSummaryCog(commands.Cog):
         """
         if not await self._is_mod(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can run this.", ephemeral=True)
+            return
+        if not config.DEBUG_COMMANDS_ENABLED:
+            await interaction.response.send_message(
+                "This is a diagnostic tool, disabled by default - set DEBUG_COMMANDS_ENABLED = True in "
+                "config.py to use it.",
+                ephemeral=True,
+            )
             return
         if self.bot.blizzard is None:
             await interaction.response.send_message(
@@ -2629,6 +2650,13 @@ class RaidSummaryCog(commands.Cog):
         """
         if not await self._is_mod(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can run this.", ephemeral=True)
+            return
+        if not config.DEBUG_COMMANDS_ENABLED:
+            await interaction.response.send_message(
+                "This is a diagnostic tool, disabled by default - set DEBUG_COMMANDS_ENABLED = True in "
+                "config.py to use it.",
+                ephemeral=True,
+            )
             return
         if self.bot.blizzard is None:
             await interaction.response.send_message(

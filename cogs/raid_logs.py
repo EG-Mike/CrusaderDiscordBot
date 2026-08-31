@@ -384,9 +384,10 @@ class RaidLogsCog(commands.Cog):
 
         Never guesses at a tier this bot has no zone_id for (e.g. older
         content like Karazhan) - that data has to come from a live WCL
-        debug_zones.py run, not be invented here, so those simply aren't
-        offered as options at all right now, same as plain /raidsummary
-        already behaves.
+        zone/encounter-ID lookup (e.g. /raidsummary-refresh-report's
+        diagnostic breakdown against a real report), not be invented
+        here, so those simply aren't offered as options at all right
+        now, same as plain /raidsummary already behaves.
         """
         if report_code:
             try:
