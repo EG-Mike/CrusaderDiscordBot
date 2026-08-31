@@ -2444,7 +2444,7 @@ class RaidSummaryCog(commands.Cog):
         )
 
     @app_commands.command(
-        name="raidsummary-refresh-wowhead-cache",
+        name="raidsummary-refresh-wowhead",
         description="Wipe the cached Wowhead item/spell lookups, forcing a fresh fetch for all of them (moderator only)",
     )
     async def raidsummary_refresh_wowhead_cache(self, interaction: discord.Interaction):
