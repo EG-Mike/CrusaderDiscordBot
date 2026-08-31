@@ -68,6 +68,15 @@ class ApplicationStore:
             self._data.pop(str(message_id), None)
             self._save()
 
+    def clear(self):
+        """Wipes every record in this store - for a whole-file cache reset
+        (e.g. wowhead.py's item/spell cache after a data-source change makes
+        every previously-cached entry suspect, not just the failed ones),
+        not something a per-record feature should reach for."""
+        with _LOCK:
+            self._data = {}
+            self._save()
+
     def items(self):
         """
         Every (key, record) pair currently in the store, as a read-only

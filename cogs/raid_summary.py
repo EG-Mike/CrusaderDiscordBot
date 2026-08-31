@@ -1349,9 +1349,9 @@ class RaidSummaryCog(commands.Cog):
             if boss_pct is None and all_pct is None:
                 continue  # never appeared this raid - omit rather than clutter
 
-            icon = ""
+            icon = config.TRACKED_ABILITY_ICON_EMOJI.get(name, "")
             spell_id = config.TRACKED_ABILITY_ICON_SPELL_IDS.get(name)
-            if spell_id:
+            if not icon and spell_id:
                 spell = await self.bot.wowhead.get_spell(spell_id)
                 if spell.get("icon_url"):
                     icon = await icons.ensure_spell_emoji(self.bot, existing_by_name, spell_id, spell["icon_url"])
@@ -2063,7 +2063,7 @@ class RaidSummaryCog(commands.Cog):
         if potions_block:
             pre_loot_blocks.append(self._text_block(potions_block))
 
-        interrupts_icon = await self._resolve_spell_icon(config.TOP_INTERRUPTERS_ICON_SPELL_ID, existing_by_name) or "⛔"
+        interrupts_icon = config.TOP_INTERRUPTERS_ICON_EMOJI or await self._resolve_spell_icon(config.TOP_INTERRUPTERS_ICON_SPELL_ID, existing_by_name) or "⛔"
         interrupts_block, interrupts_record_update = self._build_ranked_block(
             "Top Interrupters", interrupts_icon, summary.get("interrupts", {}), guild, classes_map,
             lambda v: f"{int(v)} interrupt{'s' if int(v) != 1 else ''}",
@@ -2073,7 +2073,7 @@ class RaidSummaryCog(commands.Cog):
         if interrupts_block:
             pre_loot_blocks.append(self._text_block(interrupts_block))
 
-        dispels_icon = await self._resolve_spell_icon(config.TOP_DISPELLERS_ICON_SPELL_ID, existing_by_name) or "🧹"
+        dispels_icon = config.TOP_DISPELLERS_ICON_EMOJI or await self._resolve_spell_icon(config.TOP_DISPELLERS_ICON_SPELL_ID, existing_by_name) or "🧹"
         dispels_block, dispels_record_update = self._build_ranked_block(
             "Top Dispellers", dispels_icon, summary.get("dispels", {}), guild, classes_map,
             lambda v: f"{int(v)} dispel{'s' if int(v) != 1 else ''}",
@@ -2443,6 +2443,38 @@ class RaidSummaryCog(commands.Cog):
             ephemeral=True,
         )
 
+    @app_commands.command(
+        name="raidsummary-refresh-wowhead-cache",
+        description="Wipe the cached Wowhead item/spell lookups, forcing a fresh fetch for all of them (moderator only)",
+    )
+    async def raidsummary_refresh_wowhead_cache(self, interaction: discord.Interaction):
+        """
+        One-time migration command for wowhead.py's ITEM_XML_URL/
+        SPELL_XML_URL switching from Wowhead's retail database to /tbc/ -
+        every item successfully resolved BEFORE that switch is cached
+        under item_wowhead_url's old (also now-fixed) retail link, quietly
+        pointing at Wowhead's UNRELATED retail item that happened to share
+        the same numeric ID (Classic content has its own separate ID space
+        - see ITEM_XML_URL's comment). That cache entry looks exactly like
+        a normal successful lookup (a real icon_slug), so nothing else
+        here would ever retry it on its own - the icon_slug=None retry
+        added earlier only catches FAILED lookups, not wrong-but-
+        "successful" ones. Safe to run any time - just costs every item/
+        spell a fresh fetch (paced, see wowhead.py's PACE_SECONDS) next
+        time each one is needed, same as a cold cache.
+        """
+        if not await self._is_mod(interaction.guild, interaction.user.id):
+            await interaction.response.send_message("Only moderators can refresh the Wowhead cache.", ephemeral=True)
+            return
+
+        self.bot.wowhead.invalidate_all()
+        await interaction.response.send_message(
+            "Wowhead item/spell cache cleared - every item name/icon and tracked-ability icon will be "
+            "re-fetched fresh (paced, so a big loot night's /raidsummary or regenerate may take a little "
+            "longer than usual) the next time each one is needed.",
+            ephemeral=True,
+        )
+
     def _diagnose_encounter_ids(self, fights: list) -> str:
         """
         Per-encounter_id breakdown of a report's fights (kills/wipes,
@@ -2748,6 +2780,25 @@ class RaidSummaryCog(commands.Cog):
             if isinstance(record, dict) and record.get("report_code") == report_code and "thread_id" in record:
                 return int(key), record
         return None
+
+    def get_loot_rows_for_report(self, report_code: str) -> list:
+        """
+        Public accessor (used cross-cog by cogs/tier_retrospective.py, same
+        convention as get_tier_reports/get_tier_report_entries) - the raw
+        Gargul-parsed loot rows ({"item_id", "character", "offspec", ...},
+        see gargul_loot.parse_gargul_export) currently on record for this
+        report's /raidsummary post, or [] if there's no post on record for
+        it or it predates loot_rows being persisted at all (added recently -
+        see _assemble_and_post_summary/_on_add_loot_click). Always reflects
+        whatever loot is CURRENTLY shown on the post (regenerate/Add Loot
+        replace this in place), never a stale/duplicated snapshot - see
+        those methods for why this is the one place loot data lives, not a
+        separately-accumulated tally that could drift from it.
+        """
+        found = self._find_post_record(report_code)
+        if found is None:
+            return []
+        return found[1].get("loot_rows") or []
 
     def _recent_summary_entries(self, limit: int = LOGS_SELECT_LIMIT) -> list:
         """
