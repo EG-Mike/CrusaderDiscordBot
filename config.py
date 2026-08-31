@@ -6,9 +6,16 @@ TIER TRANSITION: when Sunwell Plateau releases, update CURRENT_TIER below to
 FUTURE_TIERS["Sunwell Plateau"], and set PREVIOUS_TIER to today's
 CURRENT_TIER value (BT/Hyjal). That's the one-line switch.
 
-All zone/encounter IDs below were pulled directly from WCL's
+All zone/encounter IDs below were meant to be pulled directly from WCL's
 `worldData.zones` query against the fresh.warcraftlogs.com host (via
-debug_zones.py) - not guessed, so they should be accurate.
+debug_zones.py), not guessed - but CURRENT_TIER's (BT/Hyjal) values from
+that run were simply wrong (every boss ID off by exactly 50000, zone_id
+off entirely - confirmed and corrected 2026-08, see CURRENT_TIER's own
+comment for how this was found: it's why boss kills never showed up in a
+raid summary for the whole time this tier's numbers were wrong). Treat
+"pulled from debug_zones.py" as this file's INTENT, not a guarantee -
+FUTURE_TIERS' Sunwell Plateau entry has the same suspicious shape and is
+flagged unverified for exactly this reason.
 """
 
 # --- TBC class colors (Warrior..Druid only - no DK/Monk/DH in TBC) ---
@@ -522,24 +529,37 @@ TIER_SUB_INSTANCES = {
 # --- Raid tier config ---
 # `bosses` maps a display name -> WCL encounter ID.
 
+# Corrected (2026-08, moderator) against real WCL data via
+# /raidsummary-refresh-report's diagnostic breakdown - the original
+# debug_zones.py-sourced values below were simply wrong: every boss's real
+# encounter ID is exactly 50000 higher (e.g. High Warlord Naj'entus is
+# 50601, not 601), and zone_id is 1060, not 1011. This is why boss kills
+# never showed up in a raid summary for this tier - _group_fights_by_
+# encounter/_build_boss_lines/_tier_stats all matched against these IDs
+# and never found a single one in a real report's fights, and
+# _build_guild_rank_block's guild-zone-rankings lookup (cogs/raid_summary.py)
+# and cogs/apply.py's per-zone character gear/spec lookups were silently
+# querying the wrong zone entirely. PREVIOUS_TIER (SSC/TK) below uses a
+# visibly different ID shape (100xxx) and hasn't shown this symptom, so
+# it's left as-is - not re-verified, but no evidence it's wrong either.
 CURRENT_TIER = {
     "name": "BT/Hyjal",
-    "zone_id": 1011,
+    "zone_id": 1060,
     "bosses": {
-        "High Warlord Naj'entus": 601,
-        "Supremus": 602,
-        "Shade of Akama": 603,
-        "Teron Gorefiend": 604,
-        "Gurtogg Bloodboil": 605,
-        "Reliquary of Souls": 606,
-        "Mother Shahraz": 607,
-        "The Illidari Council": 608,
-        "Illidan Stormrage": 609,
-        "Rage Winterchill": 618,
-        "Anetheron": 619,
-        "Kaz'rogal": 620,
-        "Azgalor": 621,
-        "Archimonde": 622,
+        "High Warlord Naj'entus": 50601,
+        "Supremus": 50602,
+        "Shade of Akama": 50603,
+        "Teron Gorefiend": 50604,
+        "Gurtogg Bloodboil": 50605,
+        "Reliquary of Souls": 50606,
+        "Mother Shahraz": 50607,
+        "The Illidari Council": 50608,
+        "Illidan Stormrage": 50609,
+        "Rage Winterchill": 50618,
+        "Anetheron": 50619,
+        "Kaz'rogal": 50620,
+        "Azgalor": 50621,
+        "Archimonde": 50622,
     },
 }
 
@@ -571,6 +591,17 @@ NEW_TIER_LOG_THRESHOLD = 3
 #   PREVIOUS_TIER = CURRENT_TIER
 #   CURRENT_TIER = FUTURE_TIERS["BT/Hyjal"]
 # (then do the same again for each subsequent tier as your guild progresses)
+#
+# WARNING: Sunwell Plateau's zone_id/boss IDs below have the EXACT same
+# shape the real CURRENT_TIER (BT/Hyjal) values had before they turned out
+# to be wrong by exactly 50000 (see CURRENT_TIER's comment) - small
+# 3-digit boss IDs, a 4-digit zone_id, from that same debug_zones.py run.
+# Treat these as unverified, not just "not yet re-run" - re-check them
+# (e.g. /raidsummary-refresh-report's diagnostic breakdown against a real
+# Sunwell report, once your guild is there) BEFORE promoting this to
+# CURRENT_TIER, rather than assuming they're fine because BT/Hyjal's
+# fix pattern was obvious in hindsight - don't blindly add 50000 here
+# without a real report to check against.
 FUTURE_TIERS = {
     "Sunwell Plateau": {
         "name": "Sunwell Plateau",
