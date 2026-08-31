@@ -50,6 +50,29 @@ History of live symptoms so far (2026-08):
      blocking - hence PACE_SECONDS below, enforced once here so every
      current and future caller is covered without having to remember to
      add sleeps at each call site.
+  3. Separately again: tracked-ability icons (Judgement of Wisdom/Light/
+     the Crusader specifically, reported by a moderator, 2026-08) kept
+     showing WoW's own literal "?" (inv_misc_questionmark) icon instead of
+     the real ability icon - even after confirming Blizzard's Game Data
+     API cleanly 404s for these spell IDs under the Classic namespace
+     (verified live via /raidsummary-test-spell - a real 404, not a fake
+     success), meaning every one of these lookups WAS correctly falling
+     through to this file as the fallback source. The actual bug was here:
+     _fetch()/_fetch_spell()'s FALLBACK dict (returned on ANY failure - no
+     <icon> tag, a 403, a timeout, anything) used to set "icon_url" to
+     item_icon_url(None), which substituted Wowhead's own "unknown icon"
+     placeholder graphic (inv_misc_questionmark.jpg - a real, always-
+     loading image) instead of leaving it empty. Every caller (cogs/
+     raid_summary.py's _get_spell_icon_url and _build_loot_lines,
+     mirrored in blizzard_client.py's own get_item()/get_spell_icon() for
+     the same reason) only checks "is icon_url truthy" to decide whether a
+     lookup actually succeeded - so a total failure looked identical to a
+     real, successfully-resolved icon, and got uploaded as a Discord emoji
+     and shown as if it were correct. Fixed by making the fallback's
+     icon_url genuinely None/empty (item_icon_url() no longer accepts None
+     at all - see its own docstring), same "empty means no icon, not a
+     placeholder image" contract every other icon source in this repo
+     (blizzard_client.py, icons.py) already followed.
 
 If placeholders/403s keep showing up after all of these, that's the next
 thing to check (Wowhead tightening the challenge further - a JS/cookie
@@ -135,10 +158,6 @@ ICON_TAG_RE = re.compile(r"<icon[^>]*>([^<]+)</icon>", re.IGNORECASE)
 NAME_TAG_RE = re.compile(r"<name[^>]*>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</name>", re.IGNORECASE | re.DOTALL)
 QUALITY_TAG_RE = re.compile(r'<quality id="(\d+)"', re.IGNORECASE)
 
-# Wowhead's own convention for "no icon" - used as a last-resort fallback so
-# callers always get a usable icon URL.
-FALLBACK_ICON = "inv_misc_questionmark"
-
 
 def _is_resolved(result: dict, id_label: str, id_value: int) -> bool:
     """True if `result` (a get_item/get_spell return value, cached or
@@ -162,10 +181,20 @@ def item_wowhead_url(item_id: int) -> str:
     return f"https://www.wowhead.com/tbc/item={item_id}"
 
 
-def item_icon_url(icon_slug: str | None) -> str:
+def item_icon_url(icon_slug: str) -> str:
     # Same wow.zamimg.com CDN convention already relied on elsewhere in this
-    # repo (see config.py's CLASS_ICON_URLS and emoji_admin.py) - proven to work.
-    return f"https://wow.zamimg.com/images/wow/icons/large/{icon_slug or FALLBACK_ICON}.jpg"
+    # repo (see config.py's CLASS_ICON_URLS and emoji_admin.py) - proven to
+    # work. Takes a REAL icon_slug only (2026-08 - this used to substitute
+    # Wowhead's own "inv_misc_questionmark" placeholder for a None slug, so
+    # _fetch/_fetch_spell's FALLBACK dict always had a real, successfully-
+    # loading icon_url even when the lookup had actually failed - every
+    # downstream caller only checks "is icon_url truthy" to decide whether
+    # a real icon was found, so a failed lookup's icon_url needs to
+    # genuinely be empty/None, not a valid-looking image URL for a generic
+    # question-mark icon - see the module docstring's newest entry for the
+    # bug this caused, and _fetch/_fetch_spell for the actual fallback
+    # values now).
+    return f"https://wow.zamimg.com/images/wow/icons/large/{icon_slug}.jpg"
 
 
 def spell_wowhead_url(spell_id: int) -> str:
@@ -303,7 +332,7 @@ class WowheadClient:
             "id": item_id,
             "name": f"Item #{item_id}",
             "icon_slug": None,
-            "icon_url": item_icon_url(None),
+            "icon_url": None,
             "wowhead_url": item_wowhead_url(item_id),
             "quality": None,
         }
@@ -356,7 +385,7 @@ class WowheadClient:
             "id": spell_id,
             "name": f"Spell #{spell_id}",
             "icon_slug": None,
-            "icon_url": item_icon_url(None),
+            "icon_url": None,
             "wowhead_url": spell_wowhead_url(spell_id),
         }
 
