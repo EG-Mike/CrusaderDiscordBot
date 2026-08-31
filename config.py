@@ -168,7 +168,10 @@ SPEC_ICON_URLS = {
 
     # Druid
     "Druid:Balance":       "https://wow.zamimg.com/images/wow/icons/large/spell_nature_starfall.jpg",
-    "Druid:Feral":         "https://wow.zamimg.com/images/wow/icons/large/ability_racial_bearform.jpg",
+    # Key must match CLASS_SPECS' "Feral Combat" exactly (was "Druid:Feral" -
+    # never matched, so this icon silently never resolved anywhere it was
+    # used, not just here - fixed 2026-08).
+    "Druid:Feral Combat":  "https://wow.zamimg.com/images/wow/icons/large/ability_racial_bearform.jpg",
     "Druid:Restoration":   "https://wow.zamimg.com/images/wow/icons/large/spell_nature_healingtouch.jpg",
     #add guardian druid (feral tank)
 }
