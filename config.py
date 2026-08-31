@@ -462,6 +462,13 @@ TRACKED_ABILITY_ICON_EMOJI = {
     "Faerie Fire": "<:Spell_Nature_FaerieFire:1543989030960635984>",
     "Curse of the Elements": "<:Spell_Shadow_ChillTouch:1543989029844946984>",
     "Curse of Recklessness": "<:Spell_Shadow_UnholyStrength:1543989028783657000>",
+    # Added 2026-08 (moderator, manually uploaded) after Blizzard's
+    # spell-media endpoint was confirmed to be returning a wrong/generic
+    # icon for these three via bot.blizzard - see blizzard_client.py's
+    # get_spell_icon()/diagnose_spell() docstrings for the investigation.
+    "Judgement of Wisdom": "<:Spell_Holy_RighteousnessAura:1544102694581440654>",
+    "Judgement of Light": "<:Spell_Holy_HealingAura:1544102692606189629>",
+    "Judgement of the Crusader": "<:Spell_Holy_HolySmite:1544102691410812938>",
 }
 TOP_INTERRUPTERS_ICON_EMOJI = "<:Ability_Kick:1543989033141674157>"
 TOP_DISPELLERS_ICON_EMOJI = "<:SPELL_HOLY_DISPELMAGIC:1543989034949419068>"
