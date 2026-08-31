@@ -233,6 +233,31 @@ AUTO_ROLE_IDS = {
 ARCHIVE_ENABLED = True
 ARCHIVE_CHANNEL_ID = 1337906439066488914
 
+# Armory block (equipped gear + talent build) shown on the /apply review
+# card - see cogs/apply.py's _compute_armory_block. Defaulted OFF
+# (2026-08): Blizzard's Character Equipment/Specializations endpoints
+# return HTTP 200 for TBC Anniversary-migrated realms, but the DATA itself
+# is a stale Classic-Era snapshot rather than the character's current
+# state - confirmed live against a real character (their old Classic Era
+# gear came back, not their current TBC loadout). That's a Blizzard-side
+# bug, not something this bot can detect or fix, so showing a
+# confidently-wrong gear/spec summary on every application does more harm
+# than good until it's resolved on their end. Item/spell lookups
+# (get_item/get_spell_icon, used throughout raid summaries) are NOT
+# affected by this flag or this bug - those hit a different, unaffected
+# static-classic-{region} endpoint family (confirmed: a real TBC item
+# resolves correctly via /raidsummary-test-blizzard) - only the
+# profile-classic-{region} CHARACTER endpoints (equipment/specializations)
+# have the staleness problem. Flip back to True once Blizzard's forum
+# threads on this (see get_character_specializations()'s docstring in
+# blizzard_client.py) report it fixed, or to spot-check whether a specific
+# character's data happens to be fresh - _compute_armory_block still
+# returns None immediately while this is False, with no API calls made at
+# all. /apply-test-blizzard (moderator diagnostic) ignores this flag on
+# purpose, so it can still be used to check whether the bug's been fixed
+# without re-enabling the block for every applicant first.
+ARMORY_BLOCK_ENABLED = False
+
 # --- Attendance tracking (Regular-role eligibility) ---
 # Regular role - separate from FRESH_EXEMPT_ROLE_IDS above (that list is
 # about skipping the Fresh assignment/nickname on approval; this is the
