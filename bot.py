@@ -1,8 +1,9 @@
 """
-Entry point. Loads feature cogs (currently just guild applications) and
-starts the bot. Adding a new, unrelated feature later = add a new file to
-cogs/ and one line in EXTENSIONS below - this file shouldn't need much else
-touched.
+Entry point. Loads feature cogs (gated per-deployment by config.py's
+FEATURE_*_ENABLED flags) and starts the bot. Adding a new, unrelated
+feature later = add a new file to cogs/, a FEATURE_*_ENABLED flag in
+config.py, and one line in OPTIONAL_EXTENSIONS below - this file
+shouldn't need much else touched.
 """
 
 import os
@@ -14,6 +15,7 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 
+import config
 from wcl_client import WarcraftLogsClient
 from wowhead import WowheadClient
 from blizzard_client import BlizzardClient
@@ -27,16 +29,42 @@ log = logging.getLogger("wow-apply-bot")
 
 DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
 
-# Feature cogs to load. Add a new entry here when you add a new feature file.
-EXTENSIONS = [
-    "cogs.apply",
-    "cogs.announcements",
-    "cogs.emoji_admin",
-    "cogs.attendance",
-    "cogs.raid_summary",
-    "cogs.raid_logs",
-    "cogs.tier_retrospective",
+# Feature cogs to load. cogs.apply (guild applications) is the bot's core
+# feature and always loads; every other cog is gated by a
+# config.FEATURE_*_ENABLED flag, so a deployment that doesn't want e.g.
+# raid summaries can turn the whole feature (and its commands) off without
+# touching any code - see config.py's comment above those flags.
+OPTIONAL_EXTENSIONS = [
+    ("cogs.announcements", config.FEATURE_ANNOUNCEMENTS_ENABLED),
+    ("cogs.emoji_admin", config.FEATURE_EMOJI_ADMIN_ENABLED),
+    ("cogs.attendance", config.FEATURE_ATTENDANCE_ENABLED),
+    ("cogs.raid_summary", config.FEATURE_RAID_SUMMARY_ENABLED),
+    ("cogs.raid_logs", config.FEATURE_RAID_LOGS_ENABLED),
+    ("cogs.tier_retrospective", config.FEATURE_TIER_RETROSPECTIVE_ENABLED),
 ]
+EXTENSIONS = ["cogs.apply"] + [name for name, enabled in OPTIONAL_EXTENSIONS if enabled]
+
+# raid_logs.py's automation needs raid_summary.py's and attendance.py's own
+# cogs loaded to do its actual job, and tier_retrospective.py needs
+# raid_summary.py's cached data (see config.py's comment above the
+# FEATURE_* flags) - neither crashes without it (their bot.get_cog()
+# lookups already degrade gracefully), but silently doing nothing isn't
+# obvious from the console, so flag the misconfiguration loudly instead.
+if config.FEATURE_RAID_LOGS_ENABLED and not config.FEATURE_RAID_SUMMARY_ENABLED:
+    log.warning(
+        "FEATURE_RAID_LOGS_ENABLED is True but FEATURE_RAID_SUMMARY_ENABLED is False - "
+        "raid_logs.py's Summarize automation needs raid_summary.py's cog and won't work."
+    )
+if config.FEATURE_RAID_LOGS_ENABLED and not config.FEATURE_ATTENDANCE_ENABLED:
+    log.warning(
+        "FEATURE_RAID_LOGS_ENABLED is True but FEATURE_ATTENDANCE_ENABLED is False - "
+        "raid_logs.py's main-raid automation needs attendance.py's cog and won't work."
+    )
+if config.FEATURE_TIER_RETROSPECTIVE_ENABLED and not config.FEATURE_RAID_SUMMARY_ENABLED:
+    log.warning(
+        "FEATURE_TIER_RETROSPECTIVE_ENABLED is True but FEATURE_RAID_SUMMARY_ENABLED is False - "
+        "/tier-recap reads raid_summary.py's cached data and won't work."
+    )
 
 intents = discord.Intents.default()
 intents.members = True          # needed to assign roles / fetch member objects
@@ -121,6 +149,10 @@ async def on_ready():
 
 async def main():
     async with bot:
+        disabled = [name for name, enabled in OPTIONAL_EXTENSIONS if not enabled]
+        log.info("Loading extensions: %s", EXTENSIONS)
+        if disabled:
+            log.info("Disabled by config.py FEATURE_*_ENABLED flags: %s", disabled)
         for extension in EXTENSIONS:
             await bot.load_extension(extension)
         try:
