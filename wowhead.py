@@ -244,6 +244,27 @@ class WowheadClient:
                         next_url += "&xml"
                     current_url = next_url
                     continue
+                if resp.status >= 400:
+                    # Bare "403 Forbidden" in a traceback says nothing about
+                    # WHY - reported live (2026-08): every request 403ing
+                    # from this bot's host while the identical URL worked
+                    # fine from the moderator's own browser on a different
+                    # network, which points at something IP/network-level
+                    # (the hosting provider's outbound IP flagged, or a JS/
+                    # challenge gate a plain HTTP client can never pass) -
+                    # neither a header tweak nor URL fix can be verified
+                    # against without seeing what Wowhead actually sent
+                    # back. Logging the real response body (truncated) +
+                    # the headers that usually identify WHICH WAF/CDN is
+                    # blocking (cf-ray, server, cf-mitigated) turns the next
+                    # occurrence into an actual diagnostic instead of a
+                    # bare status code.
+                    body_snippet = (await resp.text())[:500]
+                    log.warning(
+                        "Wowhead returned %s for %s - server=%r cf-ray=%r cf-mitigated=%r body[:500]=%r",
+                        resp.status, current_url, resp.headers.get("server"),
+                        resp.headers.get("cf-ray"), resp.headers.get("cf-mitigated"), body_snippet,
+                    )
                 resp.raise_for_status()
                 return await resp.text()
         raise RuntimeError(f"Too many redirects resolving {url}")
