@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 
 from wcl_client import WarcraftLogsClient
 from wowhead import WowheadClient
+from blizzard_client import BlizzardClient
 from storage import ApplicationStore
 import icons
 
@@ -50,6 +51,19 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # feature file re-instantiating its own WCL client / storage.
 bot.wcl = WarcraftLogsClient(os.environ["WCL_CLIENT_ID"], os.environ["WCL_CLIENT_SECRET"])
 bot.wowhead = WowheadClient()
+# Optional - item lookups (loot names/icons, potion icons) prefer this over
+# wowhead.py's scraped XML feed when configured (see
+# cogs/raid_summary.py's _get_item_data) since it's Blizzard's own
+# sanctioned API with no anti-bot/IP-block concerns, but nothing requires
+# it: unset BLIZZARD_CLIENT_ID/SECRET just means those lookups keep going
+# through bot.wowhead exactly as before this existed. Same
+# SERVER_REGION env var wcl_client.py already reads (defaults "us").
+blizzard_client_id = os.environ.get("BLIZZARD_CLIENT_ID")
+blizzard_client_secret = os.environ.get("BLIZZARD_CLIENT_SECRET")
+bot.blizzard = (
+    BlizzardClient(blizzard_client_id, blizzard_client_secret, region=os.environ.get("SERVER_REGION", "us"))
+    if blizzard_client_id and blizzard_client_secret else None
+)
 bot.store = ApplicationStore()
 
 
