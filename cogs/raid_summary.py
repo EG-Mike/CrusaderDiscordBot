@@ -139,19 +139,24 @@ Design, per discussion:
 
     Below those, a "Buff/Debuff Uptime" section for config.TRACKED_DEBUFFS
     (Sunder/Expose Armor, Faerie Fire, Curse of the Elements/Recklessness -
-    kept on the boss) and config.TRACKED_BUFFS (Judgement of Wisdom/Light -
-    kept on a player), each shown with both an "all fights" (bosses+trash)
-    and a "boss fights only" uptime %, the raider who contributed the most
-    of the boss-fight uptime, and a delta/⚡-new-best badge against
-    records["buffs"][tier name] (boss-only percentage only - trash uptime
-    is too inconsistent raid-to-raid to be a meaningful personal best) -
-    see _build_uptime_lines and wcl_client.get_report_aura_uptime. All
-    tracked ability lists are matched against WCL by NAME, not spell ID,
-    since a rank's exact ID varies by who cast it while the name doesn't -
-    see config.py's comment above TRACKED_DEBUFFS. Each tracked debuff/buff
-    also gets a real Wowhead spell icon (config.TRACKED_ABILITY_ICON_SPELL_IDS
-    - any correct rank's ID works there since the icon doesn't change
-    across ranks), fetched once and provisioned as a bot-owned emoji the
+    kept on the boss) and config.TRACKED_BUFFS (Judgement of Wisdom/Light/
+    the Crusader - kept on a player), each shown with a "boss fights only"
+    uptime % and, unless the ability is in config.TRACKED_BOSS_ONLY_ABILITIES
+    (every tracked Judgement, currently - trash uptime isn't a meaningful/
+    wanted number for those), also an "all fights" (bosses+trash) one - plus
+    the raider who contributed the most of the boss-fight uptime, and a
+    delta/⚡-new-best badge against records["buffs"][tier name] (boss-only
+    percentage only - trash uptime is too inconsistent raid-to-raid to be a
+    meaningful personal best, for every tracked ability regardless of
+    TRACKED_BOSS_ONLY_ABILITIES) - see _build_uptime_lines and
+    wcl_client.get_report_aura_uptime. All tracked ability lists are
+    matched against WCL by NAME, not spell ID, since a rank's exact ID
+    varies by who cast it while the name doesn't - see config.py's comment
+    above TRACKED_DEBUFFS. Each tracked debuff/buff also gets a real spell
+    icon (config.TRACKED_ABILITY_ICON_SPELL_IDS - any correct rank's ID
+    works there since the icon doesn't change across ranks) via
+    self.bot.blizzard when configured, Wowhead otherwise (see
+    _get_spell_icon_url), fetched once and provisioned as a bot-owned emoji the
     same way loot/potion icons are (icons.ensure_spell_emoji).
   - Self-contained like every other cog here - a future feature is a new
     cog file, not changes to this one.
@@ -952,6 +957,24 @@ class RaidSummaryCog(commands.Cog):
             result = await self.bot.wowhead.get_item(item_id)
         return {**result, "wowhead_url": wowhead.item_wowhead_url(item_id)}
 
+    async def _get_spell_icon_url(self, spell_id: int) -> str:
+        """
+        A spell/ability's icon URL, preferring self.bot.blizzard (Blizzard's
+        media-only spell endpoint - see blizzard_client.get_spell_icon())
+        over self.bot.wowhead when the former is configured - same
+        prefer-Blizzard/fall-back-to-Wowhead shape as _get_item_data, and
+        same reason (Wowhead's feed is IP-blocked for this bot's host).
+        Returns '' (never None) if neither source has an icon, so callers
+        can treat this like wowhead.get_spell()'s "" icon_url case - no
+        icon, not an error.
+        """
+        if self.bot.blizzard is not None:
+            result = await self.bot.blizzard.get_spell_icon(spell_id)
+            if result.get("icon_url"):
+                return result["icon_url"]
+        spell = await self.bot.wowhead.get_spell(spell_id)
+        return spell.get("icon_url") or ""
+
     async def _resolve_loot(self, loot_rows: list) -> list:
         """Attaches resolved item data (see _get_item_data) to each Gargul loot row."""
         item_cache = {}
@@ -1316,10 +1339,10 @@ class RaidSummaryCog(commands.Cog):
         ability, just for a single decorative icon instead."""
         if not spell_id:
             return ""
-        spell = await self.bot.wowhead.get_spell(spell_id)
-        if not spell.get("icon_url"):
+        icon_url = await self._get_spell_icon_url(spell_id)
+        if not icon_url:
             return ""
-        return await icons.ensure_spell_emoji(self.bot, existing_by_name, spell_id, spell["icon_url"])
+        return await icons.ensure_spell_emoji(self.bot, existing_by_name, spell_id, icon_url)
 
     async def _build_potions_block(self, potion_casts: dict, guild: discord.Guild, classes_map: dict,
                                     existing_by_name: dict, records: dict, tier_name: str) -> tuple:
@@ -1350,9 +1373,10 @@ class RaidSummaryCog(commands.Cog):
         """
         Returns (lines, updates) for the "Buff/Debuff Uptime" section -
         config.TRACKED_DEBUFFS (kept on the boss) and config.TRACKED_BUFFS
-        (kept on a player), each shown with an "all fights" (bosses+trash)
-        and a "boss fights only" uptime %, plus whichever raider contributed
-        the most of the boss-fight uptime (see
+        (kept on a player), each shown with a "boss fights only" uptime %
+        and, unless the ability is in config.TRACKED_BOSS_ONLY_ABILITIES, an
+        "all fights" (bosses+trash) one too - plus whichever raider
+        contributed the most of the boss-fight uptime (see
         wcl_client.get_report_aura_uptime). An ability that never appeared
         at all this raid (both percentages None) is omitted, same as an
         un-attempted boss in _build_boss_lines.
@@ -1382,9 +1406,9 @@ class RaidSummaryCog(commands.Cog):
             icon = config.TRACKED_ABILITY_ICON_EMOJI.get(name, "")
             spell_id = config.TRACKED_ABILITY_ICON_SPELL_IDS.get(name)
             if not icon and spell_id:
-                spell = await self.bot.wowhead.get_spell(spell_id)
-                if spell.get("icon_url"):
-                    icon = await icons.ensure_spell_emoji(self.bot, existing_by_name, spell_id, spell["icon_url"])
+                icon_url = await self._get_spell_icon_url(spell_id)
+                if icon_url:
+                    icon = await icons.ensure_spell_emoji(self.bot, existing_by_name, spell_id, icon_url)
                     await asyncio.sleep(0.3)  # same pacing _build_loot_lines uses for item-icon provisioning
 
             badge = ""
@@ -1407,6 +1431,15 @@ class RaidSummaryCog(commands.Cog):
                 top_bit = f" — best kept by {top_icon}**{data['top_player']}**{top_pct_text}"
 
             boss_text = f"{boss_pct:.1f}%" if boss_pct is not None else "?"
+            if name in config.TRACKED_BOSS_ONLY_ABILITIES:
+                # Trash uptime isn't a meaningful/wanted number for these
+                # (moderator request, 2026-08) - still computed by
+                # wcl_client.get_report_aura_uptime same as any other
+                # tracked ability, just not shown - see
+                # TRACKED_BOSS_ONLY_ABILITIES' own comment.
+                lines.append(f"{icon} **{name}** — {boss_text} bosses{badge}{top_bit}")
+                continue
+
             all_text = f"{all_pct:.1f}%" if all_pct is not None else "?"
             lines.append(
                 f"{icon} **{name}** — {boss_text} bosses / {all_text} all fights{badge}{top_bit}"
