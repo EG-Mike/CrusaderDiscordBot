@@ -120,12 +120,36 @@ PACE_SECONDS = 0.5
 MAX_REDIRECTS = 5
 
 ICON_TAG_RE = re.compile(r"<icon[^>]*>([^<]+)</icon>", re.IGNORECASE)
-NAME_TAG_RE = re.compile(r"<name[^>]*>([^<]+)</name>", re.IGNORECASE)
+# Confirmed live (2026-08, moderator screenshot): every loot item's ICON was
+# resolving correctly, but the name was still falling back to "Item #<id>"
+# for every single one - i.e. icon_match was succeeding while name_match
+# wasn't, on the same response. Wowhead wraps <name> in a CDATA section
+# (<name><![CDATA[Ring of Calming Waves]]></name>) since item names can
+# contain characters (apostrophes, ampersands) that aren't XML-safe as
+# plain text, unlike <icon>'s plain alphanumeric slug - the old
+# `([^<]+)` capture requires the very first character after <name...> to
+# not be "<", which CDATA's opening "<![CDATA[" always is, so it could
+# never match a real name tag at all, only ever the icon (never CDATA-
+# wrapped). The optional (?:<!\[CDATA\[)?...(?:\]\]>)? wrapper here
+# matches either shape.
+NAME_TAG_RE = re.compile(r"<name[^>]*>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</name>", re.IGNORECASE | re.DOTALL)
 QUALITY_TAG_RE = re.compile(r'<quality id="(\d+)"', re.IGNORECASE)
 
 # Wowhead's own convention for "no icon" - used as a last-resort fallback so
 # callers always get a usable icon URL.
 FALLBACK_ICON = "inv_misc_questionmark"
+
+
+def _is_resolved(result: dict, id_label: str, id_value: int) -> bool:
+    """True if `result` (a get_item/get_spell return value, cached or
+    freshly fetched) is a FULL success worth trusting/caching permanently,
+    not a partial one. Checks the name too, not just icon_slug - a lookup
+    can resolve the icon while the name tag fails to match for a different
+    reason (see NAME_TAG_RE's comment on Wowhead's CDATA-wrapped <name>),
+    and a partial result cached as if fully successful would never get
+    retried on its own, same failure mode icon_slug=None already guards
+    against."""
+    return result.get("icon_slug") is not None and result.get("name") != f"{id_label} #{id_value}"
 
 
 def item_wowhead_url(item_id: int) -> str:
@@ -229,22 +253,27 @@ class WowheadClient:
         Falls back to a generic placeholder (never raises) if the lookup fails
         or comes back in an unexpected shape.
 
-        A cached entry with icon_slug=None is treated as a cache MISS, not a
-        hit - it can only mean a past lookup failed (a successful one always
-        has an icon_slug), and this used to get cached exactly like a real
-        result, permanently freezing every "Item #<id>" placeholder forever
-        even after whatever caused the failure (e.g. the anti-bot-challenge
-        User-Agent issue - see the module docstring) got fixed, since
-        nothing ever re-tried it. Retrying here on every call this comes up
-        costs nothing once a real result lands (see _fetch), since that's
-        the one case that DOES get cached and short-circuits every call
-        after."""
+        A cached entry that isn't FULLY resolved (see _is_resolved) is
+        treated as a cache MISS, not a hit - it can only mean a past lookup
+        didn't fully succeed, and this used to get cached exactly like a
+        real result, permanently freezing a wrong/incomplete placeholder
+        forever even after whatever caused it (e.g. the anti-bot-challenge
+        User-Agent issue, or the CDATA-wrapped <name> tag issue - see the
+        module docstring for both) got fixed, since nothing ever re-tried
+        it. _is_resolved checks the NAME too, not just icon_slug - a real
+        failure mode seen live (2026-08, moderator screenshot) was every
+        item's ICON resolving fine while the name still fell back to
+        "Item #<id>", which an icon_slug-only check would have kept
+        treating as a full success forever. Retrying here on every call
+        this comes up costs nothing once a real result lands (see _fetch),
+        since that's the one case that DOES get cached and short-circuits
+        every call after."""
         cached = self._cache.get(item_id)
-        if cached is not None and cached.get("icon_slug") is not None:
+        if cached is not None and _is_resolved(cached, "Item", item_id):
             return cached
 
         result = await self._fetch(item_id)
-        if result.get("icon_slug") is not None:
+        if _is_resolved(result, "Item", item_id):
             self._cache.set(item_id, **result)
         return result
 
@@ -293,11 +322,11 @@ class WowheadClient:
         int item IDs), so the two never collide."""
         cache_key = f"spell:{spell_id}"
         cached = self._cache.get(cache_key)
-        if cached is not None and cached.get("icon_slug") is not None:
+        if cached is not None and _is_resolved(cached, "Spell", spell_id):
             return cached
 
         result = await self._fetch_spell(spell_id)
-        if result.get("icon_slug") is not None:
+        if _is_resolved(result, "Spell", spell_id):
             self._cache.set(cache_key, **result)
         return result
 
