@@ -536,6 +536,21 @@ class ApplyCog(commands.Cog):
                     value = value[:1000] + "\n… (truncated, see full profile)"
                 lines.append("**Equipped Gear** *(live from Blizzard Armory)*\n" + value)
 
+        if lines:
+            # Confirmed live (2026-08, real character) that Blizzard's
+            # profile snapshot for a recently-migrated TBC Anniversary
+            # realm can be stale (returned this character's old Classic
+            # Era gear, not their current TBC loadout) despite a 200 OK
+            # under the correct namespace - nothing this bot can detect or
+            # fix (see get_character_specializations()'s docstring), so
+            # this caveat is shown unconditionally rather than only when
+            # staleness happens to be detectable.
+            lines.append(
+                "-# Reflects Blizzard's last-synced Armory snapshot, which can lag behind "
+                "in-game gear/talents - confirmed stale on some recently-migrated TBC "
+                "Anniversary realms. Cross-check against the applicant's own screenshot."
+            )
+
         return "\n\n".join(lines) if lines else None
 
     def _build_also_play_block(self, class_name, other_specs) -> str:

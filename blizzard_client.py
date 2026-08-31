@@ -354,22 +354,40 @@ class BlizzardClient:
              "points_by_tree": [(tree_name, points), ...] | None,
              "total_points": int}
 
-        HONEST CAVEAT (see the module docstring - this sandbox can never
-        reach api.blizzard.com to verify any of this live): unlike
-        get_item()/get_character_equipment() above (built from a real
-        working reference client's source), Classic's old-style freeform
-        3-tree talent system has no confirmed reference for this endpoint's
-        exact JSON shape - only indirect signals (forum-thread mentions
-        that a "specializations" endpoint exists for classic profiles).
-        _parse_specialization_groups() below is written defensively to try
-        a couple of plausible shapes and degrade gracefully rather than
-        crash, but "points_by_tree" (the "31/10/20" split) may well come
-        back None until this is checked against a real response - use
-        diagnose_character() to see the raw JSON and fix the field names in
-        _parse_specialization_groups/_bucket_talent_points if so.
-        spec_name/total_points are more likely to come through correctly
-        since they only need SOME name/points field to exist per group, not
-        a specific tree-grouping field name.
+        CONFIRMED live (2026-08, real EU realm/character - see
+        _parse_specialization_groups()' docstring for the exact shape
+        found): the endpoint exists, returns HTTP 200 under
+        profile-classic-{region}, and the real per-talent point field is
+        "talent_rank", nested at group["specializations"][*]["talents"] -
+        both were originally guessed wrong (as "spent_points" directly
+        under group["talents"]) until checked against this real response.
+
+        STILL UNCONFIRMED: no spec-name (e.g. "Fire") or tree-grouping
+        field was visible in the response checked, so "spec_name" and the
+        "31/10/20" split ("points_by_tree") may come back None/empty even
+        though total_points is now correctly computed - but that response
+        was also cut off (Discord's/this diagnostic's length limits) before
+        showing every talent in the group, so a tree/name field further in
+        isn't ruled out either. If Blizzard genuinely never includes tree
+        membership per talent, getting the 31/10/20 split would need a
+        separate static talent-id -> tree lookup table (not attempted
+        here - see _bucket_talent_points' docstring). Use
+        diagnose_character() (now dumping a much longer raw body for this
+        endpoint specifically) to check a fuller response and adjust
+        _parse_specialization_groups/_bucket_talent_points if a real field
+        turns up.
+
+        SEPARATELY (not something this method can detect or work around):
+        Blizzard's profile API for these transitioned TBC Anniversary
+        realms has a live, reported bug where the returned data (gear here
+        too, not just talents) can be a stale Classic-Era snapshot rather
+        than the character's current state - confirmed 2026-08 against a
+        real character whose returned gear was their old Classic Era
+        loadout, not their current TBC gear. Nothing server-side or
+        client-side here can force a refresh; this is purely a caveat for
+        callers to surface to the user (see cogs/apply.py's
+        _compute_armory_block, which appends a note about this to the
+        rendered block).
 
         Never raises - returns [] on any failure (token, 403/404 - see
         get_character_equipment()'s docstring for what those can mean).
@@ -452,7 +470,19 @@ class BlizzardClient:
                     params=params, headers=headers,
                 ) as resp:
                     body = await resp.text()
-                    lines.append(f"Specializations endpoint: HTTP {resp.status}\n```\n{body[:1500]}\n```")
+                    # Wider cap than every other diagnostic dump in this file
+                    # (deliberately, not an oversight) - a live check
+                    # (2026-08, see get_character_specializations()'s
+                    # docstring) showed this endpoint's body getting cut off
+                    # mid-JSON at 1500 chars, before ever reaching a second
+                    # talent group or any field that might identify which of
+                    # the 3 trees each talent belongs to (the still-unsolved
+                    # part of the "31/10/20" split - see _bucket_talent_
+                    # points' docstring). The outer per-message chunking in
+                    # cogs/apply.py's apply_test_blizzard already splits
+                    # whatever this returns across multiple Discord messages,
+                    # so there's no length concern on that end.
+                    lines.append(f"Specializations endpoint: HTTP {resp.status}\n```\n{body[:6000]}\n```")
         except Exception as e:
             lines.append(f"❌ Request failed: {e!r}")
             return "\n".join(lines)
@@ -533,21 +563,43 @@ def _parse_specialization_groups(data: dict) -> list:
     """See get_character_specializations()'s docstring for the honesty
     caveat this whole function operates under. Tries the plausible
     "specialization_groups" key first (a dual-spec-shaped list, each with
-    its own is_active flag and talents) - falls back to treating the whole
-    payload as one implicit group if that key isn't present, so a
-    single-spec response still parses into something instead of an empty
-    list."""
+    its own is_active flag) - falls back to treating the whole payload as
+    one implicit group if that key isn't present, so a single-spec
+    response still parses into something instead of an empty list.
+
+    CONFIRMED live (2026-08, real EU character, see get_character_
+    specializations()'s docstring): each group's talents are NOT directly
+    under group["talents"] as originally guessed - they're one level
+    deeper, under group["specializations"][*]["talents"] ("specializations"
+    here is an unrelated wrapper list, seemingly schema reuse from retail's
+    endpoint where that word means something else; classic responses seen
+    so far only ever have exactly one entry in it). Both shapes are
+    checked, so this keeps working if a differently-shaped response ever
+    turns up. No spec-name field (e.g. "Fire") was visible in the live
+    response checked, though it may simply not have been reached before
+    that response got cut off at the diagnostic dump's old length limit
+    (see diagnose_character()) - group.get("name") is checked too as one
+    more plausible spot, cheap to try, unconfirmed either way."""
     groups = data.get("specialization_groups")
     if groups is None:
-        groups = [data] if (data.get("talents") or data.get("talent_specialization")) else []
+        groups = [data] if (data.get("talents") or data.get("specializations") or data.get("talent_specialization")) else []
 
     result = []
     for group in groups:
         spec_info = group.get("talent_specialization") or group.get("specialization") or {}
-        spec_name = spec_info.get("name")
+        spec_name = spec_info.get("name") or group.get("name")
 
-        talents = group.get("talents") or []
-        total_points = sum(t.get("spent_points", 0) or 0 for t in talents)
+        talents = list(group.get("talents") or [])
+        for spec_entry in group.get("specializations") or []:
+            talents.extend(spec_entry.get("talents") or [])
+            if spec_name is None:
+                nested_spec = spec_entry.get("specialization") or spec_entry.get("talent_specialization") or {}
+                spec_name = nested_spec.get("name") or spec_entry.get("name")
+
+        # Real per-talent point field is "talent_rank" (confirmed live) -
+        # "spent_points" was the original guess, kept as a fallback in case
+        # a differently-shaped response ever uses it instead.
+        total_points = sum((t.get("talent_rank") or t.get("spent_points") or 0) for t in talents)
         points_by_tree = _bucket_talent_points(talents)
 
         result.append({
@@ -560,18 +612,23 @@ def _parse_specialization_groups(data: dict) -> list:
 
 
 def _bucket_talent_points(talents: list):
-    """Best-effort grouping of a talent-group's per-talent spent_points
-    into per-TREE totals (the "31/10/20" split) - returns a list of
-    (tree_name, points) tuples in first-seen order, or None if none of the
-    talent entries carry a tree-identifying field this recognizes. Checked
-    field names, in order: "talent_tree" (dict with a "name") then "tree"
-    (dict or plain string) - guesses at Blizzard's real field name (see
-    get_character_specializations()'s docstring), not confirmed. TBC's 3
-    talent trees are named identically to their matching spec (e.g. the
-    "Arms" tree = the "Arms" spec), so a tree's "name" here doubles as the
-    display name with no extra mapping needed once/if a real field name is
-    found - see _format_talent_split in cogs/apply.py for how the 3 totals
-    get ordered to match config.CLASS_SPECS."""
+    """Best-effort grouping of a talent-group's per-talent points into
+    per-TREE totals (the "31/10/20" split) - returns a list of (tree_name,
+    points) tuples in first-seen order, or None if none of the talent
+    entries carry a tree-identifying field this recognizes. Checked field
+    names, in order: "talent_tree" (dict with a "name") then "tree" (dict
+    or plain string) - still guesses, NOT confirmed (unlike the
+    talents-location/talent_rank fixes in _parse_specialization_groups
+    above): a live response checked 2026-08 didn't show either field on any
+    talent, but that response was also cut off before showing every talent
+    in the group, so this isn't proven absent either - see
+    get_character_specializations()'s docstring and diagnose_character()
+    for how to check a fuller response. TBC's 3 talent trees are named
+    identically to their matching spec (e.g. the "Arms" tree = the "Arms"
+    spec), so a tree's "name" here doubles as the display name with no
+    extra mapping needed once/if a real field name is confirmed - see
+    _format_talent_split in cogs/apply.py for how the 3 totals get ordered
+    to match config.CLASS_SPECS."""
     buckets = {}
     order = []
     found_any_tree_field = False
@@ -591,7 +648,7 @@ def _bucket_talent_points(talents: list):
         if tree_name not in buckets:
             buckets[tree_name] = 0
             order.append(tree_name)
-        buckets[tree_name] += t.get("spent_points", 0) or 0
+        buckets[tree_name] += t.get("talent_rank") or t.get("spent_points") or 0
 
     if not found_any_tree_field:
         return None
