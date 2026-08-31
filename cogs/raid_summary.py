@@ -558,6 +558,46 @@ class RaidSummaryCreateModal(discord.ui.Modal, title="Post Raid Summary"):
         )
 
 
+class RaidSummaryRegenerateView(discord.ui.View):
+    """
+    /raidsummary-regenerate's picker when no report link/code is given
+    directly - a single native dropdown of recently-posted #raid-summary
+    threads (see RaidSummaryCog._recent_summary_entries), labeled by tier
+    + raid date rather than a report code the moderator would otherwise
+    have to go look up. Picking one runs the exact same regenerate logic
+    (_do_regenerate) a direct `report` argument would have.
+    """
+    def __init__(self, cog: "RaidSummaryCog", entries: list):
+        super().__init__(timeout=180)
+        self.cog = cog
+
+        self.select = discord.ui.Select(
+            placeholder="Raid summary to regenerate",
+            options=[
+                discord.SelectOption(label=e["label"], value=e["report_code"], description=e["description"])
+                for e in entries
+            ],
+        )
+        self.select.callback = self._on_select
+        self.add_item(self.select)
+
+    async def _on_select(self, interaction: discord.Interaction):
+        report_code = self.select.values[0]
+        await self.cog._do_regenerate(interaction, report_code)
+        # One-shot - strip the dropdown afterward so it can't be re-picked
+        # into a second, overlapping regenerate for the same or another
+        # report (_reconcile_pages isn't safe to run twice concurrently
+        # against the same thread) - same "loses its component once acted
+        # on" pattern raid_logs.py's post-summary prompt already uses.
+        # _do_regenerate always defers as its first action (see its own
+        # docstring), so the original response is editable here regardless
+        # of which of its return paths was taken.
+        try:
+            await interaction.edit_original_response(view=None)
+        except discord.HTTPException:
+            pass
+
+
 class RaidSummaryCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -2437,27 +2477,62 @@ class RaidSummaryCog(commands.Cog):
         name="raidsummary-regenerate",
         description="Rebuild an already-posted raid summary from fresh WCL/Wowhead data, in place (moderator only)",
     )
-    @app_commands.describe(report="Report link or bare code of the ALREADY-POSTED summary to regenerate")
-    async def raidsummary_regenerate(self, interaction: discord.Interaction, report: str):
+    @app_commands.describe(report="Optional - report link/code to regenerate directly, skipping the picker below")
+    async def raidsummary_regenerate(self, interaction: discord.Interaction, report: str = None):
         """
         Recomputes an already-posted /raidsummary thread's ENTIRE content
         (boss-by-boss, damage/deaths/parses, comp, uptime, loot - everything
         except the note/media link, which stay as last edited) from a fresh
         WCL fetch + current Wowhead data, and edits the existing thread's
         messages in place via _reconcile_pages - no delete-and-repost
-        needed. Note/media_link are carried over unchanged (same as a plain
-        ✏️ Edit would leave them); loot is rebuilt from the last raw Gargul
-        export stored on the record (see loot_rows in
-        _assemble_and_post_summary/_on_add_loot_click) so a Wowhead lookup
-        that failed at post time and got fixed since (see wowhead.py's
-        module docstring) shows real item names/icons this time instead of
-        "Item #<id>" forever.
+        needed. See _do_regenerate for the actual logic - this command
+        handler only decides how the target report is picked: `report`
+        given goes straight to _do_regenerate (unchanged one-shot
+        behavior); omitted shows RaidSummaryRegenerateView, an ephemeral
+        dropdown of recently-posted #raid-summary threads by tier/date (see
+        _recent_summary_entries) so a moderator doesn't need to go dig up a
+        report code/link they may not have handy.
+        """
+        if not await self._is_mod(interaction.guild, interaction.user.id):
+            await interaction.response.send_message("Only moderators can regenerate a raid summary.", ephemeral=True)
+            return
+
+        if report:
+            await self._do_regenerate(interaction, _extract_report_code(report))
+            return
+
+        entries = self._recent_summary_entries()
+        if not entries:
+            await interaction.response.send_message(
+                "No saved /raidsummary posts found to regenerate - post one with /raidsummary first.",
+                ephemeral=True,
+            )
+            return
+        await interaction.response.send_message(
+            "Pick a raid summary to regenerate:", view=RaidSummaryRegenerateView(self, entries), ephemeral=True,
+        )
+
+    async def _do_regenerate(self, interaction: discord.Interaction, report_code: str):
+        """
+        The actual regenerate logic (see raidsummary_regenerate's own
+        docstring for the surrounding feature) - takes a raw, already-
+        extracted report_code and an interaction that has NOT been
+        responded to yet, so it works identically whether it's called
+        straight from the slash command (report given directly) or from
+        RaidSummaryRegenerateView's select callback (its own fresh
+        interaction, picked from the dropdown).
 
         Unlike a normal /raidsummary post, this DOES force-refetch WCL
         first (invalidate_report) - the whole point is picking up data that
         was wrong/incomplete when this was first posted (e.g. the report
         was still live - see wcl_client.get_report_summary), so serving the
-        same cache would just reproduce the same bug.
+        same cache would just reproduce the same bug. loot is rebuilt from
+        the last raw Gargul export stored on the record (see loot_rows in
+        _assemble_and_post_summary/_on_add_loot_click) so a Wowhead lookup
+        that failed at post time and got fixed since (see wowhead.py's
+        module docstring) shows real item names/icons this time instead of
+        "Item #<id>" forever. Note/media_link are carried over unchanged
+        (same as a plain ✏️ Edit would leave them).
 
         Kill/clear-time/parse/uptime/tier-stat records ARE recommitted here
         (see _commit_record_updates) - deliberately different from
@@ -2467,15 +2542,20 @@ class RaidSummaryCog(commands.Cog):
         the original post's badges were wrong (e.g. missed a "First kill!"
         because the live-report bug meant no kill was recorded at all),
         recomputing now is the fix, not a bug.
-        """
-        if not await self._is_mod(interaction.guild, interaction.user.id):
-            await interaction.response.send_message("Only moderators can regenerate a raid summary.", ephemeral=True)
-            return
 
-        report_code = _extract_report_code(report)
+        Always defers as its very first action (ephemeral, thinking) and
+        uses interaction.followup for every reply after that, regardless
+        of which return path is taken - this interaction may be a
+        component interaction (RaidSummaryRegenerateView's select), which
+        needs its own response/followup lifecycle exactly like a slash
+        command's does, and its callback edits the original (deferred)
+        response afterward to strip the dropdown.
+        """
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
         found = self._find_post_record(report_code)
         if found is None:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 f"No saved /raidsummary post found for `{report_code}` - it may predate this feature, or was "
                 "never posted through this bot. Post it fresh with /raidsummary instead.",
                 ephemeral=True,
@@ -2486,13 +2566,12 @@ class RaidSummaryCog(commands.Cog):
         try:
             tier_data = self._resolve_tier(record["header_ctx"]["tier_name"])
         except ValueError:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 f"Couldn't resolve this post's tier (`{record['header_ctx'].get('tier_name')}`) against "
                 "config.py's current CURRENT_TIER/PREVIOUS_TIER.", ephemeral=True,
             )
             return
 
-        await interaction.response.defer(ephemeral=True, thinking=True)
         self.bot.wcl.invalidate_report(report_code)
 
         # clear_status isn't stored raw on the record (only the rendered
@@ -2619,6 +2698,39 @@ class RaidSummaryCog(commands.Cog):
             if isinstance(record, dict) and record.get("report_code") == report_code and "thread_id" in record:
                 return int(key), record
         return None
+
+    def _recent_summary_entries(self, limit: int = LOGS_SELECT_LIMIT) -> list:
+        """
+        Every stored /raidsummary post (same "thread_id" present" filter as
+        _find_post_record), most-recently-posted first, capped at `limit`
+        (default Discord's own per-select-menu option cap) - backs
+        raidsummary_regenerate's picker dropdown so a moderator can pick a
+        #raid-summary thread by name instead of having to go dig up its
+        report code/link. "Most recent" is by report_date (the raid's own
+        date, already 'YYYY-MM-DD' on every stored header_ctx - sorts
+        correctly as a plain string) rather than message_id/insertion
+        order, so a late historic bulk-import doesn't jump the queue ahead
+        of genuinely recent raids.
+
+        Returns [{"message_id", "report_code", "label", "description"}] -
+        label is what Discord shows before selection, description is the
+        greyed-out second line (same split RaidSummaryOptionsView's own
+        report picker uses).
+        """
+        entries = []
+        for key, record in self.store.items():
+            if not (isinstance(record, dict) and "thread_id" in record and record.get("report_code")):
+                continue
+            header_ctx = record.get("header_ctx") or {}
+            entries.append({
+                "message_id": int(key),
+                "report_code": record["report_code"],
+                "report_date": header_ctx.get("report_date") or "",
+                "label": f"{header_ctx.get('tier_name') or '?'} — {header_ctx.get('report_date') or '?'}"[:100],
+                "description": f"{header_ctx.get('clear_label') or ''} · report {record['report_code']}"[:100],
+            })
+        entries.sort(key=lambda e: e["report_date"], reverse=True)
+        return entries[:limit]
 
     async def _reconstruct_merged_post(self, interaction: discord.Interaction, codes: list, tier_data: dict) -> dict:
         """
