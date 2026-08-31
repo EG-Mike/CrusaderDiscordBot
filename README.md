@@ -233,6 +233,31 @@ list day-to-day. Set that flag to `True` to use one, then set it back off:
 | `/raidsummary-refresh-wowhead` | One-time cache wipe for Wowhead item/spell lookups (was for the retail→`/tbc/` endpoint migration; safe to run anytime, just costs a fresh fetch of everything). |
 | `/raidsummary-bulk <tier> <raid_type> <reports>` | One-time bulk import: posts one raid summary per WCL report, oldest first - for backfilling history when first setting up. |
 
+## Enabling/disabling features
+
+Every feature past guild applications (`/apply`, always on) is its own cog
+and can be turned off independently via a `FEATURE_*_ENABLED` flag near the
+top of `config.py` - no code changes, no editing `bot.py`'s extension list,
+just flip the flag and restart:
+
+| Flag | Cog | Disables |
+|---|---|---|
+| `FEATURE_ANNOUNCEMENTS_ENABLED` | `cogs/announcements.py` | `/announce` and its edit/publish flow |
+| `FEATURE_EMOJI_ADMIN_ENABLED` | `cogs/emoji_admin.py` | `/add-emoji` |
+| `FEATURE_ATTENDANCE_ENABLED` | `cogs/attendance.py` | `/checkattendance` and all its subcommands |
+| `FEATURE_RAID_SUMMARY_ENABLED` | `cogs/raid_summary.py` | `/raidsummary` and every `raidsummary-*` command |
+| `FEATURE_RAID_LOGS_ENABLED` | `cogs/raid_logs.py` | the #logs tagging/auto-Summarize automation (section 11 below) |
+| `FEATURE_TIER_RETROSPECTIVE_ENABLED` | `cogs/tier_retrospective.py` | `/tier-recap` |
+
+Two of these lean on another cog to actually do anything:
+`FEATURE_RAID_LOGS_ENABLED` needs both `FEATURE_RAID_SUMMARY_ENABLED` and
+`FEATURE_ATTENDANCE_ENABLED` on, and `FEATURE_TIER_RETROSPECTIVE_ENABLED`
+needs `FEATURE_RAID_SUMMARY_ENABLED` on (it reads that cog's cached
+report data). Neither combination crashes if you get it wrong - the
+dependent cog still loads, its commands just no-op with an explanatory
+message - but `bot.py` logs a warning at startup if it spots the
+mismatch, so check the console after changing these.
+
 ## Setting up on a new server
 
 ### 1. Create the Discord application and bot

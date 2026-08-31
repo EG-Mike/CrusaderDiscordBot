@@ -19,6 +19,29 @@ has the same suspicious shape and is flagged unverified for exactly this
 reason.
 """
 
+# --- Feature toggles: which optional cogs load at startup ---
+# /apply (cogs/apply.py) is the bot's core feature and always loads - every
+# flag below controls one other, independently-disableable cog. Flip one to
+# False and restart to drop that feature (and its commands) entirely for a
+# deployment that doesn't want it, without editing bot.py's EXTENSIONS list
+# or deleting any code - see bot.py's own comment above EXTENSIONS.
+#
+# Two dependencies to know about, both handled gracefully rather than
+# crashing if broken (see each cog's own bot.get_cog() calls), but worth
+# getting right anyway: raid_logs.py reuses raid_summary.py's UI directly
+# and attendance.py's addlog/refresh methods (its whole reason to exist -
+# see cogs/raid_logs.py's module docstring), and tier_retrospective.py
+# reads raid_summary.py's cached per-report data (see its own module
+# docstring). Disabling RAID_SUMMARY while RAID_LOGS or TIER_RETROSPECTIVE
+# stays enabled leaves that cog loaded but unable to do its actual job -
+# bot.py logs a warning at startup if it spots that combination.
+FEATURE_ANNOUNCEMENTS_ENABLED = True
+FEATURE_EMOJI_ADMIN_ENABLED = True
+FEATURE_ATTENDANCE_ENABLED = True
+FEATURE_RAID_SUMMARY_ENABLED = True
+FEATURE_RAID_LOGS_ENABLED = True
+FEATURE_TIER_RETROSPECTIVE_ENABLED = True
+
 # --- TBC class colors (Warrior..Druid only - no DK/Monk/DH in TBC) ---
 CLASS_COLORS = {
     "Warrior": 0xC79C6E,
