@@ -1699,7 +1699,7 @@ class ApplyCog(commands.Cog):
             return
         if not config.ARCHIVE_ENABLED or not config.ARCHIVE_CHANNEL_ID:
             await interaction.response.send_message(
-                "Archiving isn't enabled - set ARCHIVE_ENABLED/ARCHIVE_CHANNEL_ID in config.py.",
+                "Archiving isn't enabled - set ARCHIVE_ENABLED/ARCHIVE_CHANNEL_ID in config/deployment.py.",
                 ephemeral=True,
             )
             return
@@ -1775,7 +1775,7 @@ class ApplyCog(commands.Cog):
         if not config.DEBUG_COMMANDS_ENABLED:
             await interaction.response.send_message(
                 "This is a diagnostic tool, disabled by default - set DEBUG_COMMANDS_ENABLED = True in "
-                "config.py to use it.",
+                "config/deployment.py to use it.",
                 ephemeral=True,
             )
             return

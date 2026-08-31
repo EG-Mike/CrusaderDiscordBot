@@ -29,7 +29,7 @@ Design, per discussion:
     label on the message even after every action button is gone.
   - Summarize (moderator-only - broader than the Organizer-only tag gate)
     is triggered either by a manual click, or automatically once
-    RAID_LOG_AUTO_SUMMARIZE_TIME (see config.py) passes on the day the log
+    RAID_LOG_AUTO_SUMMARIZE_TIME (see config/deployment.py) passes on the day the log
     was tagged - see _auto_summarize_loop. This is deliberately NOT based
     on WarcraftLogs' own "is this report still live" signal
     (report.endTime == 0 while a log is in progress, confirmed via WCL's
@@ -368,7 +368,7 @@ class RaidLogsCog(commands.Cog):
         bosses belong to which tier (config.CURRENT_TIER/PREVIOUS_TIER).
         "BT/Hyjal" bundles two real WoW instances (Black Temple + Mount
         Hyjal) under one WCL zone_id, so this correctly recognizes either
-        half of that tier as one match - see config.py's TIER_SUB_INSTANCES
+        half of that tier as one match - see config/deployment.py's TIER_SUB_INSTANCES
         comment.
 
         Falls back to a fuzzy match of the log's own zone DESCRIPTION text

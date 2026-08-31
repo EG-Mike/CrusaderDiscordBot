@@ -375,6 +375,7 @@ class WarcraftLogsClient:
 
     async def _get_token(self) -> str:
         if self._token and time.time() < self._token_expires_at - 30:
+            log.debug("Reusing cached WCL API token (expires in %.0fs)", self._token_expires_at - time.time())
             return self._token
 
         # Build the Basic auth header explicitly (rather than aiohttp's
@@ -392,6 +393,7 @@ class WarcraftLogsClient:
 
         self._token = data["access_token"]
         self._token_expires_at = time.time() + data.get("expires_in", 3600)
+        log.debug("Fetched a new WCL API token (expires in %ss)", data.get("expires_in", 3600))
         return self._token
 
     async def _get_class_map(self) -> dict:
@@ -976,7 +978,9 @@ class WarcraftLogsClient:
         """
         cached = self._report_cache.get(report_code)
         if cached is not None and _SUMMARY_KEYS.issubset(cached.keys()):
+            log.debug("Report %s: cache hit, skipping WCL fetch", report_code)
             return cached
+        log.debug("Report %s: cache miss (or stale entry) - fetching from WCL", report_code)
 
         token = await self._get_token()
         headers = {"Authorization": f"Bearer {token}"}

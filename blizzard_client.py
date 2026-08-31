@@ -124,6 +124,7 @@ class BlizzardClient:
 
     async def _get_token(self) -> str:
         if self._token and time.time() < self._token_expires_at - 30:
+            log.debug("Reusing cached Blizzard API token (expires in %.0fs)", self._token_expires_at - time.time())
             return self._token
 
         auth_header = aiohttp.BasicAuth(self.client_id, self.client_secret).encode()
@@ -138,6 +139,7 @@ class BlizzardClient:
 
         self._token = data["access_token"]
         self._token_expires_at = time.time() + data.get("expires_in", 86400)
+        log.debug("Fetched a new Blizzard API token (expires in %ss)", data.get("expires_in", 86400))
         return self._token
 
     async def get_item(self, item_id: int) -> dict:
@@ -157,7 +159,9 @@ class BlizzardClient:
         """
         cached = self._cache.get(item_id)
         if cached is not None and _is_resolved(cached, item_id):
+            log.debug("Item %s: cache hit, skipping Blizzard API fetch", item_id)
             return cached
+        log.debug("Item %s: cache miss (or unresolved entry) - fetching from Blizzard API", item_id)
 
         result = await self._fetch(item_id)
         if _is_resolved(result, item_id):
