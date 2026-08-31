@@ -18,28 +18,44 @@ Caveat: this still wasn't independently re-verified against a live request
 while fixing this (this sandbox can't reach wowhead.com either).
 
 History of live symptoms so far (2026-08):
-  1. EVERY loot item was coming back as "Item #<id>" - a browser User-Agent
-     (REQUEST_HEADERS) fixed that.
-  2. After that, a raid-summary regenerate with several tracked buffs/
+  1. EVERY loot item was coming back as "Item #<id>". Two contributing
+     causes, both real:
+       a. aiohttp's default User-Agent ("Python/3.x aiohttp/3.x") is a
+          common trigger for an anti-bot challenge page - REQUEST_HEADERS'
+          browser UA addresses that class of block.
+       b. The actual confirmed mechanism (moderator, live in a browser):
+          visiting a bare item URL (e.g.
+          https://www.wowhead.com/item=32238) redirects to that item's
+          canonical slugged URL (.../item=32238/ring-of-calming-waves?
+          bonus=...) - and the &xml flag does NOT survive onto that
+          redirect target, so the request aiohttp actually ends up
+          completing lands on the plain HTML page, not the XML feed -
+          no <icon>/<name> tags anywhere in it, hence the placeholder,
+          for essentially every real item (anything Wowhead has a slug
+          for - i.e. all of them). _get_xml_text() below chases redirects
+          manually instead of letting aiohttp do it automatically, so it
+          can re-append &xml on every hop.
+  2. Separately: a raid-summary regenerate with several tracked buffs/
      debuffs (config.TRACKED_ABILITY_ICON_SPELL_IDS) started getting a hard
      403 Forbidden on EVERY spell lookup in that run, all in the same
-     traceback. The giveaway isn't the User-Agent this time - it's that
-     _build_uptime_lines calls get_spell() for each tracked ability back to
-     back with ZERO delay between requests (unlike _build_loot_lines /
-     icons.ensure_item_emoji, which already paces ITS calls at 0.3s - but
-     only around emoji creation, never between the wowhead fetches
-     themselves), and a raid summary can also fire a burst of item lookups
-     moments earlier for a big loot night. A burst of rapid same-origin
-     requests with no pacing at all is a textbook trigger for Cloudflare
-     (or similar) rate-limit/bot-management blocking - hence PACE_SECONDS
-     below, enforced once here so every current and future caller is
-     covered without having to remember to add sleeps at each call site.
+     traceback. The giveaway isn't the User-Agent or the redirect this
+     time - it's that _build_uptime_lines calls get_spell() for each
+     tracked ability back to back with ZERO delay between requests (unlike
+     _build_loot_lines / icons.ensure_item_emoji, which already paces ITS
+     calls at 0.3s - but only around emoji creation, never between the
+     wowhead fetches themselves), and a raid summary can also fire a burst
+     of item lookups moments earlier for a big loot night. A burst of
+     rapid same-origin requests with no pacing at all is a textbook
+     trigger for Cloudflare (or similar) rate-limit/bot-management
+     blocking - hence PACE_SECONDS below, enforced once here so every
+     current and future caller is covered without having to remember to
+     add sleeps at each call site.
 
-If placeholders/403s keep showing up after both of these, that's the next
+If placeholders/403s keep showing up after all of these, that's the next
 thing to check (Wowhead tightening the challenge further - a JS/cookie
-challenge no static header set or pacing can clear - at which point the
-XML feed may need replacing with Wowhead's tooltip JSON endpoint, or an
-official Blizzard Game Data API item lookup, instead).
+challenge no static header set, redirect-chasing, or pacing can clear - at
+which point the XML feed may need replacing with Wowhead's tooltip JSON
+endpoint, or an official Blizzard Game Data API item lookup, instead).
 
 Nothing here ever raises - a failed/unexpected lookup just falls back to a
 plain "Item #<id>" with no icon, same philosophy as icons.py.
@@ -50,13 +66,28 @@ import time
 import asyncio
 import logging
 import aiohttp
+from urllib.parse import urljoin
 
 from storage import ApplicationStore
 
 log = logging.getLogger("wow-apply-bot.wowhead")
 
-ITEM_XML_URL = "https://www.wowhead.com/item={item_id}&xml"
-SPELL_XML_URL = "https://www.wowhead.com/spell={spell_id}&xml"
+# /tbc/ selects Wowhead's TBC Classic database, NOT the same numeric ID
+# space the bare (retail) URLs used before this. Reported (2026-08,
+# moderator): early loot imports linked several items to the wrong item
+# entirely, which this explains - Wowhead's Classic content (Classic Era/
+# TBC/WotLK Classic) is reissued under its OWN item IDs, not reused from
+# retail's, so item ID NNNNN can be a totally different, unrelated item in
+# the two databases.
+# Gargul's export (running inside the actual TBC Classic client) always
+# gives the Classic-database ID - looking that up against retail (what the
+# bare /item= URL below the docstring used to do) either 404s or, worse,
+# silently returns whatever unrelated item happens to share that ID in
+# retail's numbering. This bot only ever needs TBC Classic data - see
+# config.py's CURRENT_TIER/PREVIOUS_TIER (BT/Hyjal, SSC/TK) - so /tbc/ is
+# hardcoded here rather than made configurable per game version.
+ITEM_XML_URL = "https://www.wowhead.com/tbc/item={item_id}&xml"
+SPELL_XML_URL = "https://www.wowhead.com/tbc/spell={spell_id}&xml"
 
 # Likely cause of the "every item comes back as Item #<id>" symptom (see
 # the module docstring): aiohttp's default User-Agent ("Python/3.x
@@ -82,6 +113,12 @@ REQUEST_HEADERS = {
 # icon) in a single run with nothing else to naturally space them out.
 PACE_SECONDS = 0.5
 
+# Bounds _get_xml_text's manual redirect-chasing (see its docstring) - one
+# hop covers the observed case (bare item/spell URL -> canonical slugged
+# URL), a few more is cheap headroom against a chain, and stops a redirect
+# loop from hanging a lookup forever.
+MAX_REDIRECTS = 5
+
 ICON_TAG_RE = re.compile(r"<icon[^>]*>([^<]+)</icon>", re.IGNORECASE)
 NAME_TAG_RE = re.compile(r"<name[^>]*>([^<]+)</name>", re.IGNORECASE)
 QUALITY_TAG_RE = re.compile(r'<quality id="(\d+)"', re.IGNORECASE)
@@ -92,10 +129,13 @@ FALLBACK_ICON = "inv_misc_questionmark"
 
 
 def item_wowhead_url(item_id: int) -> str:
-    """Wowhead's plain (non-expansion-specific) item URL - always resolves,
-    unlike the versioned /tbc/, /classic/, /wotlk/ paths which would need
-    their own verification."""
-    return f"https://www.wowhead.com/item={item_id}"
+    """Wowhead's TBC Classic item URL - must match ITEM_XML_URL's /tbc/
+    path (see that constant's comment): item_id here always came from
+    Gargul (a Classic-database ID), so linking to the bare/retail URL
+    instead would point at Wowhead's UNRELATED retail item that happens to
+    share that same numeric ID, not a 404 - the wrong-item bug this fixed
+    was silent for exactly that reason."""
+    return f"https://www.wowhead.com/tbc/item={item_id}"
 
 
 def item_icon_url(icon_slug: str | None) -> str:
@@ -105,19 +145,27 @@ def item_icon_url(icon_slug: str | None) -> str:
 
 
 def spell_wowhead_url(spell_id: int) -> str:
-    """Wowhead's plain (non-expansion-specific) spell URL - see item_wowhead_url."""
-    return f"https://www.wowhead.com/spell={spell_id}"
+    """Wowhead's TBC Classic spell URL - see item_wowhead_url."""
+    return f"https://www.wowhead.com/tbc/spell={spell_id}"
 
 
 class WowheadClient:
     def __init__(self, cache_path: str = "wowhead_item_cache.json"):
-        # Item name/icon/quality never changes once looked up, so a
-        # SUCCESSFUL lookup is cached permanently (unlike wcl_client's
-        # report cache, a real result here never needs invalidating). A
-        # FAILED lookup (icon_slug None - see _fetch's fallback) is
-        # deliberately never written here - see get_item()'s docstring for
-        # why a fallback used to get cached just as permanently as a real
-        # result, which is exactly backwards.
+        # Item name/icon/quality never changes once looked up AGAINST THE
+        # SAME URL, so a successful lookup is cached permanently under
+        # normal operation (unlike wcl_client's report cache, a real result
+        # here doesn't go stale on its own). A FAILED lookup (icon_slug
+        # None - see _fetch's fallback) is deliberately never written here -
+        # see get_item()'s docstring for why a fallback used to get cached
+        # just as permanently as a real result, which is exactly backwards.
+        #
+        # That "permanent" assumption breaks if the URL itself changes
+        # meaning, though - see ITEM_XML_URL's comment: this used to point
+        # at retail Wowhead, and every item successfully resolved under
+        # that (not just the failures the icon_slug-None check already
+        # retries) is now cached against the WRONG item's data, silently -
+        # invalidate_all() exists for exactly that one-time migration, see
+        # cogs/raid_summary.py's raidsummary_refresh_wowhead_cache.
         self._cache = ApplicationStore(path=cache_path)
         # Serializes + paces every outbound wowhead.com request (item and
         # spell alike) - see PACE_SECONDS/the module docstring. A lock, not
@@ -127,12 +175,54 @@ class WowheadClient:
         self._pace_lock = asyncio.Lock()
         self._last_request_at = 0.0
 
+    def invalidate_all(self):
+        """Wipes every cached item AND spell lookup, forcing a fresh fetch
+        next time each is needed - see __init__'s comment on why a
+        permanently-cached "successful" result can still be wrong (a data-
+        source change, not just a fixed transient failure). Safe to call
+        any time - callers just pay for a full re-fetch on their next
+        lookup of each item/spell, same cost as a cold cache."""
+        self._cache.clear()
+
     async def _pace(self):
         async with self._pace_lock:
             wait = self._last_request_at + PACE_SECONDS - time.monotonic()
             if wait > 0:
                 await asyncio.sleep(wait)
             self._last_request_at = time.monotonic()
+
+    async def _get_xml_text(self, session: aiohttp.ClientSession, url: str) -> str:
+        """
+        GETs `url` (already ending in &xml), chasing redirects MANUALLY
+        instead of via aiohttp's default allow_redirects=True - see the
+        module docstring's #1b. Wowhead redirects a bare item/spell URL to
+        its canonical slugged one once it knows the slug, and the &xml
+        flag does not survive onto that redirect target, so simply letting
+        aiohttp follow it lands on the plain HTML page (no <icon>/<name>
+        tags anywhere in it) instead of the XML feed - this is the
+        confirmed root cause of "every item comes back as Item #<id>".
+        Each hop re-appends &xml to whatever Location Wowhead sends,
+        bounded at MAX_REDIRECTS so a redirect loop can't hang a lookup
+        forever. Raises on any request failure or too many redirects -
+        callers already wrap _fetch/_fetch_spell in a try/except for
+        exactly that, same fallback-to-placeholder contract as before.
+        """
+        current_url = url
+        for _ in range(MAX_REDIRECTS):
+            await self._pace()  # paces every hop, not just the first request - a redirect still hits wowhead.com
+            async with session.get(current_url, headers=REQUEST_HEADERS, allow_redirects=False) as resp:
+                if resp.status in (301, 302, 303, 307, 308):
+                    location = resp.headers.get("Location")
+                    if not location:
+                        resp.raise_for_status()  # a redirect status with no Location is malformed - surface it
+                    next_url = urljoin(current_url, location)
+                    if "&xml" not in next_url and not next_url.endswith("xml"):
+                        next_url += "&xml"
+                    current_url = next_url
+                    continue
+                resp.raise_for_status()
+                return await resp.text()
+        raise RuntimeError(f"Too many redirects resolving {url}")
 
     async def get_item(self, item_id: int) -> dict:
         """Returns {"id", "name", "icon_slug", "icon_url", "wowhead_url", "quality"}.
@@ -169,11 +259,8 @@ class WowheadClient:
         }
 
         try:
-            await self._pace()
             async with aiohttp.ClientSession() as session:
-                async with session.get(ITEM_XML_URL.format(item_id=item_id), headers=REQUEST_HEADERS) as resp:
-                    resp.raise_for_status()
-                    text = await resp.text()
+                text = await self._get_xml_text(session, ITEM_XML_URL.format(item_id=item_id))
         except Exception:
             log.warning("Wowhead lookup failed for item %s - using placeholder", item_id, exc_info=True)
             return fallback
@@ -224,11 +311,8 @@ class WowheadClient:
         }
 
         try:
-            await self._pace()
             async with aiohttp.ClientSession() as session:
-                async with session.get(SPELL_XML_URL.format(spell_id=spell_id), headers=REQUEST_HEADERS) as resp:
-                    resp.raise_for_status()
-                    text = await resp.text()
+                text = await self._get_xml_text(session, SPELL_XML_URL.format(spell_id=spell_id))
         except Exception:
             log.warning("Wowhead lookup failed for spell %s - using placeholder", spell_id, exc_info=True)
             return fallback

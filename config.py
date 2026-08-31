@@ -364,6 +364,34 @@ TRACKED_ABILITY_ICON_SPELL_IDS = {
 TOP_INTERRUPTERS_ICON_SPELL_ID = 1766
 TOP_DISPELLERS_ICON_SPELL_ID = 17201
 
+# Hardcoded emoji overrides for a handful of the icons above - format
+# "<:emoji_name:emoji_id>" (Discord's own inline-emoji syntax), for an
+# application emoji the moderator has ALREADY manually created (via
+# /add-emoji or Discord's own app-emoji settings), bypassing
+# wowhead.get_spell()/icons.ensure_spell_emoji() entirely for these keys.
+# Added after Wowhead's spell-icon lookup started 403ing under load (see
+# wowhead.py's module docstring) - these seven are the ones that fired
+# every single raid-summary post (TRACKED_ABILITY_ICON_SPELL_IDS' non-buff
+# entries + both TOP_*_ICON_SPELL_ID constants), so pre-seeding them here
+# means those requests never happen at all rather than relying on the
+# pacing fix to keep them under Wowhead's radar. Judgement of Wisdom/Light
+# aren't here (no override given) - those two still resolve via Wowhead
+# same as before. Keyed by the exact same TRACKED_DEBUFFS/TRACKED_BUFFS
+# name for the tracked-ability entries; TOP_INTERRUPTERS_ICON_EMOJI/
+# TOP_DISPELLERS_ICON_EMOJI are separate plain constants since those two
+# aren't part of that name-keyed dict. See _resolve_spell_icon/
+# _build_uptime_lines in cogs/raid_summary.py for how these get checked
+# before ever falling back to Wowhead.
+TRACKED_ABILITY_ICON_EMOJI = {
+    "Sunder Armor": "<:Ability_Warrior_Sunder:1543989036387926078>",
+    "Expose Armor": "<:Ability_Warrior_Riposte:1543989032063869031>",
+    "Faerie Fire": "<:Spell_Nature_FaerieFire:1543989030960635984>",
+    "Curse of the Elements": "<:Spell_Shadow_ChillTouch:1543989029844946984>",
+    "Curse of Recklessness": "<:Spell_Shadow_UnholyStrength:1543989028783657000>",
+}
+TOP_INTERRUPTERS_ICON_EMOJI = "<:Ability_Kick:1543989033141674157>"
+TOP_DISPELLERS_ICON_EMOJI = "<:SPELL_HOLY_DISPELMAGIC:1543989034949419068>"
+
 # --- Off-tier content excluded from EVERY WCL fetch (wcl_client.get_report_summary) ---
 # Some guilds keep farming old raid content (badges/gold/legacy gear)
 # alongside their current tier, in the SAME WCL report as the actual raid

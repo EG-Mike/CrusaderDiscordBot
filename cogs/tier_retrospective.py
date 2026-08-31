@@ -21,7 +21,16 @@ Design, per discussion:
     of its way to bank boss-only damage/healing and raw overheal numbers
     ahead of time (see its _assemble_and_post_summary) - so this could be
     built entirely against cache, no matter how many reports the tier
-    ends up having.
+    ends up having. "Most Loot Received" is the one stat NOT sourced from
+    WCL at all (WCL has no reliable per-item loot-award event - see
+    gargul_loot.py's own docstring) - it reads each report's raw Gargul
+    loot rows straight off raid_summary.py's own post record
+    (get_loot_rows_for_report), still zero new network calls either way.
+    Older reports posted before that field was persisted just contribute
+    no loot data (not an error) - see that method's docstring, which is
+    also why this naturally only ever covers the CURRENT tier onward and
+    never SSC/TK's history: those reports were posted before loot_rows
+    existed at all.
   - Only raid_type == "main" reports count (get_tier_reports's default) -
     an interactively-posted alt/fun raid for the same tier shouldn't
     pollute tier-wide records like fastest clear, attendance, or the
@@ -235,6 +244,14 @@ class TierRetrospectiveCog(commands.Cog):
                 "code": code, "summary": summary, "span": span,
                 "fights_by_encounter": fights_by_encounter, "boss_only": boss_only,
                 "composition": composition, "session_id": session_by_code.get(code, code),
+                # Not a WCL response like everything else gathered here (see
+                # the module docstring's "zero new WCL calls" design) -
+                # raid_cog's own store, already loaded, so still free. Older
+                # reports posted before loot_rows started being persisted
+                # (see get_loot_rows_for_report's docstring) just come back
+                # [] - their loot silently doesn't count, same as this
+                # feature not existing for them, rather than erroring.
+                "loot_rows": raid_cog.get_loot_rows_for_report(code),
             })
 
         if not reports:
@@ -353,7 +370,7 @@ class TierRetrospectiveCog(commands.Cog):
         # --- personal: tier-wide sums ---------------------------------------
 
         damage_all, damage_boss, healing_net, healing_gross = {}, {}, {}, {}
-        deaths_total, potion_totals, attendance_counts = {}, {}, {}
+        deaths_total, potion_totals, attendance_counts, loot_counts = {}, {}, {}, {}
 
         for r in reports:
             s = r["summary"]
@@ -369,6 +386,16 @@ class TierRetrospectiveCog(commands.Cog):
                 deaths_total[name] = deaths_total.get(name, 0) + v
             for name, v in (s.get("potion_casts") or {}).items():
                 potion_totals[name] = potion_totals.get(name, 0) + v
+            # Every row counts as 1 item toward its winner, mainspec or off
+            # - not attributed to whoever's tracking loot, so a disenchant
+            # winner name (whatever the guild's Gargul setup records that
+            # as) shows up here like any other "character" would, same as
+            # cogs/raid_summary.py's own per-raid loot list never special-
+            # cases it either.
+            for row in r["loot_rows"]:
+                character = row.get("character")
+                if character:
+                    loot_counts[character] = loot_counts.get(character, 0) + 1
 
         # Attendance is counted per SESSION (raid week), not per report -
         # a raider who only made SSC's night in a week split across two
@@ -420,6 +447,7 @@ class TierRetrospectiveCog(commands.Cog):
             "deaths_total": deaths_total,
             "potion_totals": potion_totals,
             "attendance_counts": attendance_counts,
+            "loot_counts": loot_counts,
         }
 
     # --- rendering -------------------------------------------------------
@@ -541,6 +569,13 @@ class TierRetrospectiveCog(commands.Cog):
         )
         if healing_net_block:
             blocks.append(healing_net_block)
+
+        loot_block = self._build_top_block(
+            "Most Loot Received", "🎁", agg["loot_counts"], classes_map, guild,
+            lambda v: f"{int(v)} item{'s' if int(v) != 1 else ''}", top_n=5,
+        )
+        if loot_block:
+            blocks.append(loot_block)
 
         attendance_block = self._build_attendance_block(agg, guild)
         if attendance_block:
