@@ -303,6 +303,54 @@ class RaidLogsCog(commands.Cog):
                 return message_id, entry
         return None
 
+    def _find_summarized_main_duplicate(self, current_message_id: int, description: str, started_at: datetime):
+        """
+        Returns (message_id, entry) for another ALREADY-SUMMARIZED entry
+        tagged "main" with the same description, started within
+        config.RAID_LOG_DUPLICATE_WINDOW_MINUTES - i.e. this looks like a
+        second logger's copy of a raid that's already been fully processed
+        as the Main Raid. None if nothing matches.
+
+        Deliberately separate from _find_duplicate_entry (which only
+        matches NOT-yet-summarized entries and is used at ingestion time to
+        fold same-night duplicates into one repost) - multiple people
+        logging the same raid is wanted here (see the module docstring:
+        redundancy against a corrupted log), so nothing at ingestion time
+        should suppress a second repost. The risk is specifically tagging
+        a SECOND entry "Main Raid" and Summarizing it once the first
+        already has been: _run_main_automation calls
+        attendance_cog._do_addlog() unconditionally (it has no idea two
+        entries might be the same raid night - see its own docstring, it
+        always appends a new log entry), so a second main-raid Summarize
+        adds a SECOND attendance-window entry for what's really one raid
+        night (skewing everyone's attendance % against an inflated window)
+        and, if a moderator also posts /raidsummary for both report codes,
+        a second #raid-summary thread plus a second /tier-recap session
+        double-counting that night's kills/damage/loot/medals unless
+        merged with /raidsummary-merge-weeks. This check is used to WARN
+        (see _on_summarize) rather than block - an organizer/moderator who
+        deliberately wants a second Main pass (e.g. the first log turned
+        out corrupted) needs to still be able to do it, just informed.
+        """
+        if not description:
+            return None
+        window = timedelta(minutes=config.RAID_LOG_DUPLICATE_WINDOW_MINUTES)
+        for message_id in reversed(self._get_history_ids()):
+            if message_id == current_message_id:
+                continue
+            entry = self.bot.store.get(message_id)
+            if not entry or entry.get("tag") != "main" or not entry.get("summarized"):
+                continue
+            if (entry.get("description") or "").strip().lower() != description.strip().lower():
+                continue
+            try:
+                existing_started = datetime.fromisoformat(entry["started_at"])
+            except (KeyError, ValueError):
+                continue
+            if abs(started_at - existing_started) <= window:
+                return message_id, entry
+        return None
+
     # --- rendering ----------------------------------------------------------
 
     def _tier_guess(self, description: str):
@@ -504,6 +552,7 @@ class RaidLogsCog(commands.Cog):
         entry["tag"] = None
         entry["tagged_by"] = None
         entry["tagged_at"] = None
+        entry["auto_summarize_dup_flagged"] = False
         self.bot.store.set(interaction.message.id, **entry)
         await interaction.response.edit_message(embed=self._render_embed(entry), view=self._build_view(entry))
 
@@ -522,9 +571,27 @@ class RaidLogsCog(commands.Cog):
             await interaction.response.send_message("Tag this log Main Raid or Alt Raid first.", ephemeral=True)
             return
 
+        warning = ""
+        if entry.get("tag") == "main":
+            duplicate = self._find_summarized_main_duplicate(
+                interaction.message.id, entry.get("description"), datetime.fromisoformat(entry["started_at"])
+            )
+            if duplicate is not None:
+                dup_entry = duplicate[1]
+                warning = (
+                    f"\n\n⚠️ **Heads up**: report `{dup_entry.get('report_code')}` (same zone, started around the "
+                    "same time) is ALREADY summarized as Main Raid - this looks like a second logger's copy of "
+                    "the same raid, not a separate one. Summarizing this too will add a SECOND attendance-window "
+                    "entry for the same night and, if you also post `/raidsummary` for it, a second #raid-summary "
+                    "thread double-counting this raid in `/tier-recap` unless merged with "
+                    "`/raidsummary-merge-weeks` afterward. Proceeded anyway (you know your own logs best) - if "
+                    "that wasn't intentional, use #attendance-check's remove-log path to undo the extra "
+                    "attendance entry."
+                )
+
         await interaction.response.defer(ephemeral=True, thinking=True)
         await self._run_summarize(interaction.guild, interaction.message, entry, triggered_by=interaction.user, is_auto=False)
-        await interaction.followup.send("Done.", ephemeral=True)
+        await interaction.followup.send(f"Done.{warning}", ephemeral=True)
 
     # --- Summarize automation ---------------------------------------------
 
@@ -715,6 +782,33 @@ class RaidLogsCog(commands.Cog):
                 message = await channel.fetch_message(message_id)
             except (discord.NotFound, discord.Forbidden):
                 continue
+
+            # Unlike a manual Summarize click (_on_summarize), nobody's
+            # watching this run - so a likely-duplicate Main Raid log
+            # (see _find_summarized_main_duplicate's docstring on the
+            # double-counting risk) is left for a human to decide instead
+            # of silently auto-processing it. Flagged once (not re-flagged
+            # every 10-minute loop tick) via a plain channel message a
+            # moderator can act on with the normal Summarize Raid button
+            # whenever they're ready.
+            if entry.get("tag") == "main" and not entry.get("auto_summarize_dup_flagged"):
+                duplicate = self._find_summarized_main_duplicate(
+                    message_id, entry.get("description"), datetime.fromisoformat(entry["started_at"])
+                )
+                if duplicate is not None:
+                    entry["auto_summarize_dup_flagged"] = True
+                    self.bot.store.set(message_id, **entry)
+                    try:
+                        await channel.send(
+                            f"⚠️ {message.jump_url} looks like a second logger's copy of an already-summarized "
+                            f"Main Raid (report `{duplicate[1].get('report_code')}`) - skipping auto-summarize "
+                            "for it so it doesn't double-count attendance/tier stats. A moderator can still "
+                            "click **Summarize Raid** on it manually if that's actually wanted."
+                        )
+                    except Exception:
+                        log.warning("Failed to post duplicate-Main-Raid auto-summarize flag", exc_info=True)
+                    continue
+
             log.info(
                 "Auto-summarizing raid log %s (tagged '%s', past today's %s cutoff, never manually Summarized)",
                 entry["report_code"], entry["tag"], config.RAID_LOG_AUTO_SUMMARIZE_TIME,
