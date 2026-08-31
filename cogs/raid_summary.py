@@ -172,6 +172,7 @@ from discord.ext import commands
 import config
 import icons
 import gargul_loot
+import wowhead
 from storage import ApplicationStore
 
 log = logging.getLogger("wow-apply-bot.raidsummary")
@@ -922,14 +923,43 @@ class RaidSummaryCog(commands.Cog):
 
     # --- data assembly -----------------------------------------------------
 
+    async def _get_item_data(self, item_id: int) -> dict:
+        """
+        Item name/icon/quality for `item_id`, preferring self.bot.blizzard
+        (Blizzard's own Game Data API - see blizzard_client.py) over
+        self.bot.wowhead (wowhead.py's scraped XML feed) when the former is
+        configured - added after Wowhead's feed turned out to be IP-blocked
+        outright for this bot's host (see wowhead.py's module docstring).
+        bot.blizzard is None when BLIZZARD_CLIENT_ID/SECRET aren't set, so
+        this is a no-op fallback-to-Wowhead for anyone who hasn't set that
+        up - same behavior as before this existed.
+
+        Falls all the way through to Wowhead if Blizzard's lookup didn't
+        fully resolve (rather than trusting a partial Blizzard result) -
+        cheap insurance against one source having a gap (e.g. an item not
+        yet in Blizzard's Classic namespace) the other might still cover.
+        Always adds "wowhead_url" itself (from wowhead.item_wowhead_url(),
+        a pure string build, not a fetch) regardless of which source
+        resolved the name/icon/quality - see get_item()'s own docstring in
+        blizzard_client.py for why that client has no opinion on it.
+        """
+        result = None
+        if self.bot.blizzard is not None:
+            result = await self.bot.blizzard.get_item(item_id)
+            if result.get("icon_slug") is None:
+                result = None  # didn't fully resolve - fall through to Wowhead instead of trusting a placeholder
+        if result is None:
+            result = await self.bot.wowhead.get_item(item_id)
+        return {**result, "wowhead_url": wowhead.item_wowhead_url(item_id)}
+
     async def _resolve_loot(self, loot_rows: list) -> list:
-        """Attaches resolved Wowhead item data to each Gargul loot row."""
+        """Attaches resolved item data (see _get_item_data) to each Gargul loot row."""
         item_cache = {}
         resolved = []
         for row in loot_rows:
             item_id = row["item_id"]
             if item_id not in item_cache:
-                item_cache[item_id] = await self.bot.wowhead.get_item(item_id)
+                item_cache[item_id] = await self._get_item_data(item_id)
             resolved.append({**row, "item": item_cache[item_id]})
         return resolved
 
@@ -1305,7 +1335,7 @@ class RaidSummaryCog(commands.Cog):
 
         icon_prefix = ""
         for item_id in config.TRACKED_POTION_ITEM_IDS.values():
-            item = await self.bot.wowhead.get_item(item_id)
+            item = await self._get_item_data(item_id)
             if item.get("icon_url"):
                 icon_prefix += await icons.ensure_item_emoji(self.bot, existing_by_name, item_id, item["icon_url"])
         return self._build_ranked_block(
@@ -2474,6 +2504,45 @@ class RaidSummaryCog(commands.Cog):
             "longer than usual) the next time each one is needed.",
             ephemeral=True,
         )
+
+    @app_commands.command(
+        name="raidsummary-test-blizzard",
+        description="Step-by-step test of a single item against the Blizzard Game Data API (moderator only)",
+    )
+    @app_commands.describe(item="Item ID to test (defaults to a real BT item already seen in this guild's logs)")
+    async def raidsummary_test_blizzard(self, interaction: discord.Interaction, item: int = 30864):
+        """
+        Diagnostic-only command for blizzard_client.py, which was written
+        without ever being able to reach api.blizzard.com/oauth.battle.net
+        from the environment that built it (see that file's module
+        docstring) - the OAuth flow, namespace, and JSON field names are
+        all built from Blizzard's documented shapes plus a real working
+        third-party client's source, not independently confirmed live.
+        This runs the full lookup step by step (token, item endpoint,
+        media endpoint, parsed result) and reports each one, including raw
+        response bodies, so a namespace/field-name mismatch is immediately
+        visible and fixable instead of just silently falling back to a
+        placeholder the way a normal /raidsummary run would (by design -
+        see get_item()'s docstring).
+        """
+        if not await self._is_mod(interaction.guild, interaction.user.id):
+            await interaction.response.send_message("Only moderators can run this.", ephemeral=True)
+            return
+        if self.bot.blizzard is None:
+            await interaction.response.send_message(
+                "BLIZZARD_CLIENT_ID/BLIZZARD_CLIENT_SECRET aren't set - the bot falls back to Wowhead entirely "
+                "until those are configured. Register a free client at https://develop.battle.net/access/clients, "
+                "set both env vars, and restart the bot to enable this.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        report = await self.bot.blizzard.diagnose_item(item)
+        # Discord's 2000-char message limit - a long raw-body dump can
+        # exceed it, so this chunks rather than truncating silently.
+        for i in range(0, len(report), 1900):
+            await interaction.followup.send(report[i:i + 1900], ephemeral=True)
 
     def _diagnose_encounter_ids(self, fights: list) -> str:
         """
