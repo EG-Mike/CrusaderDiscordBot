@@ -7,17 +7,16 @@ WOWHEAD_LINK_RE), not necessarily as the actual data source.
 How it resolves a link (see _resolve_link): for an ITEM link, prefers
 self.bot.blizzard (Blizzard's own Game Data API) when configured, falling
 back to Wowhead's XML feed otherwise - same prefer-Blizzard pattern
-cogs/raid_summary.py's item lookups already use, added 2026-08 after
-Wowhead's own fallback-on-failure path was found to silently return a
-fake-successful placeholder icon for a failed lookup (see wowhead.py's
-module docstring, 2026-08 entry #3) - Blizzard's item data has no such
-issue. For a SPELL link, Wowhead's XML feed stays the primary/name
-source: Blizzard's classic namespace was confirmed (2026-08, moderator
-report + the /raidsummary-test-spell diagnostic) to 404 even for real,
-valid TBC spell IDs, so there's no reliable Blizzard name source for
-spells the way there is for items - Blizzard's spell-icon lookup is still
-tried as a bonus icon-only override on top of Wowhead's name, in case a
-particular ability happens to resolve there.
+cogs/raid_summary.py's item lookups already use, since Wowhead's own
+fallback-on-failure path could silently return a fake-successful
+placeholder icon for a failed lookup (see wowhead.py's module docstring's
+issue #3) - Blizzard's item data has no such issue. For a SPELL link,
+Wowhead's XML feed stays the primary/name source: Blizzard's classic
+namespace 404s even for real, valid TBC spell IDs (confirmed via the
+/raidsummary-test-spell diagnostic), so there's no reliable Blizzard name
+source for spells the way there is for items - Blizzard's spell-icon
+lookup is still tried as a bonus icon-only override on top of Wowhead's
+name, in case a particular ability happens to resolve there.
 
 Wowhead's XML endpoint itself: the regular page's og:image meta tag is a
 user-submitted SCREENSHOT, not the icon - so this doesn't scrape the page.
@@ -85,7 +84,7 @@ class EmojiAdminCog(commands.Cog):
         Wowhead lookup - see _resolve_link for where Blizzard's Game Data
         API is tried first/alongside this.
 
-        Confirmed live (2026-08): Wowhead's &xml feed 403s for any
+        Confirmed live: Wowhead's &xml feed 403s for any
         Classic-era access, whether requested via the modern
         www.wowhead.com/<expansion>/ path or the legacy per-expansion
         subdomain (tbc.wowhead.com, classic.wowhead.com, ...) - both
@@ -124,10 +123,10 @@ class EmojiAdminCog(commands.Cog):
         Data API (self.bot.blizzard) over Wowhead's XML feed when
         configured, same prefer-Blizzard/fall-back-to-Wowhead pattern
         cogs/raid_summary.py's _get_item_data/_get_spell_icon_url already
-        use - but ONLY for items. Blizzard's classic spell endpoint was
-        confirmed live (2026-08, via the moderator-only
-        /raidsummary-test-spell diagnostic) to 404 even for real, valid
-        TBC spell IDs - so unlike items, there's no reliable Blizzard
+        use - but ONLY for items. Blizzard's classic spell endpoint
+        404s even for real, valid TBC spell IDs (confirmed live via the
+        moderator-only /raidsummary-test-spell diagnostic) - so unlike
+        items, there's no reliable Blizzard
         source for a spell's NAME (get_spell_icon() deliberately never
         returns one anyway - see its own docstring for why). Spells stay
         on Wowhead's XML fetch as the primary/name source for that reason;

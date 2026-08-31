@@ -470,8 +470,8 @@ class ApplyCog(commands.Cog):
 
         Returns None if bot.blizzard isn't configured, if
         config.ARMORY_BLOCK_ENABLED is False (see that constant's comment -
-        defaulted off 2026-08 due to a confirmed Blizzard-side bug serving
-        stale Classic-Era snapshots for TBC Anniversary-migrated realms;
+        defaulted off due to a confirmed Blizzard-side bug serving stale
+        Classic-Era snapshots for TBC Anniversary-migrated realms;
         this short-circuits before any API call is made, so flipping it off
         also means zero extra Blizzard API traffic per application), or if
         Blizzard has nothing for this character under this realm slug (not
@@ -542,9 +542,9 @@ class ApplyCog(commands.Cog):
                 lines.append("**Equipped Gear** *(live from Blizzard Armory)*\n" + value)
 
         if lines:
-            # Confirmed live (2026-08, real character) that Blizzard's
-            # profile snapshot for a recently-migrated TBC Anniversary
-            # realm can be stale (returned this character's old Classic
+            # Confirmed live that Blizzard's profile snapshot for a
+            # recently-migrated TBC Anniversary realm can be stale
+            # (returned this character's old Classic
             # Era gear, not their current TBC loadout) despite a 200 OK
             # under the correct namespace - nothing this bot can detect or
             # fix (see get_character_specializations()'s docstring), so

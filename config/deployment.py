@@ -13,11 +13,11 @@ All zone/encounter IDs below were meant to be pulled directly from WCL's
 `worldData.zones` query against the fresh.warcraftlogs.com host, not
 guessed - but CURRENT_TIER's (BT/Hyjal) values from that were simply wrong
 (every boss ID off by exactly 50000, zone_id off entirely - confirmed and
-corrected 2026-08 via /raidsummary-refresh-report's diagnostic breakdown
-against a real report, see CURRENT_TIER's own comment for how this was
-found: it's why boss kills never showed up in a raid summary for the whole
-time this tier's numbers were wrong). Treat any not-yet-live tier's IDs as
-this file's INTENT, not a guarantee - FUTURE_TIERS' Sunwell Plateau entry
+corrected via /raidsummary-refresh-report's diagnostic breakdown against a
+real report, see CURRENT_TIER's own comment for how this was found: it's
+why boss kills never showed up in a raid summary for the whole time this
+tier's numbers were wrong). Treat any not-yet-live tier's IDs as this
+file's INTENT, not a guarantee - FUTURE_TIERS' Sunwell Plateau entry
 has the same suspicious shape and is flagged unverified for exactly this
 reason.
 """
@@ -161,9 +161,8 @@ SPEC_ICON_URLS = {
 
     # Druid
     "Druid:Balance":       "https://wow.zamimg.com/images/wow/icons/large/spell_nature_starfall.jpg",
-    # Key must match CLASS_SPECS' "Feral Combat" exactly (was "Druid:Feral" -
-    # never matched, so this icon silently never resolved anywhere it was
-    # used, not just here - fixed 2026-08).
+    # Key must match CLASS_SPECS' "Feral Combat" exactly - a mismatched key
+    # here (e.g. "Druid:Feral") silently never resolves anywhere it's used.
     "Druid:Feral Combat":  "https://wow.zamimg.com/images/wow/icons/large/ability_racial_bearform.jpg",
     "Druid:Restoration":   "https://wow.zamimg.com/images/wow/icons/large/spell_nature_healingtouch.jpg",
     #add guardian druid (feral tank)
@@ -236,8 +235,8 @@ ARCHIVE_CHANNEL_ID = 1337906439066488914
 DEBUG_COMMANDS_ENABLED = False
 
 # Armory block (equipped gear + talent build) shown on the /apply review
-# card - see cogs/apply.py's _compute_armory_block. Defaulted OFF
-# (2026-08): Blizzard's Character Equipment/Specializations endpoints
+# card - see cogs/apply.py's _compute_armory_block. Defaulted OFF:
+# Blizzard's Character Equipment/Specializations endpoints
 # return HTTP 200 for TBC Anniversary-migrated realms, but the DATA itself
 # is a stale Classic-Era snapshot rather than the character's current
 # state - confirmed live against a real character (their old Classic Era
@@ -327,14 +326,11 @@ PARSE_HIGHLIGHT_THRESHOLD = 99
 # The three Judgements (Wisdom/Light/the Crusader) belong here, NOT in
 # TRACKED_BUFFS below, despite being granted by a PALADIN - all three are
 # auras a Judgement places ON THE TARGET (the boss), which is what then
-# grants mana/healing/holy-damage to whoever hits it; the aura itself was
-# never on a friendly player. Fixed 2026-08 - they were originally listed
-# under TRACKED_BUFFS (WCL table dataType: Buffs, hostilityType:
-# Friendlies), a table they could never appear in as a result, which is
-# why "Buff/Debuff Uptime" silently never showed any Judgement line at all
-# (get_report_aura_uptime's per-ability query came back empty for all
-# three, and _build_uptime_lines omits an ability entirely once BOTH its
-# percentages are None - see that method's docstring).
+# grants mana/healing/holy-damage to whoever hits it; the aura itself is
+# never on a friendly player. Listing them in TRACKED_BUFFS instead (a
+# table dataType: Buffs, hostilityType: Friendlies) is a table they can
+# never appear in, so "Buff/Debuff Uptime" would silently show no
+# Judgement line at all - see _build_uptime_lines' docstring.
 TRACKED_DEBUFFS = [
     "Sunder Armor", "Expose Armor", "Faerie Fire", "Curse of the Elements", "Curse of Recklessness",
     "Judgement of Wisdom", "Judgement of Light", "Judgement of the Crusader",
@@ -349,8 +345,8 @@ TRACKED_BUFFS = []
 
 # Subset of TRACKED_DEBUFFS/TRACKED_BUFFS whose "all fights" (bosses+trash)
 # uptime % isn't shown at all - just the boss-fights-only number - because
-# trash uptime for these isn't a meaningful/wanted stat (moderator request,
-# 2026-08): the "X% bosses / Y% all fights" line _build_uptime_lines
+# trash uptime for these isn't a meaningful/wanted stat: the "X% bosses /
+# Y% all fights" line _build_uptime_lines
 # normally renders becomes just "X% bosses" for anything in this set. The
 # underlying WCL fetch (wcl_client.get_report_aura_uptime) still computes
 # all_pct for these same as any other tracked ability - this only affects
@@ -361,10 +357,10 @@ TRACKED_BUFFS = []
 TRACKED_BOSS_ONLY_ABILITIES = {"Judgement of Wisdom", "Judgement of Light", "Judgement of the Crusader"}
 
 # Potions counted together as one "Top potion users" leaderboard. Matched
-# by SPELL ID (unlike TRACKED_DEBUFFS/TRACKED_BUFFS above), not name -
-# confirmed live (2026-08) that a potion's own use-cast never appears in
-# WCL's Casts table at all (checked a real 38-entry Casts table for "Sunder
-# Armor"-style ability-name matching - zero hits), only the temporary BUFF
+# by SPELL ID (unlike TRACKED_DEBUFFS/TRACKED_BUFFS above), not name - a
+# potion's own use-cast never appears in WCL's Casts table at all (checked
+# a real 38-entry Casts table for "Sunder Armor"-style ability-name
+# matching - zero hits), only the temporary BUFF
 # it grants does. wcl_client.get_report_summary tracks usage via that buff
 # instead (WCL table dataType: Buffs, hostilityType: Friendlies, filtered
 # by this exact spell ID - filtering regroups the result to one row per
@@ -397,7 +393,6 @@ TRACKED_ABILITY_ICON_SPELL_IDS = {
     "Faerie Fire": 25602,
     "Curse of the Elements": 44332,
     "Curse of Recklessness": 16231,
-    # Corrected (2026-08, moderator) - previously 20354/27162.
     "Judgement of Wisdom": 27164,
     "Judgement of Light": 27163,
     # No entry for "Judgement of the Crusader" - moderator didn't give an
@@ -418,31 +413,26 @@ TOP_DISPELLERS_ICON_SPELL_ID = 17201
 # application emoji the moderator has ALREADY manually created (via
 # /add-emoji or Discord's own app-emoji settings), bypassing
 # wowhead.get_spell()/icons.ensure_spell_emoji() entirely for these keys.
-# Added after Wowhead's spell-icon lookup started 403ing under load (see
-# wowhead.py's module docstring) - these seven are the ones that fired
-# every single raid-summary post (TRACKED_ABILITY_ICON_SPELL_IDS' non-buff
-# entries + both TOP_*_ICON_SPELL_ID constants), so pre-seeding them here
-# means those requests never happen at all rather than relying on the
-# pacing fix to keep them under Wowhead's radar. The Judgements aren't
-# here (no override given) - those resolve via bot.blizzard (Blizzard's
-# spell-media endpoint) when configured, falling back to Wowhead
-# otherwise - see cogs/raid_summary.py's _get_spell_icon. Keyed by the
-# exact same TRACKED_DEBUFFS/TRACKED_BUFFS
-# name for the tracked-ability entries; TOP_INTERRUPTERS_ICON_EMOJI/
-# TOP_DISPELLERS_ICON_EMOJI are separate plain constants since those two
-# aren't part of that name-keyed dict. See _resolve_spell_icon/
-# _build_uptime_lines in cogs/raid_summary.py for how these get checked
-# before ever falling back to Wowhead.
+# The first five exist because Wowhead's spell-icon lookup started 403ing
+# under load (see wowhead.py's module docstring) and these are the ones
+# that fired on every single raid-summary post (TRACKED_ABILITY_ICON_
+# SPELL_IDS' non-buff entries + both TOP_*_ICON_SPELL_ID constants), so
+# pre-seeding them here means those requests never happen at all. The
+# three Judgements are overridden for a different reason: Blizzard's
+# spell-media endpoint (via bot.blizzard, tried before falling back to
+# Wowhead) returns a wrong/generic icon for them - see blizzard_client.py's
+# get_spell_icon()/diagnose_spell() docstrings. Keyed by the exact same
+# TRACKED_DEBUFFS/TRACKED_BUFFS name for the tracked-ability entries;
+# TOP_INTERRUPTERS_ICON_EMOJI/TOP_DISPELLERS_ICON_EMOJI are separate plain
+# constants since those two aren't part of this name-keyed dict. See
+# _resolve_spell_icon/_build_uptime_lines in cogs/raid_summary.py for how
+# these get checked before ever falling back to Wowhead.
 TRACKED_ABILITY_ICON_EMOJI = {
     "Sunder Armor": "<:Ability_Warrior_Sunder:1543989036387926078>",
     "Expose Armor": "<:Ability_Warrior_Riposte:1543989032063869031>",
     "Faerie Fire": "<:Spell_Nature_FaerieFire:1543989030960635984>",
     "Curse of the Elements": "<:Spell_Shadow_ChillTouch:1543989029844946984>",
     "Curse of Recklessness": "<:Spell_Shadow_UnholyStrength:1543989028783657000>",
-    # Added 2026-08 (moderator, manually uploaded) after Blizzard's
-    # spell-media endpoint was confirmed to be returning a wrong/generic
-    # icon for these three via bot.blizzard - see blizzard_client.py's
-    # get_spell_icon()/diagnose_spell() docstrings for the investigation.
     "Judgement of Wisdom": "<:Spell_Holy_RighteousnessAura:1544102694581440654>",
     "Judgement of Light": "<:Spell_Holy_HealingAura:1544102692606189629>",
     "Judgement of the Crusader": "<:Spell_Holy_HolySmite:1544102691410812938>",
@@ -470,7 +460,7 @@ TOP_DISPELLERS_ICON_EMOJI = "<:SPELL_HOLY_DISPELMAGIC:1543989034949419068>"
 # for Gruul's Lair/Magtheridon's Lair (zone 1048) - the four "council"
 # adds fought alongside High King Maulgar (Krosh Firehand, Olm the
 # Summoner, Kiggler the Crazed, Blindeye the Seer) share his encounter ID,
-# confirmed live against a real report (2026-08) - not a separate fight.
+# confirmed live against a real report - not a separate fight.
 EXCLUDED_ENCOUNTER_IDS = {
     50649,  # High King Maulgar (incl. the four council adds)
     50650,  # Gruul the Dragonkiller
@@ -479,7 +469,7 @@ EXCLUDED_ENCOUNTER_IDS = {
 
 # Trash-pull fight NAMES to exclude alongside the encounters above (trash
 # fights carry no encounter_id at all, so they can only be matched by
-# their own display name) - confirmed against a real report (2026-08).
+# their own display name) - confirmed against a real report.
 EXCLUDED_TRASH_FIGHT_NAMES = {
     "Lair Brute",       # Gruul's Lair trash
     "Hellfire Warder",  # Magtheridon's Lair trash
@@ -562,12 +552,12 @@ TIER_SUB_INSTANCES = {
 # --- Raid tier config ---
 # `bosses` maps a display name -> WCL encounter ID.
 
-# Corrected (2026-08, moderator) against real WCL data via
-# /raidsummary-refresh-report's diagnostic breakdown - the original
-# values below were simply wrong: every boss's real
-# encounter ID is exactly 50000 higher (e.g. High Warlord Naj'entus is
-# 50601, not 601), and zone_id is 1060, not 1011. This is why boss kills
-# never showed up in a raid summary for this tier - _group_fights_by_
+# Corrected against real WCL data via /raidsummary-refresh-report's
+# diagnostic breakdown - the original values below were simply wrong:
+# every boss's real encounter ID is exactly 50000 higher (e.g. High
+# Warlord Naj'entus is 50601, not 601), and zone_id is 1060, not 1011.
+# This is why boss kills never showed up in a raid summary for this
+# tier - _group_fights_by_
 # encounter/_build_boss_lines/_tier_stats all matched against these IDs
 # and never found a single one in a real report's fights, and
 # _build_guild_rank_block's guild-zone-rankings lookup (cogs/raid_summary.py)

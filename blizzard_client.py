@@ -4,17 +4,15 @@ itemID (all Gargul's loot export gives us) into a display name, icon, and
 quality, same contract as wowhead.py's WowheadClient.get_item(), so
 cogs/raid_summary.py can use either interchangeably.
 
-Added (2026-08) after wowhead.py's scraped XML feed turned out to be
-blocked outright for this bot's hosting IP (confirmed live: AWS
-CloudFront/WAF returning a static "403 - Request blocked" page on every
-single request, while the identical URL worked fine from a browser on a
-different network - not something any header/pacing/redirect fix could
+Added after wowhead.py's scraped XML feed turned out to be blocked
+outright for this bot's hosting IP (a WAF/CDN 403 on every request, from
+this host specifically - not something a header/pacing/redirect fix can
 address, since the block is on the IP, not the request shape). Blizzard's
 own Game Data API is the sanctioned, first-party alternative: no scraping,
 no anti-bot concerns, and it's keyed by the game's own real item ID (the
 same ID Gargul exports), so there's no retail-vs-Classic ID-space mismatch
 to get wrong either (see wowhead.py's ITEM_XML_URL comment for that
-history).
+issue).
 
 Docs: https://develop.battle.net/documentation/world-of-warcraft/game-data-apis
 (this sandbox can never reach develop.battle.net or oauth.battle.net /
@@ -230,24 +228,19 @@ class BlizzardClient:
         Blizzard for a name here, unlike items where Gargul's export gives
         us only a bare ID and no name at all.
 
-        CONFIRMED live (2026-08, moderator report + diagnose_spell()):
         Blizzard's media endpoint can return HTTP 200 with a real icon
         asset for a spell_id that isn't a meaningful match under the
         Classic namespace - the asset it hands back is
         "inv_misc_questionmark", WoW's own real in-client placeholder icon
-        for "no icon assigned" (visually the same question-mark icon
-        players see in-game), not a 404. This is treated as NOT resolved
+        for "no icon assigned", not a 404. This is treated as NOT resolved
         (see _PLACEHOLDER_SPELL_ICON_SLUGS below) so it's never cached and
         never reported as a found icon - callers (cogs/raid_summary.py's
         _get_spell_icon_url) fall through to Wowhead instead, same as a
-        real 404. Before this fix, a placeholder like this looked
-        identical to a real resolved icon (any non-None icon_slug was
-        trusted), which is why a couple of TRACKED_ABILITY_ICON_SPELL_IDS
-        entries (the Judgements) were silently showing Blizzard's generic
-        "?" icon instead of falling back to Wowhead's correct one - fixed
-        for those specific abilities with a manual TRACKED_ABILITY_ICON_
-        EMOJI override (bypasses this method entirely), but this check
-        guards every OTHER spell_id lookup this method is ever asked for.
+        real 404, rather than trusting any non-None icon_slug and silently
+        showing this generic "?" icon. A couple of TRACKED_ABILITY_ICON_
+        SPELL_IDS entries (the Judgements) still need a manual
+        TRACKED_ABILITY_ICON_EMOJI override that bypasses this method
+        entirely, but this check guards every OTHER spell_id lookup.
 
         Same cache-worthiness contract as get_item() - a result is only
         cached once it has a real (non-placeholder) icon_slug, so a
@@ -436,13 +429,13 @@ class BlizzardClient:
              "points_by_tree": [(tree_name, points), ...] | None,
              "total_points": int}
 
-        CONFIRMED live (2026-08, real EU realm/character - see
-        _parse_specialization_groups()' docstring for the exact shape
-        found): the endpoint exists, returns HTTP 200 under
-        profile-classic-{region}, and the real per-talent point field is
-        "talent_rank", nested at group["specializations"][*]["talents"] -
-        both were originally guessed wrong (as "spent_points" directly
-        under group["talents"]) until checked against this real response.
+        Confirmed against a real response (see
+        _parse_specialization_groups()' docstring for the exact shape):
+        the endpoint exists, returns HTTP 200 under profile-classic-
+        {region}, and the real per-talent point field is "talent_rank",
+        nested at group["specializations"][*]["talents"] - both were
+        originally guessed wrong (as "spent_points" directly under
+        group["talents"]).
 
         STILL UNCONFIRMED: no spec-name (e.g. "Fire") or tree-grouping
         field was visible in the response checked, so "spec_name" and the
@@ -463,9 +456,9 @@ class BlizzardClient:
         Blizzard's profile API for these transitioned TBC Anniversary
         realms has a live, reported bug where the returned data (gear here
         too, not just talents) can be a stale Classic-Era snapshot rather
-        than the character's current state - confirmed 2026-08 against a
-        real character whose returned gear was their old Classic Era
-        loadout, not their current TBC gear. Nothing server-side or
+        than the character's current state - confirmed against a real
+        character whose returned gear was their old Classic Era loadout,
+        not their current TBC gear. Nothing server-side or
         client-side here can force a refresh; this is purely a caveat for
         callers to surface to the user (see cogs/apply.py's
         _compute_armory_block, which appends a note about this to the
@@ -553,9 +546,9 @@ class BlizzardClient:
                 ) as resp:
                     body = await resp.text()
                     # Wider cap than every other diagnostic dump in this file
-                    # (deliberately, not an oversight) - a live check
-                    # (2026-08, see get_character_specializations()'s
-                    # docstring) showed this endpoint's body getting cut off
+                    # (deliberately, not an oversight) - a live check (see
+                    # get_character_specializations()'s docstring) showed
+                    # this endpoint's body getting cut off
                     # mid-JSON at 1500 chars, before ever reaching a second
                     # talent group or any field that might identify which of
                     # the 3 trees each talent belongs to (the still-unsolved
@@ -631,21 +624,19 @@ class BlizzardClient:
 
 
 # Blizzard's quality.type strings -> config.ITEM_QUALITY_COLORS' int keys
-# (0=poor..5=legendary) - TBC Classic never has artifact(6)/heirloom(7).
+# (0=poor..5=legendary, in config/game_data.py) - TBC Classic never has
+# artifact(6)/heirloom(7).
 _QUALITY_TYPE_TO_INT = {
     "POOR": 0, "COMMON": 1, "UNCOMMON": 2, "RARE": 3, "EPIC": 4, "LEGENDARY": 5,
 }
 
 # Icon slugs Blizzard's media endpoint uses as its own generic "no icon
-# assigned" placeholder - confirmed live (2026-08) for spells: WoW's real
-# in-client question-mark icon, returned with a normal HTTP 200 rather
-# than a 404 for at least a couple of TRACKED_ABILITY_ICON_SPELL_IDS
-# entries. get_spell_icon() treats any of these as an unresolved lookup
-# (not cached, empty icon_url returned) rather than a real match - see
-# that method's docstring. Not applied to get_item()'s item-media lookup:
-# no evidence item media has this problem (a real TBC item - Dragonspine
-# Trophy, id 28830 - was confirmed 2026-08 to resolve its correct, unique
-# icon), so this stays spell-specific rather than risking a false
+# assigned" placeholder for spells: WoW's real in-client question-mark
+# icon, returned with a normal HTTP 200 rather than a 404. get_spell_icon()
+# treats any of these as an unresolved lookup (not cached, empty icon_url
+# returned) rather than a real match - see that method's docstring. Not
+# applied to get_item()'s item-media lookup: no evidence item media has
+# this problem, so this stays spell-specific rather than risking a false
 # rejection on a legitimately plain/simple item icon.
 _PLACEHOLDER_SPELL_ICON_SLUGS = {"inv_misc_questionmark"}
 
@@ -662,7 +653,7 @@ def _parse_specialization_groups(data: dict) -> list:
     one implicit group if that key isn't present, so a single-spec
     response still parses into something instead of an empty list.
 
-    CONFIRMED live (2026-08, real EU character, see get_character_
+    Confirmed against a real response (see get_character_
     specializations()'s docstring): each group's talents are NOT directly
     under group["talents"] as originally guessed - they're one level
     deeper, under group["specializations"][*]["talents"] ("specializations"
@@ -714,7 +705,7 @@ def _bucket_talent_points(talents: list):
     names, in order: "talent_tree" (dict with a "name") then "tree" (dict
     or plain string) - still guesses, NOT confirmed (unlike the
     talents-location/talent_rank fixes in _parse_specialization_groups
-    above): a live response checked 2026-08 didn't show either field on any
+    above): a live response checked didn't show either field on any
     talent, but that response was also cut off before showing every talent
     in the group, so this isn't proven absent either - see
     get_character_specializations()'s docstring and diagnose_character()

@@ -35,8 +35,8 @@ Design, per discussion:
     an interactively-posted alt/fun raid for the same tier shouldn't
     pollute tier-wide records like fastest clear, attendance, or the
     unique-roster count.
-  - "Medal" = per-raid leaderboard POSITION (confirmed with the user,
-    2026-08): for each raid night, whoever's #1 in that raid's own
+  - "Medal" = per-raid leaderboard POSITION (confirmed with the user):
+    for each raid night, whoever's #1 in that raid's own
     Activity%/Potions/Interrupts/Dispels/Damage/Healing/Overheal%
     leaderboard (the same 7 stats cogs/raid_summary.py's own per-raid
     summary already ranks - everything except the Deaths leaderboard,
@@ -408,13 +408,13 @@ class TierRetrospectiveCog(commands.Cog):
         # ALT_LINKS_KEY, via get_alt_links()) before counting - a raider
         # who played their main one week and an alt another week is one
         # attendee, not two fractional ones. Deliberately attendance-only
-        # (confirmed with the moderator, 2026-08): every OTHER per-player
+        # (confirmed with the moderator): every OTHER per-player
         # stat here (damage/healing/deaths/potions/medals) stays keyed by
         # raw character name, and unique_chars above is deliberately raw
         # character identity too - that one exists specifically to catch
-        # people tagging along on alts (see config.EXCLUDED_ENCOUNTER_IDS's
-        # docstring), so collapsing it through alt links would defeat its
-        # own purpose.
+        # people tagging along on alts (see config/deployment.py's
+        # EXCLUDED_ENCOUNTER_IDS docstring), so collapsing it through alt
+        # links would defeat its own purpose.
         attendance_cog = self.bot.get_cog("AttendanceCog")
         alt_links = attendance_cog.get_alt_links() if attendance_cog else {}
 

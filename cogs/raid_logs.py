@@ -361,7 +361,7 @@ class RaidLogsCog(commands.Cog):
         Continue unlocks (RaidSummaryOptionsView._ready() also requires a
         clear_status pick, which is never guessed).
 
-        Primary signal (added 2026-08): the report's own WCL zone ID
+        Primary signal: the report's own WCL zone ID
         (summary["zone"]["id"] from get_report_summary) against each
         tier's config zone_id - an exact identifier, not a guess, and the
         same one this bot already uses everywhere else to know which

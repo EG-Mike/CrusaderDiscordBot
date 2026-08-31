@@ -1436,7 +1436,7 @@ class RaidSummaryCog(commands.Cog):
             boss_text = f"{boss_pct:.1f}%" if boss_pct is not None else "?"
             if name in config.TRACKED_BOSS_ONLY_ABILITIES:
                 # Trash uptime isn't a meaningful/wanted number for these
-                # (moderator request, 2026-08) - still computed by
+                # (moderator request) - still computed by
                 # wcl_client.get_report_aura_uptime same as any other
                 # tracked ability, just not shown - see
                 # TRACKED_BOSS_ONLY_ABILITIES' own comment.
@@ -1788,9 +1788,8 @@ class RaidSummaryCog(commands.Cog):
         Edit/Add Loot buttons end up on a Discord message whose id no
         longer matches the record's storage key, so a later click of
         either button fails with "Couldn't find this summary's saved
-        data" even though the record still exists (bug fixed 2026-08 -
-        see _reconcile_pages and the initial-post handler for how this is
-        now tracked).
+        data" even though the record still exists - see _reconcile_pages
+        and the initial-post handler for how this is now tracked.
         """
         tldr_block = self._text_block(self._build_tldr_text(header_ctx, note))
 
@@ -1965,8 +1964,8 @@ class RaidSummaryCog(commands.Cog):
         # is given, since it's rendered as an extra trailing plain message
         # with no buttons at all. Storing under the wrong one meant a
         # click on the real (button-bearing) message couldn't find its own
-        # record - bug fixed 2026-08 (previously reproduced by editing a
-        # summary to ADD a media link, then clicking Edit/Add Loot again).
+        # record (reproducible by editing a summary to ADD a media link,
+        # then clicking Edit/Add Loot again).
         button_page_index = next(i for i, p in enumerate(pages) if p["has_buttons"])
         button_message = posted_messages[button_page_index]
         self.store.set(
@@ -2636,7 +2635,7 @@ class RaidSummaryCog(commands.Cog):
         """
         Diagnostic-only command for blizzard_client.py's get_spell_icon() -
         same purpose as raidsummary_test_blizzard above, but for spells.
-        Added after a moderator confirmed live (2026-08) that Blizzard's
+        Added after a moderator confirmed live that Blizzard's
         spell-media endpoint was returning its own generic "?" placeholder
         icon (HTTP 200, not a 404) for at least a couple of config.
         TRACKED_ABILITY_ICON_SPELL_IDS entries - get_spell_icon() now
@@ -3074,12 +3073,12 @@ class RaidSummaryCog(commands.Cog):
         to itself (delta always 0) and silently turn a real "First kill!"/
         "Fastest kill!" into a misleading "Tied our fastest!". Reusing the
         frozen blocks each report already earned avoids that entirely -
-        confirmed with the moderator (2026-08): keep each report's own
-        already-earned badges as-is, don't re-litigate them against the
-        merged whole. Loot is deliberately dropped from the merged post
-        (not carried over from either original post) - also confirmed
-        with the moderator (2026-08), who'll re-add loot via the 🎁 Add/
-        Update Loot button going forward.
+        confirmed with the moderator: keep each report's own already-
+        earned badges as-is, don't re-litigate them against the merged
+        whole. Loot is deliberately dropped from the merged post (not
+        carried over from either original post) - also confirmed with
+        the moderator, who'll re-add loot via the 🎁 Add/Update Loot
+        button going forward.
 
         Returns {"ok": True, "survivor_thread", "deleted": [thread names]}
         or {"ok": False, "error": "..."} - a missing stored record (one of
@@ -3203,8 +3202,8 @@ class RaidSummaryCog(commands.Cog):
             thread = self.bot.get_channel(record["thread_id"]) or await self.bot.fetch_channel(record["thread_id"])
         except (discord.NotFound, discord.Forbidden):
             # The thread is gone (deleted directly in Discord, most often
-            # while debugging - confirmed live, 2026-08) - the stored
-            # record for it is now permanently dead weight, most visibly in
+            # while debugging) - the stored record for it is now
+            # permanently dead weight, most visibly in
             # raidsummary_regenerate's picker (_recent_summary_entries),
             # which would otherwise keep offering it forever with no way to
             # tell it's unusable until picked. Removed here rather than
@@ -3257,11 +3256,10 @@ class RaidSummaryCog(commands.Cog):
         # trails the button page (rendered as an extra plain message with
         # no buttons at all). Storing under the wrong one meant a later
         # click on the real (button-bearing) message couldn't find its own
-        # record - bug fixed 2026-08 (previously reproduced by editing a
-        # summary to ADD a media link, then clicking Edit/Add Loot again -
-        # see this method's docstring for the "genuinely different KIND of
-        # message" mechanic that shifts which index becomes the trailing
-        # page in the first place).
+        # record (reproducible by editing a summary to ADD a media link,
+        # then clicking Edit/Add Loot again - see this method's docstring
+        # for the "genuinely different KIND of message" mechanic that
+        # shifts which index becomes the trailing page in the first place).
         button_page_index = next(i for i, p in enumerate(page_views) if p["has_buttons"])
         button_message_id = new_ids[button_page_index]
         if button_message_id != last_message_id:
