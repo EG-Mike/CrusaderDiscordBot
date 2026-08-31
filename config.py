@@ -7,15 +7,16 @@ FUTURE_TIERS["Sunwell Plateau"], and set PREVIOUS_TIER to today's
 CURRENT_TIER value (BT/Hyjal). That's the one-line switch.
 
 All zone/encounter IDs below were meant to be pulled directly from WCL's
-`worldData.zones` query against the fresh.warcraftlogs.com host (via
-debug_zones.py), not guessed - but CURRENT_TIER's (BT/Hyjal) values from
-that run were simply wrong (every boss ID off by exactly 50000, zone_id
-off entirely - confirmed and corrected 2026-08, see CURRENT_TIER's own
-comment for how this was found: it's why boss kills never showed up in a
-raid summary for the whole time this tier's numbers were wrong). Treat
-"pulled from debug_zones.py" as this file's INTENT, not a guarantee -
-FUTURE_TIERS' Sunwell Plateau entry has the same suspicious shape and is
-flagged unverified for exactly this reason.
+`worldData.zones` query against the fresh.warcraftlogs.com host, not
+guessed - but CURRENT_TIER's (BT/Hyjal) values from that were simply wrong
+(every boss ID off by exactly 50000, zone_id off entirely - confirmed and
+corrected 2026-08 via /raidsummary-refresh-report's diagnostic breakdown
+against a real report, see CURRENT_TIER's own comment for how this was
+found: it's why boss kills never showed up in a raid summary for the whole
+time this tier's numbers were wrong). Treat any not-yet-live tier's IDs as
+this file's INTENT, not a guarantee - FUTURE_TIERS' Sunwell Plateau entry
+has the same suspicious shape and is flagged unverified for exactly this
+reason.
 """
 
 # --- TBC class colors (Warrior..Druid only - no DK/Monk/DH in TBC) ---
@@ -232,6 +233,15 @@ AUTO_ROLE_IDS = {
 # entirely without needing to remove the channel ID.
 ARCHIVE_ENABLED = True
 ARCHIVE_CHANNEL_ID = 1337906439066488914
+
+# Gates the handful of diagnostic/one-time-migration commands accumulated
+# during development: /apply-test-blizzard, /raidsummary-test-blizzard,
+# /raidsummary-test-spell, /raidsummary-refresh-wowhead, /raidsummary-bulk.
+# These dump raw API responses or do a one-shot data migration/import -
+# useful when standing up a new deployment or chasing a Blizzard/Wowhead
+# lookup bug, but noise in the command list day-to-day. Off by default;
+# flip to True when you actually need one of them.
+DEBUG_COMMANDS_ENABLED = False
 
 # Armory block (equipped gear + talent build) shown on the /apply review
 # card - see cogs/apply.py's _compute_armory_block. Defaulted OFF
@@ -605,7 +615,7 @@ TIER_SUB_INSTANCES = {
 
 # Corrected (2026-08, moderator) against real WCL data via
 # /raidsummary-refresh-report's diagnostic breakdown - the original
-# debug_zones.py-sourced values below were simply wrong: every boss's real
+# values below were simply wrong: every boss's real
 # encounter ID is exactly 50000 higher (e.g. High Warlord Naj'entus is
 # 50601, not 601), and zone_id is 1060, not 1011. This is why boss kills
 # never showed up in a raid summary for this tier - _group_fights_by_
@@ -660,8 +670,8 @@ PREVIOUS_TIER = {
 # performance for context.
 NEW_TIER_LOG_THRESHOLD = 3
 
-# --- Future tiers, pre-filled from the same debug_zones.py run so the
-# eventual switch is copy/paste rather than a re-run. To advance a tier:
+# --- Future tiers, pre-filled from an earlier WCL zone/encounter lookup so
+# the eventual switch is copy/paste rather than a re-run. To advance a tier:
 #   PREVIOUS_TIER = CURRENT_TIER
 #   CURRENT_TIER = FUTURE_TIERS["BT/Hyjal"]
 # (then do the same again for each subsequent tier as your guild progresses)
@@ -669,7 +679,7 @@ NEW_TIER_LOG_THRESHOLD = 3
 # WARNING: Sunwell Plateau's zone_id/boss IDs below have the EXACT same
 # shape the real CURRENT_TIER (BT/Hyjal) values had before they turned out
 # to be wrong by exactly 50000 (see CURRENT_TIER's comment) - small
-# 3-digit boss IDs, a 4-digit zone_id, from that same debug_zones.py run.
+# 3-digit boss IDs, a 4-digit zone_id, from that same earlier lookup.
 # Treat these as unverified, not just "not yet re-run" - re-check them
 # (e.g. /raidsummary-refresh-report's diagnostic breakdown against a real
 # Sunwell report, once your guild is there) BEFORE promoting this to
