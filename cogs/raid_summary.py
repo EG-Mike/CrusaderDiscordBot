@@ -140,7 +140,7 @@ Design, per discussion:
     Below those, a "Buff/Debuff Uptime" section for config.TRACKED_DEBUFFS
     (Sunder/Expose Armor, Faerie Fire, Curse of the Elements/Recklessness,
     and the three Judgements (Wisdom/Light/the Crusader) - all kept on the
-    boss, including the Judgements: see config.py's comment above
+    boss, including the Judgements: see config/deployment.py's comment above
     TRACKED_DEBUFFS for why those specifically live here and not in
     TRACKED_BUFFS despite being a Paladin ability) and config.TRACKED_BUFFS
     (currently empty), each shown with a "boss fights only"
@@ -154,7 +154,7 @@ Design, per discussion:
     TRACKED_BOSS_ONLY_ABILITIES) - see _build_uptime_lines and
     wcl_client.get_report_aura_uptime. All tracked ability lists are
     matched against WCL by NAME, not spell ID, since a rank's exact ID
-    varies by who cast it while the name doesn't - see config.py's comment
+    varies by who cast it while the name doesn't - see config/deployment.py's comment
     above TRACKED_DEBUFFS. Each tracked debuff/buff also gets a real spell
     icon (config.TRACKED_ABILITY_ICON_SPELL_IDS - any correct rank's ID
     works there since the icon doesn't change across ranks) via
@@ -2374,7 +2374,7 @@ class RaidSummaryCog(commands.Cog):
         if not config.DEBUG_COMMANDS_ENABLED:
             await interaction.response.send_message(
                 "This is a one-time-import tool, disabled by default - set DEBUG_COMMANDS_ENABLED = True in "
-                "config.py to use it.",
+                "config/deployment.py to use it.",
                 ephemeral=True,
             )
             return
@@ -2568,7 +2568,7 @@ class RaidSummaryCog(commands.Cog):
         if not config.DEBUG_COMMANDS_ENABLED:
             await interaction.response.send_message(
                 "This is a one-time-migration tool, disabled by default - set DEBUG_COMMANDS_ENABLED = True in "
-                "config.py to use it.",
+                "config/deployment.py to use it.",
                 ephemeral=True,
             )
             return
@@ -2607,7 +2607,7 @@ class RaidSummaryCog(commands.Cog):
         if not config.DEBUG_COMMANDS_ENABLED:
             await interaction.response.send_message(
                 "This is a diagnostic tool, disabled by default - set DEBUG_COMMANDS_ENABLED = True in "
-                "config.py to use it.",
+                "config/deployment.py to use it.",
                 ephemeral=True,
             )
             return
@@ -2654,7 +2654,7 @@ class RaidSummaryCog(commands.Cog):
         if not config.DEBUG_COMMANDS_ENABLED:
             await interaction.response.send_message(
                 "This is a diagnostic tool, disabled by default - set DEBUG_COMMANDS_ENABLED = True in "
-                "config.py to use it.",
+                "config/deployment.py to use it.",
                 ephemeral=True,
             )
             return
@@ -2679,10 +2679,10 @@ class RaidSummaryCog(commands.Cog):
         overall kill_count /raidsummary-refresh-report reports is unscoped
         (every kill in the report, any encounter), while /raidsummary's own
         "Boss-by-boss" section only ever shows bosses whose encounter_id is
-        in the CHOSEN tier's config.py `bosses` dict (see
+        in the CHOSEN tier's config/deployment.py `bosses` dict (see
         _build_boss_lines/_tier_stats) - so "refresh-report says N kills,
         /raidsummary shows 0" with no live-report warning almost always
-        means the IDs in config.py don't actually match what WCL is
+        means the IDs in config/deployment.py don't actually match what WCL is
         returning for these fights (stale/wrong ID, or the wrong tier was
         picked in /raidsummary's dropdown), not a caching problem. This
         prints the real IDs WCL sent back next to their fight/name so that
@@ -2709,7 +2709,7 @@ class RaidSummaryCog(commands.Cog):
 
         lines = ["**Encounter IDs WCL returned for this report:**"]
         for eid, g in sorted(groups.items()):
-            match = id_to_tier_boss.get(eid, "⚠️ not in either tier's `bosses` dict in config.py")
+            match = id_to_tier_boss.get(eid, "⚠️ not in either tier's `bosses` dict in config/deployment.py")
             lines.append(f"`{eid}` — {g['name']} ({g['kills']} kill(s), {g['wipes']} wipe(s)) — {match}")
         return "\n".join(lines)
 
@@ -2847,7 +2847,7 @@ class RaidSummaryCog(commands.Cog):
         except ValueError:
             await interaction.followup.send(
                 f"Couldn't resolve this post's tier (`{record['header_ctx'].get('tier_name')}`) against "
-                "config.py's current CURRENT_TIER/PREVIOUS_TIER.", ephemeral=True,
+                "config/deployment.py's current CURRENT_TIER/PREVIOUS_TIER.", ephemeral=True,
             )
             return
 

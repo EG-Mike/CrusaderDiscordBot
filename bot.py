@@ -1,8 +1,8 @@
 """
-Entry point. Loads feature cogs (gated per-deployment by config.py's
+Entry point. Loads feature cogs (gated per-deployment by config/deployment.py's
 FEATURE_*_ENABLED flags) and starts the bot. Adding a new, unrelated
 feature later = add a new file to cogs/, a FEATURE_*_ENABLED flag in
-config.py, and one line in OPTIONAL_EXTENSIONS below - this file
+config/deployment.py, and one line in OPTIONAL_EXTENSIONS below - this file
 shouldn't need much else touched.
 """
 
@@ -24,8 +24,28 @@ import icons
 
 load_dotenv()
 
-logging.basicConfig(level=logging.INFO)
+# config.LOG_LEVEL controls every "wow-apply-bot"/"wow-apply-bot.<cog>"
+# logger (all of this bot's own console output); config.LOG_DISCORD_LIBRARY_LEVEL
+# controls discord.py's own internal logger separately, since DEBUG there
+# is extremely noisy (gateway heartbeats etc.) and rarely what LOG_LEVEL=DEBUG
+# is actually being set to chase down - see both constants' comments in
+# config/deployment.py. An invalid level name falls back to its default
+# rather than crashing on startup.
+_VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+
+
+def _resolve_log_level(configured: str, fallback: str) -> str:
+    name = (configured or "").upper()
+    return name if name in _VALID_LOG_LEVELS else fallback
+
+
+_bot_log_level = _resolve_log_level(config.LOG_LEVEL, "INFO")
+logging.basicConfig(level=_bot_log_level)
 log = logging.getLogger("wow-apply-bot")
+if _bot_log_level != (config.LOG_LEVEL or "").upper():
+    log.warning("config.LOG_LEVEL=%r isn't a valid logging level - using INFO instead", config.LOG_LEVEL)
+
+logging.getLogger("discord").setLevel(_resolve_log_level(config.LOG_DISCORD_LIBRARY_LEVEL, "WARNING"))
 
 DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
 
@@ -33,7 +53,7 @@ DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
 # feature and always loads; every other cog is gated by a
 # config.FEATURE_*_ENABLED flag, so a deployment that doesn't want e.g.
 # raid summaries can turn the whole feature (and its commands) off without
-# touching any code - see config.py's comment above those flags.
+# touching any code - see config/deployment.py's comment above those flags.
 OPTIONAL_EXTENSIONS = [
     ("cogs.announcements", config.FEATURE_ANNOUNCEMENTS_ENABLED),
     ("cogs.emoji_admin", config.FEATURE_EMOJI_ADMIN_ENABLED),
@@ -46,7 +66,7 @@ EXTENSIONS = ["cogs.apply"] + [name for name, enabled in OPTIONAL_EXTENSIONS if 
 
 # raid_logs.py's automation needs raid_summary.py's and attendance.py's own
 # cogs loaded to do its actual job, and tier_retrospective.py needs
-# raid_summary.py's cached data (see config.py's comment above the
+# raid_summary.py's cached data (see config/deployment.py's comment above the
 # FEATURE_* flags) - neither crashes without it (their bot.get_cog()
 # lookups already degrade gracefully), but silently doing nothing isn't
 # obvious from the console, so flag the misconfiguration loudly instead.
@@ -152,7 +172,7 @@ async def main():
         disabled = [name for name, enabled in OPTIONAL_EXTENSIONS if not enabled]
         log.info("Loading extensions: %s", EXTENSIONS)
         if disabled:
-            log.info("Disabled by config.py FEATURE_*_ENABLED flags: %s", disabled)
+            log.info("Disabled by config/deployment.py FEATURE_*_ENABLED flags: %s", disabled)
         for extension in EXTENSIONS:
             await bot.load_extension(extension)
         try:

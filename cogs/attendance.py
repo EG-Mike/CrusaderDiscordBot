@@ -704,7 +704,7 @@ class AttendanceCog(commands.Cog):
                 embed.add_field(
                     name="\u200b",
                     value="… raider list truncated - too many to fit in one message. "
-                          "Consider lowering ROSTER_FRESH_ACTIVITY_WINDOW in config.py.",
+                          "Consider lowering ROSTER_FRESH_ACTIVITY_WINDOW in config/deployment.py.",
                     inline=False,
                 )
 

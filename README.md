@@ -237,8 +237,8 @@ list day-to-day. Set that flag to `True` to use one, then set it back off:
 
 Every feature past guild applications (`/apply`, always on) is its own cog
 and can be turned off independently via a `FEATURE_*_ENABLED` flag near the
-top of `config.py` - no code changes, no editing `bot.py`'s extension list,
-just flip the flag and restart:
+top of `config/deployment.py` - no code changes, no editing `bot.py`'s
+extension list, just flip the flag and restart:
 
 | Flag | Cog | Disables |
 |---|---|---|
@@ -257,6 +257,30 @@ report data). Neither combination crashes if you get it wrong - the
 dependent cog still loads, its commands just no-op with an explanatory
 message - but `bot.py` logs a warning at startup if it spots the
 mismatch, so check the console after changing these.
+
+## Console logging
+
+Every file logs to the console through a `"wow-apply-bot"` (or
+`"wow-apply-bot.<cog>"`) logger - startup progress, command usage,
+warnings when an API lookup falls back to a placeholder, etc. How much of
+that you see is controlled by two settings in `config/deployment.py`:
+
+- `LOG_LEVEL` (default `"INFO"`) - the bot's own verbosity. Set to
+  `"DEBUG"` to also see low-level tracing from the WarcraftLogs/Blizzard/
+  Wowhead clients (API token fetched vs. reused, cache hit vs. miss on
+  every item/spell/report lookup) - useful when chasing a lookup bug,
+  noisy for normal operation. `"WARNING"` or `"ERROR"` are also valid, for
+  a quieter console.
+- `LOG_DISCORD_LIBRARY_LEVEL` (default `"WARNING"`) - discord.py's own
+  internal logger (gateway connects, heartbeats, rate-limit waits),
+  intentionally separate from `LOG_LEVEL` above - `"DEBUG"` there is a
+  firehose (a line or more per heartbeat) that's almost never what you
+  actually want even while debugging this bot's own code with
+  `LOG_LEVEL="DEBUG"`. Only raise this yourself when diagnosing a
+  gateway/connection-level issue specifically.
+
+An invalid value for either falls back to its default (with a startup
+warning for `LOG_LEVEL`) rather than crashing the bot.
 
 ## Setting up on a new server
 
@@ -341,18 +365,19 @@ meant to be shared/versioned.
 
 ### 7. Confirm the raid tier's zone/encounter IDs
 
-`config.py`'s `CURRENT_TIER`/`PREVIOUS_TIER` need real WarcraftLogs zone and
-encounter IDs, which aren't always the same as what `worldData.zones`
-reports - the ones actually accepted by `character.zoneRankings` can differ.
-Set `config.DEBUG_COMMANDS_ENABLED = True` temporarily and run
-`/raidsummary-refresh-report` against a real report from that tier - its
-diagnostic breakdown confirms whether the zone/encounter IDs currently in
-`config.py` actually match, before trusting the tier-performance section.
-Turn `DEBUG_COMMANDS_ENABLED` back off once confirmed.
+`config/deployment.py`'s `CURRENT_TIER`/`PREVIOUS_TIER` need real
+WarcraftLogs zone and encounter IDs, which aren't always the same as what
+`worldData.zones` reports - the ones actually accepted by
+`character.zoneRankings` can differ. Set `config.DEBUG_COMMANDS_ENABLED =
+True` temporarily and run `/raidsummary-refresh-report` against a real
+report from that tier - its diagnostic breakdown confirms whether the
+zone/encounter IDs currently configured actually match, before trusting
+the tier-performance section. Turn `DEBUG_COMMANDS_ENABLED` back off once
+confirmed.
 
 ### 8. Class/role/spec icons (optional, but nicer)
 
-`config.py`'s `CLASS_ICON_URLS`, `ROLE_ICON_URLS`, and `SPEC_ICON_URLS` take
+`config/deployment.py`'s `CLASS_ICON_URLS`, `ROLE_ICON_URLS`, and `SPEC_ICON_URLS` take
 a stable image URL per icon (a Wowhead-hosted icon works well) - the bot
 downloads and uploads each one itself as a bot-owned "application emoji" on
 startup, no manual server upload needed. `CLASS_EMOJI_NAMES`/
@@ -468,7 +493,12 @@ Check the console for `Synced N command(s): [...]` and
 
 ```
 bot.py              - entry point: sets up the bot, shared singletons, loads cogs
-config.py           - all tunable config (colors, tiers, specs, icon sources, OXM command ID)
+config/              - all tunable config, split into:
+  game_data.py        - static TBC reference data (colors, specs, roles) - same for
+                        every deployment, never touched per-guild
+  deployment.py        - everything actually tuned per-deployment: logging, feature
+                        flags, Discord role/channel/tag IDs, icon sourcing, tuning
+                        knobs, tier definitions
 wcl_client.py        - WarcraftLogs API client (fights/rankings/deaths/roster, cached per-report)
 wowhead.py           - Wowhead item name/icon/link lookup (cached permanently by item ID)
 blizzard_client.py   - optional Blizzard Game Data API client (item/spell icons, character

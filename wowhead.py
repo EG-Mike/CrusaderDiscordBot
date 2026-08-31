@@ -320,7 +320,9 @@ class WowheadClient:
         every call after."""
         cached = self._cache.get(item_id)
         if cached is not None and _is_resolved(cached, "Item", item_id):
+            log.debug("Item %s: cache hit, skipping Wowhead fetch", item_id)
             return cached
+        log.debug("Item %s: cache miss (or unresolved entry) - fetching from Wowhead", item_id)
 
         result = await self._fetch(item_id)
         if _is_resolved(result, "Item", item_id):
@@ -373,7 +375,9 @@ class WowheadClient:
         cache_key = f"spell:{spell_id}"
         cached = self._cache.get(cache_key)
         if cached is not None and _is_resolved(cached, "Spell", spell_id):
+            log.debug("Spell %s: cache hit, skipping Wowhead fetch", spell_id)
             return cached
+        log.debug("Spell %s: cache miss (or unresolved entry) - fetching from Wowhead", spell_id)
 
         result = await self._fetch_spell(spell_id)
         if _is_resolved(result, "Spell", spell_id):
