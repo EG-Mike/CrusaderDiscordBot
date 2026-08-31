@@ -15,23 +15,39 @@ its own emoji-creation step, but its item-link path could be pointed at
 get_item() below instead of re-fetching independently.
 
 Caveat: this still wasn't independently re-verified against a live request
-while fixing this (this sandbox can't reach wowhead.com either). Reported
-live symptom (2026-08): EVERY loot item was coming back as an "Item #<id>"
-placeholder, not just occasional misses - that pattern (100% failure, not
-flaky) points at aiohttp's default User-Agent ("Python/3.x aiohttp/3.x")
-getting served an anti-bot challenge page with no <icon>/<name> tags in it,
-rather than a per-item problem - REQUEST_HEADERS' browser UA is the
-standard fix for exactly that class of block. If placeholders keep showing
-up after this, that's the next thing to check (Wowhead tightening the
-challenge further - a matching Accept/Referer, a cookie/JS check the plain
-UA fix can't clear - at which point the XML feed may need replacing with
-Wowhead's tooltip JSON endpoint instead).
+while fixing this (this sandbox can't reach wowhead.com either).
+
+History of live symptoms so far (2026-08):
+  1. EVERY loot item was coming back as "Item #<id>" - a browser User-Agent
+     (REQUEST_HEADERS) fixed that.
+  2. After that, a raid-summary regenerate with several tracked buffs/
+     debuffs (config.TRACKED_ABILITY_ICON_SPELL_IDS) started getting a hard
+     403 Forbidden on EVERY spell lookup in that run, all in the same
+     traceback. The giveaway isn't the User-Agent this time - it's that
+     _build_uptime_lines calls get_spell() for each tracked ability back to
+     back with ZERO delay between requests (unlike _build_loot_lines /
+     icons.ensure_item_emoji, which already paces ITS calls at 0.3s - but
+     only around emoji creation, never between the wowhead fetches
+     themselves), and a raid summary can also fire a burst of item lookups
+     moments earlier for a big loot night. A burst of rapid same-origin
+     requests with no pacing at all is a textbook trigger for Cloudflare
+     (or similar) rate-limit/bot-management blocking - hence PACE_SECONDS
+     below, enforced once here so every current and future caller is
+     covered without having to remember to add sleeps at each call site.
+
+If placeholders/403s keep showing up after both of these, that's the next
+thing to check (Wowhead tightening the challenge further - a JS/cookie
+challenge no static header set or pacing can clear - at which point the
+XML feed may need replacing with Wowhead's tooltip JSON endpoint, or an
+official Blizzard Game Data API item lookup, instead).
 
 Nothing here ever raises - a failed/unexpected lookup just falls back to a
 plain "Item #<id>" with no icon, same philosophy as icons.py.
 """
 
 import re
+import time
+import asyncio
 import logging
 import aiohttp
 
@@ -55,7 +71,17 @@ REQUEST_HEADERS = {
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://www.wowhead.com/",
 }
+
+# Minimum gap enforced between ANY two requests this client makes to
+# wowhead.com (see the module docstring's #2) - a raid summary can fire a
+# couple dozen of these (every unique loot item + every tracked buff/debuff
+# icon) in a single run with nothing else to naturally space them out.
+PACE_SECONDS = 0.5
+
 ICON_TAG_RE = re.compile(r"<icon[^>]*>([^<]+)</icon>", re.IGNORECASE)
 NAME_TAG_RE = re.compile(r"<name[^>]*>([^<]+)</name>", re.IGNORECASE)
 QUALITY_TAG_RE = re.compile(r'<quality id="(\d+)"', re.IGNORECASE)
@@ -93,6 +119,20 @@ class WowheadClient:
         # why a fallback used to get cached just as permanently as a real
         # result, which is exactly backwards.
         self._cache = ApplicationStore(path=cache_path)
+        # Serializes + paces every outbound wowhead.com request (item and
+        # spell alike) - see PACE_SECONDS/the module docstring. A lock, not
+        # just a "last request time" timestamp, so two lookups awaited
+        # concurrently (e.g. via asyncio.gather elsewhere) can't both read
+        # the same "long enough ago" timestamp and fire back-to-back anyway.
+        self._pace_lock = asyncio.Lock()
+        self._last_request_at = 0.0
+
+    async def _pace(self):
+        async with self._pace_lock:
+            wait = self._last_request_at + PACE_SECONDS - time.monotonic()
+            if wait > 0:
+                await asyncio.sleep(wait)
+            self._last_request_at = time.monotonic()
 
     async def get_item(self, item_id: int) -> dict:
         """Returns {"id", "name", "icon_slug", "icon_url", "wowhead_url", "quality"}.
@@ -129,6 +169,7 @@ class WowheadClient:
         }
 
         try:
+            await self._pace()
             async with aiohttp.ClientSession() as session:
                 async with session.get(ITEM_XML_URL.format(item_id=item_id), headers=REQUEST_HEADERS) as resp:
                     resp.raise_for_status()
@@ -183,6 +224,7 @@ class WowheadClient:
         }
 
         try:
+            await self._pace()
             async with aiohttp.ClientSession() as session:
                 async with session.get(SPELL_XML_URL.format(spell_id=spell_id), headers=REQUEST_HEADERS) as resp:
                     resp.raise_for_status()
