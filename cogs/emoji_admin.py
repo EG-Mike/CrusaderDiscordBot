@@ -69,13 +69,30 @@ class EmojiAdminCog(commands.Cog):
             return None
         expansion, kind, item_id = match.group(1), match.group(2), match.group(3)
 
-        # Item IDs are stable across expansions, but spell IDs get reused for
-        # unrelated abilities between Classic-era games and retail - querying
-        # the plain (retail) domain for a Classic spell link can silently
-        # resolve to the wrong spell (or nothing). Keep whatever
-        # expansion segment (tbc/wotlk/classic/etc.) the original link used.
-        prefix = f"{expansion}/" if expansion else ""
-        xml_url = f"https://www.wowhead.com/{prefix}{kind}={item_id}&xml"
+        # Item IDs are mostly stable across expansions, but spell IDs get
+        # reused for unrelated abilities between Classic-era games and
+        # retail - querying the plain (retail) domain for a Classic link can
+        # silently resolve to the wrong item/spell (or nothing). So the
+        # expansion has to be kept, not dropped.
+        #
+        # It can't be kept as the modern www.wowhead.com/<expansion>/ *path*
+        # though - confirmed live (2026-08) that path form 403s on this &xml
+        # feed even with a browser User-Agent (www.wowhead.com/tbc/item=X&xml
+        # -> 403), while the bare, unprefixed domain does not. Wowhead used
+        # to run each Classic-era game on its own subdomain
+        # (tbc.wowhead.com, classic.wowhead.com, ...) before consolidating
+        # under path prefixes; that legacy subdomain form is used here
+        # instead since the plain-domain form is the one confirmed working
+        # for this old &xml feed. Not yet independently confirmed for the
+        # subdomain form specifically - if this still fails, check whether
+        # the failure is a DNS/connection error (subdomain no longer exists)
+        # vs. another 403 (also blocked) vs. no <icon> tag (wrong data) -
+        # each points to a different next fix.
+        xml_url = (
+            f"https://{expansion}.wowhead.com/{kind}={item_id}&xml"
+            if expansion
+            else f"https://www.wowhead.com/{kind}={item_id}&xml"
+        )
         try:
             async with session.get(xml_url, headers=REQUEST_HEADERS) as resp:
                 resp.raise_for_status()
