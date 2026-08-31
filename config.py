@@ -346,10 +346,29 @@ PARSE_HIGHLIGHT_THRESHOLD = 99
 # Enemies) - shown with both an "all fights" (bosses+trash) and a
 # "boss fights only" uptime %, plus whichever raider contributed the most
 # of the boss-fight uptime. See cogs/raid_summary.py's _build_uptime_lines.
-TRACKED_DEBUFFS = ["Sunder Armor", "Expose Armor", "Faerie Fire", "Curse of the Elements", "Curse of Recklessness"]
+#
+# The three Judgements (Wisdom/Light/the Crusader) belong here, NOT in
+# TRACKED_BUFFS below, despite being granted by a PALADIN - all three are
+# auras a Judgement places ON THE TARGET (the boss), which is what then
+# grants mana/healing/holy-damage to whoever hits it; the aura itself was
+# never on a friendly player. Fixed 2026-08 - they were originally listed
+# under TRACKED_BUFFS (WCL table dataType: Buffs, hostilityType:
+# Friendlies), a table they could never appear in as a result, which is
+# why "Buff/Debuff Uptime" silently never showed any Judgement line at all
+# (get_report_aura_uptime's per-ability query came back empty for all
+# three, and _build_uptime_lines omits an ability entirely once BOTH its
+# percentages are None - see that method's docstring).
+TRACKED_DEBUFFS = [
+    "Sunder Armor", "Expose Armor", "Faerie Fire", "Curse of the Elements", "Curse of Recklessness",
+    "Judgement of Wisdom", "Judgement of Light", "Judgement of the Crusader",
+]
 
-# Buffs tracked on a PLAYER (WCL table dataType: Buffs, hostilityType: Friendlies).
-TRACKED_BUFFS = ["Judgement of Wisdom", "Judgement of Light", "Judgement of the Crusader"]
+# Buffs tracked on a PLAYER (WCL table dataType: Buffs, hostilityType:
+# Friendlies) - currently empty (see the Judgement note above
+# TRACKED_DEBUFFS for why the Judgements moved out of here), kept as its
+# own list/code path for any future ability that genuinely is a
+# player-worn buff (e.g. a class buff/proc uptime someone wants tracked).
+TRACKED_BUFFS = []
 
 # Subset of TRACKED_DEBUFFS/TRACKED_BUFFS whose "all fights" (bosses+trash)
 # uptime % isn't shown at all - just the boss-fights-only number - because

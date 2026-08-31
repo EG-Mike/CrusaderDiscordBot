@@ -138,9 +138,12 @@ Design, per discussion:
     rather than kept globally.
 
     Below those, a "Buff/Debuff Uptime" section for config.TRACKED_DEBUFFS
-    (Sunder/Expose Armor, Faerie Fire, Curse of the Elements/Recklessness -
-    kept on the boss) and config.TRACKED_BUFFS (Judgement of Wisdom/Light/
-    the Crusader - kept on a player), each shown with a "boss fights only"
+    (Sunder/Expose Armor, Faerie Fire, Curse of the Elements/Recklessness,
+    and the three Judgements (Wisdom/Light/the Crusader) - all kept on the
+    boss, including the Judgements: see config.py's comment above
+    TRACKED_DEBUFFS for why those specifically live here and not in
+    TRACKED_BUFFS despite being a Paladin ability) and config.TRACKED_BUFFS
+    (currently empty), each shown with a "boss fights only"
     uptime % and, unless the ability is in config.TRACKED_BOSS_ONLY_ABILITIES
     (every tracked Judgement, currently - trash uptime isn't a meaningful/
     wanted number for those), also an "all fights" (bosses+trash) one - plus
@@ -1757,21 +1760,37 @@ class RaidSummaryCog(commands.Cog):
         builds it that way so it stays anchored to the top post without
         needing its own parameter.
 
-        Returns a list of {"content": str|None, "view": LayoutView|None}
-        page specs, NOT plain views - every content page has view set and
-        content None (Components V2, same as before). If media_link is
-        given, one more page is appended with content=media_link and
-        view=None instead: Components V2 messages never auto-unfurl a URL
-        (that's suppressed page-wide by the IS_COMPONENTS_V2 flag every
-        other page here carries - confirmed against Discord's own docs on
-        the flag), which is why a pasted YouTube/Twitch/image link used to
-        show as a bare clickable link with no preview/player. A trailing
-        PLAIN message (no components, no IS_COMPONENTS_V2 flag) gets
-        Discord's normal automatic embed/unfurl instead, same as pasting
-        that link directly into any channel - the only way to get a real
-        playable preview for it. Every caller that turns page specs into
-        actual Discord messages (thread-creation, _reconcile_pages) has to
-        send content=/view= from each spec rather than assuming view alone.
+        Returns a list of {"content": str|None, "view": LayoutView|None,
+        "has_buttons": bool} page specs, NOT plain views - every content
+        page has view set and content None (Components V2, same as
+        before). If media_link is given, one more page is appended with
+        content=media_link and view=None instead: Components V2 messages
+        never auto-unfurl a URL (that's suppressed page-wide by the
+        IS_COMPONENTS_V2 flag every other page here carries - confirmed
+        against Discord's own docs on the flag), which is why a pasted
+        YouTube/Twitch/image link used to show as a bare clickable link
+        with no preview/player. A trailing PLAIN message (no components,
+        no IS_COMPONENTS_V2 flag) gets Discord's normal automatic embed/
+        unfurl instead, same as pasting that link directly into any
+        channel - the only way to get a real playable preview for it.
+        Every caller that turns page specs into actual Discord messages
+        (thread-creation, _reconcile_pages) has to send content=/view=
+        from each spec rather than assuming view alone.
+
+        "has_buttons" is True for exactly one page - the Edit/Add Loot
+        buttons always go on the last REAL content page (all_pages below),
+        which is NOT necessarily the last entry of the returned list: a
+        trailing media-link page (view=None, no buttons - Discord doesn't
+        allow a view on a non-Components-V2 message anyway) can follow it.
+        Every caller that persists the record under "the last page's
+        message id" MUST use whichever page has_buttons=True instead of
+        blindly the list's last entry - using the wrong one means the
+        Edit/Add Loot buttons end up on a Discord message whose id no
+        longer matches the record's storage key, so a later click of
+        either button fails with "Couldn't find this summary's saved
+        data" even though the record still exists (bug fixed 2026-08 -
+        see _reconcile_pages and the initial-post handler for how this is
+        now tracked).
         """
         tldr_block = self._text_block(self._build_tldr_text(header_ctx, note))
 
@@ -1783,11 +1802,11 @@ class RaidSummaryCog(commands.Cog):
         for i, page in enumerate(all_pages):
             is_first, is_last = i == 0, i == len(all_pages) - 1
             view = self._render_page(page, banner_source=banner_source if is_first else None, with_action_buttons=is_last)
-            pages.append({"content": None, "view": view})
+            pages.append({"content": None, "view": view, "has_buttons": is_last})
 
         media_link = media_link.strip() if media_link else ""
         if media_link:
-            pages.append({"content": media_link, "view": None})
+            pages.append({"content": media_link, "view": None, "has_buttons": False})
         return pages
 
     # --- the command ---------------------------------------------------
@@ -1939,9 +1958,19 @@ class RaidSummaryCog(commands.Cog):
         # later regenerate can re-resolve item names/icons against Wowhead
         # data as of THEN, not whatever Wowhead returned at post time - see
         # raidsummary_regenerate.
-        last_message = posted_messages[-1]
+        #
+        # Keyed by whichever message actually carries the Edit/Add Loot
+        # buttons (has_buttons=True - see _render_pages' docstring), NOT
+        # blindly posted_messages[-1]: those differ whenever a media_link
+        # is given, since it's rendered as an extra trailing plain message
+        # with no buttons at all. Storing under the wrong one meant a
+        # click on the real (button-bearing) message couldn't find its own
+        # record - bug fixed 2026-08 (previously reproduced by editing a
+        # summary to ADD a media link, then clicking Edit/Add Loot again).
+        button_page_index = next(i for i, p in enumerate(pages) if p["has_buttons"])
+        button_message = posted_messages[button_page_index]
         self.store.set(
-            last_message.id,
+            button_message.id,
             thread_id=thread.id,
             report_code=report_code,
             page_message_ids=[m.id for m in posted_messages],
@@ -3155,9 +3184,23 @@ class RaidSummaryCog(commands.Cog):
             return False
 
         record["page_message_ids"] = new_ids
-        if new_ids[-1] != last_message_id:
+
+        # Keyed by whichever message actually carries the Edit/Add Loot
+        # buttons (has_buttons=True - see _render_pages' docstring), NOT
+        # blindly new_ids[-1]: those differ whenever a media_link page
+        # trails the button page (rendered as an extra plain message with
+        # no buttons at all). Storing under the wrong one meant a later
+        # click on the real (button-bearing) message couldn't find its own
+        # record - bug fixed 2026-08 (previously reproduced by editing a
+        # summary to ADD a media link, then clicking Edit/Add Loot again -
+        # see this method's docstring for the "genuinely different KIND of
+        # message" mechanic that shifts which index becomes the trailing
+        # page in the first place).
+        button_page_index = next(i for i, p in enumerate(page_views) if p["has_buttons"])
+        button_message_id = new_ids[button_page_index]
+        if button_message_id != last_message_id:
             self.store.delete(last_message_id)
-        self.store.set(new_ids[-1], **record)
+        self.store.set(button_message_id, **record)
         return True
 
     async def _on_edit_click(self, interaction: discord.Interaction):
