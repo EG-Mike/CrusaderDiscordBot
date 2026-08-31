@@ -226,9 +226,29 @@ class BlizzardClient:
         Blizzard for a name here, unlike items where Gargul's export gives
         us only a bare ID and no name at all.
 
+        CONFIRMED live (2026-08, moderator report + diagnose_spell()):
+        Blizzard's media endpoint can return HTTP 200 with a real icon
+        asset for a spell_id that isn't a meaningful match under the
+        Classic namespace - the asset it hands back is
+        "inv_misc_questionmark", WoW's own real in-client placeholder icon
+        for "no icon assigned" (visually the same question-mark icon
+        players see in-game), not a 404. This is treated as NOT resolved
+        (see _PLACEHOLDER_SPELL_ICON_SLUGS below) so it's never cached and
+        never reported as a found icon - callers (cogs/raid_summary.py's
+        _get_spell_icon_url) fall through to Wowhead instead, same as a
+        real 404. Before this fix, a placeholder like this looked
+        identical to a real resolved icon (any non-None icon_slug was
+        trusted), which is why a couple of TRACKED_ABILITY_ICON_SPELL_IDS
+        entries (the Judgements) were silently showing Blizzard's generic
+        "?" icon instead of falling back to Wowhead's correct one - fixed
+        for those specific abilities with a manual TRACKED_ABILITY_ICON_
+        EMOJI override (bypasses this method entirely), but this check
+        guards every OTHER spell_id lookup this method is ever asked for.
+
         Same cache-worthiness contract as get_item() - a result is only
-        cached once it has a real icon_slug, so a failed/not-yet-added
-        lookup retries on every call instead of freezing "no icon" forever.
+        cached once it has a real (non-placeholder) icon_slug, so a
+        failed/not-yet-resolved lookup retries on every call instead of
+        freezing "no icon" forever.
         Cached under a "spell:<id>" string key in the same store as items
         (plain int item IDs), so the two never collide - same convention
         wowhead.py's cache already uses.
@@ -262,10 +282,68 @@ class BlizzardClient:
             return fallback
 
         icon_url, icon_slug = _parse_icon_asset(media_data)
+        if icon_slug in _PLACEHOLDER_SPELL_ICON_SLUGS:
+            log.info(
+                "Blizzard returned its generic placeholder icon (%s) for spell %s under namespace %s - "
+                "treating as unresolved so callers fall back to Wowhead instead",
+                icon_slug, spell_id, _namespace(self.region),
+            )
+            icon_url, icon_slug = None, None
+
         result = {"icon_slug": icon_slug, "icon_url": icon_url}
         if icon_slug is not None:
             self._cache.set(cache_key, **result)
         return result
+
+    async def diagnose_spell(self, spell_id: int) -> str:
+        """
+        Step-by-step verbose report for a spell/ability icon lookup -
+        mirrors diagnose_item()'s contract, but ALSO dumps the plain spell
+        metadata endpoint (/data/wow/spell/{id}), which get_spell_icon()
+        itself never calls (that method only hits the media endpoint,
+        needing just an icon). That metadata endpoint's own "name" field
+        is the fastest way to tell whether a configured spell ID (e.g.
+        config.TRACKED_ABILITY_ICON_SPELL_IDS) actually IS the ability
+        it's supposed to be under this namespace, or a mismatched/wrong-
+        rank ID Blizzard is nonetheless returning A response for - see
+        get_spell_icon()'s docstring for the confirmed "inv_misc_
+        questionmark" placeholder-icon case this was built to investigate.
+        Never raises.
+        """
+        namespace = _namespace(self.region)
+        lines = [f"**Diagnosing spell {spell_id}** (region={self.region}, namespace={namespace})"]
+
+        try:
+            token = await self._get_token()
+            lines.append(f"✅ OAuth token acquired ({token[:8]}...)")
+        except Exception as e:
+            lines.append(f"❌ OAuth token request failed: {e!r}")
+            return "\n".join(lines)
+
+        headers = {"Authorization": f"Bearer {token}"}
+        base = _api_base(self.region)
+        params = {"namespace": namespace, "locale": "en_US"}
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"{base}/data/wow/spell/{spell_id}", params=params, headers=headers) as resp:
+                    spell_body = await resp.text()
+                    lines.append(f"Spell endpoint: HTTP {resp.status}\n```\n{spell_body[:1500]}\n```")
+
+                async with session.get(f"{base}/data/wow/media/spell/{spell_id}", params=params, headers=headers) as resp:
+                    media_body = await resp.text()
+                    lines.append(f"Spell media endpoint: HTTP {resp.status}\n```\n{media_body[:1500]}\n```")
+        except Exception as e:
+            lines.append(f"❌ Request failed: {e!r}")
+            return "\n".join(lines)
+
+        try:
+            result = await self.get_spell_icon(spell_id)
+            lines.append(f"Parsed result: `{result}`")
+        except Exception as e:
+            lines.append(f"❌ Parsing raised (this shouldn't happen - get_spell_icon never raises normally): {e!r}")
+
+        return "\n".join(lines)
 
     async def get_character_equipment(self, realm_slug: str, character_name: str) -> list:
         """
@@ -553,6 +631,19 @@ class BlizzardClient:
 _QUALITY_TYPE_TO_INT = {
     "POOR": 0, "COMMON": 1, "UNCOMMON": 2, "RARE": 3, "EPIC": 4, "LEGENDARY": 5,
 }
+
+# Icon slugs Blizzard's media endpoint uses as its own generic "no icon
+# assigned" placeholder - confirmed live (2026-08) for spells: WoW's real
+# in-client question-mark icon, returned with a normal HTTP 200 rather
+# than a 404 for at least a couple of TRACKED_ABILITY_ICON_SPELL_IDS
+# entries. get_spell_icon() treats any of these as an unresolved lookup
+# (not cached, empty icon_url returned) rather than a real match - see
+# that method's docstring. Not applied to get_item()'s item-media lookup:
+# no evidence item media has this problem (a real TBC item - Dragonspine
+# Trophy, id 28830 - was confirmed 2026-08 to resolve its correct, unique
+# icon), so this stays spell-specific rather than risking a false
+# rejection on a legitimately plain/simple item icon.
+_PLACEHOLDER_SPELL_ICON_SLUGS = {"inv_misc_questionmark"}
 
 
 def _is_resolved(result: dict, item_id: int) -> bool:

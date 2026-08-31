@@ -2606,6 +2606,44 @@ class RaidSummaryCog(commands.Cog):
         for i in range(0, len(report), 1900):
             await interaction.followup.send(report[i:i + 1900], ephemeral=True)
 
+    @app_commands.command(
+        name="raidsummary-test-spell",
+        description="Step-by-step test of a single spell's icon against the Blizzard Game Data API (moderator only)",
+    )
+    @app_commands.describe(spell="Spell ID to test (defaults to Judgement of Wisdom's tracked ID)")
+    async def raidsummary_test_spell(self, interaction: discord.Interaction, spell: int = 27164):
+        """
+        Diagnostic-only command for blizzard_client.py's get_spell_icon() -
+        same purpose as raidsummary_test_blizzard above, but for spells.
+        Added after a moderator confirmed live (2026-08) that Blizzard's
+        spell-media endpoint was returning its own generic "?" placeholder
+        icon (HTTP 200, not a 404) for at least a couple of config.
+        TRACKED_ABILITY_ICON_SPELL_IDS entries - get_spell_icon() now
+        rejects that specific placeholder (see its docstring and
+        blizzard_client._PLACEHOLDER_SPELL_ICON_SLUGS), but this command
+        is what to run first on any OTHER ability that still looks wrong,
+        to see the raw spell/media response (including the spell's own
+        "name" field, the fastest way to tell whether a configured spell
+        ID is even the right ability under this namespace) rather than
+        guessing blind.
+        """
+        if not await self._is_mod(interaction.guild, interaction.user.id):
+            await interaction.response.send_message("Only moderators can run this.", ephemeral=True)
+            return
+        if self.bot.blizzard is None:
+            await interaction.response.send_message(
+                "BLIZZARD_CLIENT_ID/BLIZZARD_CLIENT_SECRET aren't set - the bot falls back to Wowhead entirely "
+                "until those are configured. Register a free client at https://develop.battle.net/access/clients, "
+                "set both env vars, and restart the bot to enable this.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        report = await self.bot.blizzard.diagnose_spell(spell)
+        for i in range(0, len(report), 1900):
+            await interaction.followup.send(report[i:i + 1900], ephemeral=True)
+
     def _diagnose_encounter_ids(self, fights: list) -> str:
         """
         Per-encounter_id breakdown of a report's fights (kills/wipes,
