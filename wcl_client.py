@@ -187,7 +187,7 @@ query ReportHealing($code: String!, $fightIDs: [Int]!) {
 # dataType: Casts, across every fight at once - per-player cast counts
 # broken down by ability (same nested-breakdown shape DamageDone/Healing
 # entries use for their own per-ability totals). Source of the "Top
-# Activity %" leaderboard - confirmed live (2026-08) that each entry here
+# Activity %" leaderboard - confirmed live that each entry here
 # also carries its own activeTime, and that dataType: Summary (originally
 # used for Activity %) returns a completely different report-wide shape
 # with no per-player rows at all - see _fetch_casts_table. NOT used for
@@ -686,7 +686,7 @@ class WarcraftLogsClient:
 
         `key` defaults to "entries" (every plain per-player table uses
         that), but a Buffs/Debuffs table's per-ability list sits under
-        "auras" instead - confirmed live (2026-08), see
+        "auras" instead - confirmed live, see
         REPORT_DEBUFFS_QUERY/REPORT_BUFFS_QUERY's docstring - so callers
         for those pass key="auras".
         """
@@ -787,7 +787,7 @@ class WarcraftLogsClient:
 
     async def _fetch_casts_table(self, session, headers, report_code: str, fight_ids: list) -> list:
         """Raw per-player Casts-table entries, used for Activity % (see
-        _extract_activity) - confirmed live (2026-08) that dataType:
+        _extract_activity) - confirmed live that dataType:
         Summary does NOT return per-player rows at all (its "data" is a
         report-wide {totalTime, composition, damageDone, healingDone,
         damageTaken} shape with nothing resembling per-player activeTime),
@@ -816,7 +816,7 @@ class WarcraftLogsClient:
 
     async def _fetch_nested_count_table(self, session, headers, report_code: str, fight_ids: list, query: str) -> dict:
         """Best-effort {character_name: total} for Interrupts/Dispels -
-        confirmed live (2026-08) that these do NOT come back as a flat
+        confirmed live that these do NOT come back as a flat
         per-player list like Deaths/DamageDone: the top-level "entries" is
         a single wrapper object whose OWN "entries" list is one row per
         interrupted/dispelled ability (e.g. a boss's "Fireball" cast, or a
@@ -842,7 +842,7 @@ class WarcraftLogsClient:
         Buffs/Debuffs table (see REPORT_DEBUFFS_QUERY/REPORT_BUFFS_QUERY) -
         every aura on that side (enemy/friendly), not just the tracked ones;
         matching against config.TRACKED_DEBUFFS/TRACKED_BUFFS happens in the
-        caller (get_report_aura_uptime). Confirmed live (2026-08): each
+        caller (get_report_aura_uptime). Confirmed live: each
         aura's totalUptime here is already aggregated across every
         caster/target for that ability within the given fights - exactly
         the raid-wide number needed, no abilityID filter required for this
@@ -901,7 +901,7 @@ class WarcraftLogsClient:
         live against a real 38-entry Casts table - see _fetch_casts_table),
         only the temporary buff it grants does.
 
-        Confirmed live (2026-08) that filtering a Buffs/Debuffs table by
+        Confirmed live that filtering a Buffs/Debuffs table by
         abilityID regroups its "auras" list from "one row per ability" to
         "one row per unit the aura appeared on" - verified for
         Debuffs+Enemies+abilityID (Sunder Armor), where that unit was each

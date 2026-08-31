@@ -17,62 +17,29 @@ get_item() below instead of re-fetching independently.
 Caveat: this still wasn't independently re-verified against a live request
 while fixing this (this sandbox can't reach wowhead.com either).
 
-History of live symptoms so far (2026-08):
-  1. EVERY loot item was coming back as "Item #<id>". Two contributing
-     causes, both real:
-       a. aiohttp's default User-Agent ("Python/3.x aiohttp/3.x") is a
-          common trigger for an anti-bot challenge page - REQUEST_HEADERS'
-          browser UA addresses that class of block.
-       b. The actual confirmed mechanism (moderator, live in a browser):
-          visiting a bare item URL (e.g.
-          https://www.wowhead.com/item=32238) redirects to that item's
-          canonical slugged URL (.../item=32238/ring-of-calming-waves?
-          bonus=...) - and the &xml flag does NOT survive onto that
-          redirect target, so the request aiohttp actually ends up
-          completing lands on the plain HTML page, not the XML feed -
-          no <icon>/<name> tags anywhere in it, hence the placeholder,
-          for essentially every real item (anything Wowhead has a slug
-          for - i.e. all of them). _get_xml_text() below chases redirects
-          manually instead of letting aiohttp do it automatically, so it
-          can re-append &xml on every hop.
-  2. Separately: a raid-summary regenerate with several tracked buffs/
-     debuffs (config.TRACKED_ABILITY_ICON_SPELL_IDS) started getting a hard
-     403 Forbidden on EVERY spell lookup in that run, all in the same
-     traceback. The giveaway isn't the User-Agent or the redirect this
-     time - it's that _build_uptime_lines calls get_spell() for each
-     tracked ability back to back with ZERO delay between requests (unlike
-     _build_loot_lines / icons.ensure_item_emoji, which already paces ITS
-     calls at 0.3s - but only around emoji creation, never between the
-     wowhead fetches themselves), and a raid summary can also fire a burst
-     of item lookups moments earlier for a big loot night. A burst of
-     rapid same-origin requests with no pacing at all is a textbook
-     trigger for Cloudflare (or similar) rate-limit/bot-management
-     blocking - hence PACE_SECONDS below, enforced once here so every
-     current and future caller is covered without having to remember to
-     add sleeps at each call site.
-  3. Separately again: tracked-ability icons (Judgement of Wisdom/Light/
-     the Crusader specifically, reported by a moderator, 2026-08) kept
-     showing WoW's own literal "?" (inv_misc_questionmark) icon instead of
-     the real ability icon - even after confirming Blizzard's Game Data
-     API cleanly 404s for these spell IDs under the Classic namespace
-     (verified live via /raidsummary-test-spell - a real 404, not a fake
-     success), meaning every one of these lookups WAS correctly falling
-     through to this file as the fallback source. The actual bug was here:
-     _fetch()/_fetch_spell()'s FALLBACK dict (returned on ANY failure - no
-     <icon> tag, a 403, a timeout, anything) used to set "icon_url" to
-     item_icon_url(None), which substituted Wowhead's own "unknown icon"
-     placeholder graphic (inv_misc_questionmark.jpg - a real, always-
-     loading image) instead of leaving it empty. Every caller (cogs/
-     raid_summary.py's _get_spell_icon_url and _build_loot_lines,
-     mirrored in blizzard_client.py's own get_item()/get_spell_icon() for
-     the same reason) only checks "is icon_url truthy" to decide whether a
-     lookup actually succeeded - so a total failure looked identical to a
-     real, successfully-resolved icon, and got uploaded as a Discord emoji
-     and shown as if it were correct. Fixed by making the fallback's
-     icon_url genuinely None/empty (item_icon_url() no longer accepts None
-     at all - see its own docstring), same "empty means no icon, not a
-     placeholder image" contract every other icon source in this repo
-     (blizzard_client.py, icons.py) already followed.
+Three fixed issues worth knowing about, since each one is invisible from
+reading the "happy path" code alone:
+  1. A bare item URL (e.g. wowhead.com/item=32238) redirects to that
+     item's canonical slugged URL, and the &xml flag does NOT survive onto
+     that redirect target - the request lands on the plain HTML page
+     instead of the XML feed, with no <icon>/<name> tags anywhere in it.
+     _get_xml_text() below chases redirects manually instead of letting
+     aiohttp do it automatically, so it can re-append &xml on every hop.
+     (aiohttp's default User-Agent also triggers Wowhead's anti-bot
+     challenge on its own - REQUEST_HEADERS' browser UA covers that.)
+  2. A raid summary can fire a burst of same-origin lookups with zero
+     delay between them (every tracked buff/debuff's icon, or a big loot
+     night's items) - a classic trigger for Cloudflare-style rate-limit
+     blocking. PACE_SECONDS enforces spacing once here so every caller is
+     covered without remembering to add sleeps at each call site.
+  3. A FAILED lookup must leave icon_url as None/empty, never a
+     placeholder graphic - every caller only checks "is icon_url truthy"
+     to decide whether a lookup succeeded, so a fallback that pointed at
+     Wowhead's "unknown icon" image (inv_misc_questionmark.jpg) made every
+     total failure look like a real, successfully-resolved icon and get
+     uploaded as a Discord emoji. item_icon_url() no longer accepts None
+     at all (see its own docstring) - same "empty means no icon, not a
+     placeholder image" contract blizzard_client.py/icons.py also follow.
 
 If placeholders/403s keep showing up after all of these, that's the next
 thing to check (Wowhead tightening the challenge further - a JS/cookie
@@ -96,30 +63,22 @@ from storage import ApplicationStore
 log = logging.getLogger("wow-apply-bot.wowhead")
 
 # /tbc/ selects Wowhead's TBC Classic database, NOT the same numeric ID
-# space the bare (retail) URLs used before this. Reported (2026-08,
-# moderator): early loot imports linked several items to the wrong item
-# entirely, which this explains - Wowhead's Classic content (Classic Era/
+# space a bare (retail) URL uses - Wowhead's Classic content (Classic Era/
 # TBC/WotLK Classic) is reissued under its OWN item IDs, not reused from
 # retail's, so item ID NNNNN can be a totally different, unrelated item in
-# the two databases.
-# Gargul's export (running inside the actual TBC Classic client) always
-# gives the Classic-database ID - looking that up against retail (what the
-# bare /item= URL below the docstring used to do) either 404s or, worse,
-# silently returns whatever unrelated item happens to share that ID in
-# retail's numbering. This bot only ever needs TBC Classic data - see
-# config.py's CURRENT_TIER/PREVIOUS_TIER (BT/Hyjal, SSC/TK) - so /tbc/ is
-# hardcoded here rather than made configurable per game version.
+# the two databases. Gargul's export (running inside the actual TBC
+# Classic client) always gives the Classic-database ID, so looking that up
+# against retail either 404s or silently returns an unrelated item that
+# happens to share the ID. This bot only ever needs TBC Classic data - see
+# config/deployment.py's CURRENT_TIER/PREVIOUS_TIER (BT/Hyjal, SSC/TK) -
+# so /tbc/ is hardcoded here rather than made configurable per game version.
 ITEM_XML_URL = "https://www.wowhead.com/tbc/item={item_id}&xml"
 SPELL_XML_URL = "https://www.wowhead.com/tbc/spell={spell_id}&xml"
 
-# Likely cause of the "every item comes back as Item #<id>" symptom (see
-# the module docstring): aiohttp's default User-Agent ("Python/3.x
-# aiohttp/3.x") is a common trigger for an anti-bot challenge page instead
-# of the real XML feed (no <icon>/<name> tags in it). A real browser UA is
-# the standard fix for that class of block - same fix already needed
-# nowhere else in this repo since every other outbound call here is either
-# WarcraftLogs' own API (its own client library conventions apply, not a
-# browser's) or the wow.zamimg.com icon CDN (no anti-bot gate at all).
+# A browser User-Agent avoids Wowhead's anti-bot challenge page - see the
+# module docstring's issue #1. Not needed elsewhere in this repo: every
+# other outbound call here is either WarcraftLogs' own API or the
+# wow.zamimg.com icon CDN, neither of which gates on this.
 REQUEST_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -143,10 +102,8 @@ PACE_SECONDS = 0.5
 MAX_REDIRECTS = 5
 
 ICON_TAG_RE = re.compile(r"<icon[^>]*>([^<]+)</icon>", re.IGNORECASE)
-# Confirmed live (2026-08, moderator screenshot): every loot item's ICON was
-# resolving correctly, but the name was still falling back to "Item #<id>"
-# for every single one - i.e. icon_match was succeeding while name_match
-# wasn't, on the same response. Wowhead wraps <name> in a CDATA section
+# icon_match can succeed while name_match fails on the same response:
+# Wowhead wraps <name> in a CDATA section
 # (<name><![CDATA[Ring of Calming Waves]]></name>) since item names can
 # contain characters (apostrophes, ampersands) that aren't XML-safe as
 # plain text, unlike <icon>'s plain alphanumeric slug - the old
@@ -182,18 +139,11 @@ def item_wowhead_url(item_id: int) -> str:
 
 
 def item_icon_url(icon_slug: str) -> str:
-    # Same wow.zamimg.com CDN convention already relied on elsewhere in this
-    # repo (see config.py's CLASS_ICON_URLS and emoji_admin.py) - proven to
-    # work. Takes a REAL icon_slug only (2026-08 - this used to substitute
-    # Wowhead's own "inv_misc_questionmark" placeholder for a None slug, so
-    # _fetch/_fetch_spell's FALLBACK dict always had a real, successfully-
-    # loading icon_url even when the lookup had actually failed - every
-    # downstream caller only checks "is icon_url truthy" to decide whether
-    # a real icon was found, so a failed lookup's icon_url needs to
-    # genuinely be empty/None, not a valid-looking image URL for a generic
-    # question-mark icon - see the module docstring's newest entry for the
-    # bug this caused, and _fetch/_fetch_spell for the actual fallback
-    # values now).
+    # Same wow.zamimg.com CDN convention relied on elsewhere in this repo
+    # (see config/deployment.py's CLASS_ICON_URLS and emoji_admin.py).
+    # Takes a REAL icon_slug only, never None - see the module docstring's
+    # issue #3 for why a placeholder-image fallback here is a real bug,
+    # not a convenience.
     return f"https://wow.zamimg.com/images/wow/icons/large/{icon_slug}.jpg"
 
 
@@ -274,20 +224,12 @@ class WowheadClient:
                     current_url = next_url
                     continue
                 if resp.status >= 400:
-                    # Bare "403 Forbidden" in a traceback says nothing about
-                    # WHY - reported live (2026-08): every request 403ing
-                    # from this bot's host while the identical URL worked
-                    # fine from the moderator's own browser on a different
-                    # network, which points at something IP/network-level
-                    # (the hosting provider's outbound IP flagged, or a JS/
-                    # challenge gate a plain HTTP client can never pass) -
-                    # neither a header tweak nor URL fix can be verified
-                    # against without seeing what Wowhead actually sent
-                    # back. Logging the real response body (truncated) +
-                    # the headers that usually identify WHICH WAF/CDN is
-                    # blocking (cf-ray, server, cf-mitigated) turns the next
-                    # occurrence into an actual diagnostic instead of a
-                    # bare status code.
+                    # A bare "403 Forbidden" in a traceback says nothing
+                    # about WHY (could be IP-level blocking, a JS/cookie
+                    # challenge, or something else entirely) - log the real
+                    # body (truncated) plus the headers that usually
+                    # identify which WAF/CDN is blocking, so the next
+                    # occurrence is an actual diagnostic, not a bare status.
                     body_snippet = (await resp.text())[:500]
                     log.warning(
                         "Wowhead returned %s for %s - server=%r cf-ray=%r cf-mitigated=%r body[:500]=%r",
@@ -311,10 +253,10 @@ class WowheadClient:
         User-Agent issue, or the CDATA-wrapped <name> tag issue - see the
         module docstring for both) got fixed, since nothing ever re-tried
         it. _is_resolved checks the NAME too, not just icon_slug - a real
-        failure mode seen live (2026-08, moderator screenshot) was every
-        item's ICON resolving fine while the name still fell back to
-        "Item #<id>", which an icon_slug-only check would have kept
-        treating as a full success forever. Retrying here on every call
+        failure mode is every item's ICON resolving fine while the name
+        still falls back to "Item #<id>" (see NAME_TAG_RE's comment), which
+        an icon_slug-only check would keep treating as a full success
+        forever. Retrying here on every call
         this comes up costs nothing once a real result lands (see _fetch),
         since that's the one case that DOES get cached and short-circuits
         every call after."""

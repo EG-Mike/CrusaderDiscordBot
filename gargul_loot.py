@@ -1,7 +1,7 @@
 """
 Parser for Gargul (WoW loot-tracking addon) CSV exports.
 
-Verified against a real export (2026-08) - the export is a plain CSV with a
+Verified against a real export - the export is a plain CSV with a
 header row: dateTime,character,itemID,offspec,id
 
 Notably, it does NOT include the item name, icon, or which boss it dropped
