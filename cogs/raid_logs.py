@@ -27,6 +27,12 @@ Design, per discussion:
     remove-log path, not by resetting here. The tag itself is always shown
     as plain embed text (not a button), so it stays a legible, permanent
     label on the message even after every action button is gone.
+  - "Other" and Untagged never reach Summarized (no automation applies -
+    see below), so they'd otherwise sit with live tag/Reset buttons
+    forever. _auto_summarize_loop closes those too once
+    RAID_LOG_AUTO_SUMMARIZE_TIME passes for the day (entry["buttons_closed"]
+    = True, view stripped down to nothing, same as Summarized) so nobody
+    can tag/reset a log from a previous raid night after the fact.
   - Summarize (moderator-only - broader than the Organizer-only tag gate)
     is triggered either by a manual click, or automatically once
     RAID_LOG_AUTO_SUMMARIZE_TIME (see config/deployment.py) passes on the day the log
@@ -441,6 +447,13 @@ class RaidLogsCog(commands.Cog):
             when = datetime.fromisoformat(entry["summarized_at"]).astimezone(AMSTERDAM_TZ).strftime("%b %d, %H:%M")
             auto_note = f" (auto-completed at the {config.RAID_LOG_AUTO_SUMMARIZE_TIME} cutoff)" if entry.get("auto_summarized") else ""
             embed.add_field(name="Status", value=f"✅ Summarized by {who} at {when}{auto_note}", inline=True)
+        elif entry.get("buttons_closed"):
+            reason = "never tagged" if not entry.get("tag") else "tagged \"Other\", no automation applies"
+            embed.add_field(
+                name="Status",
+                value=f"🔒 Closed at the {config.RAID_LOG_AUTO_SUMMARIZE_TIME} cutoff ({reason})",
+                inline=True,
+            )
         elif entry.get("tag"):
             who = f"<@{entry['tagged_by']}>" if entry.get("tagged_by") else "?"
             embed.add_field(name="Tagged by", value=who, inline=True)
@@ -479,7 +492,7 @@ class RaidLogsCog(commands.Cog):
 
     def _build_view(self, entry: dict) -> discord.ui.View:
         view = discord.ui.View(timeout=None)
-        if entry.get("summarized"):
+        if entry.get("summarized") or entry.get("buttons_closed"):
             return view  # no action buttons left - the tag stays visible as embed text only
         if not entry.get("tag"):
             view.add_item(self._tag_button("Main Raid", "main", discord.ButtonStyle.success))
@@ -577,6 +590,12 @@ class RaidLogsCog(commands.Cog):
         if entry.get("summarized"):
             await interaction.response.send_message("This log has already been summarized.", ephemeral=True)
             return
+        if entry.get("buttons_closed"):
+            await interaction.response.send_message(
+                f"This log is past the {config.RAID_LOG_AUTO_SUMMARIZE_TIME} cutoff and can no longer be tagged.",
+                ephemeral=True,
+            )
+            return
 
         entry["tag"] = tag_value
         entry["tagged_by"] = interaction.user.id
@@ -595,6 +614,12 @@ class RaidLogsCog(commands.Cog):
         if entry.get("summarized"):
             await interaction.response.send_message(
                 "This log has already been summarized - Reset is only available before that.", ephemeral=True
+            )
+            return
+        if entry.get("buttons_closed"):
+            await interaction.response.send_message(
+                f"This log is past the {config.RAID_LOG_AUTO_SUMMARIZE_TIME} cutoff and can no longer be reset.",
+                ephemeral=True,
             )
             return
 
@@ -825,11 +850,28 @@ class RaidLogsCog(commands.Cog):
 
         for message_id in self._get_history_ids():
             entry = self.bot.store.get(message_id)
-            if not entry or entry.get("summarized") or entry.get("tag") not in ("main", "alt"):
+            if not entry or entry.get("summarized") or entry.get("buttons_closed"):
                 continue
             try:
                 message = await channel.fetch_message(message_id)
             except (discord.NotFound, discord.Forbidden):
+                continue
+
+            if entry.get("tag") not in ("main", "alt"):
+                # Untagged, or tagged "Other" (which gets no Summarize
+                # automation at all - see the module docstring). Neither
+                # case is something _run_summarize below can process, but
+                # its buttons (tag buttons / Reset) must still stop being
+                # clickable once today's cutoff passes - otherwise these
+                # are exactly the logs nobody interacted with, left sitting
+                # in #logs with live buttons indefinitely.
+                entry["buttons_closed"] = True
+                self.bot.store.set(message_id, **entry)
+                await self._render_and_edit(message, entry)
+                log.info(
+                    "Closing buttons on raid log %s (tag=%r, past today's %s cutoff, never summarized)",
+                    entry.get("report_code"), entry.get("tag"), config.RAID_LOG_AUTO_SUMMARIZE_TIME,
+                )
                 continue
 
             # Unlike a manual Summarize click (_on_summarize), nobody's
