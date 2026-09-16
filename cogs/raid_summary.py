@@ -244,6 +244,28 @@ def _extract_report_code(link: str) -> str:
     return match.group(1) if match else link
 
 
+def _wcl_fetch_error_message(report_code: str, exc: Exception) -> str:
+    """
+    Turns a raw get_report_summary() exception into something a moderator
+    can actually act on. Every one of its three callers used to show the
+    exact same generic "check the link/code" text for every failure -
+    a bad code, an expired WCL_CLIENT_ID/SECRET, WCL's hourly rate limit
+    being exhausted, and a WCL-side GraphQL error (e.g. its `rankings`
+    field erroring out on a report with a lot of fights - see
+    wcl_client.REPORT_FIGHTS_AND_RANKINGS_QUERY's comment) all looked
+    identical, even though only the first one is actually about the
+    link/code. The real detail was always in the logs (log.exception right
+    before this gets called) - this just surfaces it to Discord too, so a
+    moderator doesn't need log access to tell "bad code" apart from
+    "WCL is rate-limited, try again in a bit". Bounded to a fixed length
+    since str(exc) can be a full aiohttp/GraphQL error blob.
+    """
+    detail = str(exc).strip() or type(exc).__name__
+    if len(detail) > 400:
+        detail = detail[:400] + "…"
+    return f"Couldn't fetch WCL report `{report_code}`: {detail}"
+
+
 def _extract_log_report_code(embed: discord.Embed) -> str | None:
     """Pulls a WCL report code out of a #logs channel post's embed. The
     exact field layout is up to whatever third-party webhook/app posts
@@ -2006,9 +2028,9 @@ class RaidSummaryCog(commands.Cog):
         """
         try:
             summary = await self.bot.wcl.get_report_summary(report_code)
-        except Exception:
+        except Exception as exc:
             log.exception("Failed to fetch WCL report summary for %s", report_code)
-            return {"ok": False, "error": f"Couldn't fetch WCL report `{report_code}` - check the link/code and try again."}
+            return {"ok": False, "error": _wcl_fetch_error_message(report_code, exc)}
         # See wcl_client.get_report_summary's docstring - a report with
         # endTime still 0 is a live log the raid hasn't been stopped on yet
         # on WarcraftLogs, so boss kills/loot from later in the night (or
@@ -2519,9 +2541,9 @@ class RaidSummaryCog(commands.Cog):
         self.bot.wcl.invalidate_report(report_code)
         try:
             summary = await self.bot.wcl.get_report_summary(report_code)
-        except Exception:
+        except Exception as exc:
             log.exception("Failed to refetch WCL report %s", report_code)
-            await interaction.followup.send(f"Couldn't fetch WCL report `{report_code}` - check the link/code.", ephemeral=True)
+            await interaction.followup.send(_wcl_fetch_error_message(report_code, exc), ephemeral=True)
             return
 
         if not summary.get("end_time"):
@@ -2861,9 +2883,9 @@ class RaidSummaryCog(commands.Cog):
         # command exists).
         try:
             probe_summary = await self.bot.wcl.get_report_summary(report_code)
-        except Exception:
+        except Exception as exc:
             log.exception("Failed to refetch WCL report %s for regenerate", report_code)
-            await interaction.followup.send(f"Couldn't fetch WCL report `{report_code}` - check the link/code.", ephemeral=True)
+            await interaction.followup.send(_wcl_fetch_error_message(report_code, exc), ephemeral=True)
             return
         fights_by_encounter = self._group_fights_by_encounter(probe_summary.get("fights") or [])
         killed_count, _, _ = self._tier_stats(tier_data, fights_by_encounter)
