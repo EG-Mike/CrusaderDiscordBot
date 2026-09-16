@@ -23,6 +23,15 @@ log = logging.getLogger("wow-apply-bot.wcl")
 TOKEN_URL = "https://www.warcraftlogs.com/oauth/token"
 API_URL = "https://fresh.warcraftlogs.com/api/v2/client"
 
+# Backoff schedule for a 429 Too Many Requests from API_URL (WCL's hourly
+# points budget, not a dead endpoint) - see _post_graphql. Sums to 220s;
+# get_report_summary() alone can make 20-30+ of these calls for one report
+# (one per kill fight, plus deaths/damage/healing/casts/potions/interrupts/
+# dispels), all from within a single deferred slash-command interaction, so
+# this stays well short of Discord's ~15-minute interaction-followup
+# window even if the limit is hit more than once during one fetch.
+RATE_LIMIT_RETRY_BACKOFFS_SECONDS = [10, 30, 60, 120]
+
 # A character counts as Tank/Healer for get_report_role_composition() only
 # if they filled that role in at least this fraction of the fights they
 # appeared in (handles hybrids who tank/heal some pulls and DPS others) -
@@ -363,6 +372,13 @@ class WarcraftLogsClient:
         # re-uploaded/edited), delete that file or its entry manually.
         self._report_cache = ApplicationStore(path=report_cache_path)
 
+        # Set by _post_graphql the moment ANY request hits a 429, so a
+        # request made moments later (e.g. the next kill fight in
+        # _fetch_player_details' loop) waits out the same known cooldown up
+        # front instead of hammering WCL again just to get refused a second
+        # time - see _post_graphql's docstring.
+        self._rate_limited_until = 0.0
+
     def invalidate_report(self, report_code: str):
         """Drops a report's ENTIRE cached entry (summary + any lazily-cached
         aura_uptime/boss_only_totals/role_composition sub-keys living
@@ -396,6 +412,57 @@ class WarcraftLogsClient:
         log.debug("Fetched a new WCL API token (expires in %ss)", data.get("expires_in", 3600))
         return self._token
 
+    async def _post_graphql(self, session: aiohttp.ClientSession, headers: dict, query: str,
+                             variables: dict | None = None) -> dict:
+        """
+        THE single low-level POST point for every GraphQL request this
+        client makes against API_URL - every call site used to do its own
+        bare session.post()/raise_for_status(), none of which handled WCL's
+        429 Too Many Requests specially, so hitting it anywhere (this
+        client can make 20-30+ requests fetching one report) surfaced as a
+        hard failure straight to whatever Discord command was running (e.g.
+        /raidsummary's "Couldn't fetch WCL report ...: 429, message='Too
+        Many Requests'"). A 429 here is WCL's own hourly points budget
+        running dry, not the API being down, so this retries with
+        increasing backoff (RATE_LIMIT_RETRY_BACKOFFS_SECONDS) instead of
+        raising on the first hit - from the caller's side (a /raidsummary
+        interaction, always deferred before this runs) that just looks like
+        the command taking longer than usual, not failing. self.
+        _rate_limited_until is shared across every call this client makes
+        (not just retries of THIS request), so a 429 hit by one request
+        makes every other request made in the meantime wait out the same
+        cooldown up front rather than each independently hammering WCL and
+        getting refused again.
+
+        Still raises aiohttp.ClientResponseError (429) if the backoff
+        schedule runs out while still rate-limited, or immediately for any
+        other HTTP error status - same failure contract every caller here
+        already handled before this existed.
+        """
+        now = time.monotonic()
+        if self._rate_limited_until > now:
+            wait = self._rate_limited_until - now
+            log.info("WCL still rate-limited from an earlier request - waiting %.0fs before this one", wait)
+            await asyncio.sleep(wait)
+
+        backoffs = [*RATE_LIMIT_RETRY_BACKOFFS_SECONDS, None]  # None = final attempt, no more retries after
+        for backoff in backoffs:
+            async with session.post(
+                API_URL, json={"query": query, "variables": variables or {}}, headers=headers,
+            ) as resp:
+                if resp.status != 429:
+                    resp.raise_for_status()
+                    return await resp.json()
+                if backoff is None:
+                    resp.raise_for_status()  # out of retries - raise the 429 for the caller to handle
+
+                retry_after = resp.headers.get("Retry-After")
+                wait_seconds = float(retry_after) if retry_after else backoff
+
+            self._rate_limited_until = time.monotonic() + wait_seconds
+            log.warning("WCL rate-limited (429 Too Many Requests) - retrying in %.0fs", wait_seconds)
+            await asyncio.sleep(wait_seconds)
+
     async def _get_class_map(self) -> dict:
         """Fetches and caches the real classID -> name map from WCL itself."""
         if self._class_map is not None:
@@ -405,13 +472,7 @@ class WarcraftLogsClient:
         headers = {"Authorization": f"Bearer {token}"}
 
         async with aiohttp.ClientSession() as session:
-            async with session.post(
-                API_URL,
-                json={"query": CLASS_MAP_QUERY},
-                headers=headers,
-            ) as resp:
-                resp.raise_for_status()
-                payload = await resp.json()
+            payload = await self._post_graphql(session, headers, CLASS_MAP_QUERY)
 
         if "errors" in payload:
             raise RuntimeError(f"WarcraftLogs API error: {payload['errors']}")
@@ -430,20 +491,10 @@ class WarcraftLogsClient:
         headers = {"Authorization": f"Bearer {token}"}
 
         async with aiohttp.ClientSession() as session:
-            async with session.post(
-                API_URL,
-                json={
-                    "query": CHARACTER_QUERY,
-                    "variables": {
-                        "name": name,
-                        "serverSlug": server_slug,
-                        "serverRegion": server_region,
-                    },
-                },
-                headers=headers,
-            ) as resp:
-                resp.raise_for_status()
-                payload = await resp.json()
+            payload = await self._post_graphql(
+                session, headers, CHARACTER_QUERY,
+                {"name": name, "serverSlug": server_slug, "serverRegion": server_region},
+            )
 
         if "errors" in payload:
             raise RuntimeError(f"WarcraftLogs API error: {payload['errors']}")
@@ -494,13 +545,7 @@ class WarcraftLogsClient:
         variables = {"id": character_id, "zoneId": zone_id}
 
         async with aiohttp.ClientSession() as session:
-            async with session.post(
-                API_URL,
-                json={"query": CHARACTER_TIER_QUERY, "variables": variables},
-                headers=headers,
-            ) as resp:
-                resp.raise_for_status()
-                payload = await resp.json()
+            payload = await self._post_graphql(session, headers, CHARACTER_TIER_QUERY, variables)
 
         if "errors" in payload:
             raise RuntimeError(f"WarcraftLogs API error: {payload['errors']}")
@@ -564,16 +609,9 @@ class WarcraftLogsClient:
         kill_counts = {}
         role_tally = {}
         for fight_id in fight_ids:
-            async with session.post(
-                API_URL,
-                json={
-                    "query": REPORT_PLAYER_DETAILS_QUERY,
-                    "variables": {"code": report_code, "fightIDs": [fight_id]},
-                },
-                headers=headers,
-            ) as resp:
-                resp.raise_for_status()
-                player_payload = await resp.json()
+            player_payload = await self._post_graphql(
+                session, headers, REPORT_PLAYER_DETAILS_QUERY, {"code": report_code, "fightIDs": [fight_id]}
+            )
 
             await asyncio.sleep(0.15)  # pacing - a full attendance run can hit
                                         # dozens of these across a 5-log window
@@ -693,13 +731,7 @@ class WarcraftLogsClient:
         if not fight_ids:
             return []
         try:
-            async with session.post(
-                API_URL,
-                json={"query": query, "variables": {"code": report_code, "fightIDs": fight_ids}},
-                headers=headers,
-            ) as resp:
-                resp.raise_for_status()
-                payload = await resp.json()
+            payload = await self._post_graphql(session, headers, query, {"code": report_code, "fightIDs": fight_ids})
         except Exception:
             log.warning("Failed to fetch report table for %s", report_code, exc_info=True)
             return []
@@ -986,13 +1018,9 @@ class WarcraftLogsClient:
         headers = {"Authorization": f"Bearer {token}"}
 
         async with aiohttp.ClientSession() as session:
-            async with session.post(
-                API_URL,
-                json={"query": REPORT_FIGHTS_AND_RANKINGS_QUERY, "variables": {"code": report_code}},
-                headers=headers,
-            ) as resp:
-                resp.raise_for_status()
-                payload = await resp.json()
+            payload = await self._post_graphql(
+                session, headers, REPORT_FIGHTS_AND_RANKINGS_QUERY, {"code": report_code}
+            )
 
             if "errors" in payload:
                 raise RuntimeError(f"WarcraftLogs API error: {payload['errors']}")
@@ -1344,13 +1372,7 @@ class WarcraftLogsClient:
 
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    API_URL,
-                    json={"query": GUILD_ZONE_RANKINGS_QUERY, "variables": variables},
-                    headers=headers,
-                ) as resp:
-                    resp.raise_for_status()
-                    payload = await resp.json()
+                payload = await self._post_graphql(session, headers, GUILD_ZONE_RANKINGS_QUERY, variables)
         except Exception:
             log.warning("Failed to fetch guild zone rankings for %s", guild_name, exc_info=True)
             return None
