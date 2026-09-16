@@ -652,6 +652,19 @@ class RaidSummaryCog(commands.Cog):
         self.logs_channel_id = int(logs_channel_id) if logs_channel_id else None  # optional - enables the report picker
         self._bulk_tasks = []  # keeps /raidsummary-bulk's background task(s) alive - see raidsummary_bulk
 
+        # report_code -> True while _create_summary is actively posting a
+        # NEW summary for it - see that method. Guards against two people
+        # racing the same report (e.g. one /raidsummary run paused inside
+        # get_report_summary waiting out a WCL 429, and a second moderator
+        # starts another /raidsummary for the same log in the meantime) -
+        # without this, both would eventually post their own #raid-summary
+        # thread for the same raid night, double-counting it in
+        # /tier-recap unless manually merged with /raidsummary-merge-weeks.
+        # In-memory only (not persisted) - a bot restart mid-post is already
+        # an edge case rare enough not to need surviving that, and an empty
+        # set on restart just means "nothing in progress", the safe default.
+        self._reports_in_progress: set[str] = set()
+
         # Own dedicated JSON store, separate from the shared bot.store
         # (applications.json) every other cog uses - same "one small file
         # per subsystem" pattern wcl_client.py (wcl_report_cache.json) and
@@ -1909,10 +1922,24 @@ class RaidSummaryCog(commands.Cog):
 
         report_code = _extract_report_code(report)
         tier_data = self._resolve_tier(tier)
-        result = await self._assemble_and_post_summary(
-            interaction.guild, forum_channel, tier_data, report_code, clear_status, raid_type,
-            loot_rows, media_link, note,
-        )
+
+        if report_code in self._reports_in_progress:
+            await interaction.followup.send(
+                f"Someone else is already posting a raid summary for `{report_code}` right now - "
+                "wait for that one to finish (or fail) before trying again, so this log doesn't end up "
+                "with two summaries.",
+                ephemeral=True,
+            )
+            return
+
+        self._reports_in_progress.add(report_code)
+        try:
+            result = await self._assemble_and_post_summary(
+                interaction.guild, forum_channel, tier_data, report_code, clear_status, raid_type,
+                loot_rows, media_link, note,
+            )
+        finally:
+            self._reports_in_progress.discard(report_code)
         if not result["ok"]:
             await interaction.followup.send(result["error"], ephemeral=True)
             return
@@ -2349,6 +2376,15 @@ class RaidSummaryCog(commands.Cog):
             killed_count, _, _ = self._tier_stats(tier_data, fights_by_encounter)
             clear_status = "full_clear" if killed_count == len(tier_data["bosses"]) else "progress"
 
+            if report_code in self._reports_in_progress:
+                # Same guard _create_summary uses - a moderator running
+                # /raidsummary for this exact report at the same moment a
+                # bulk import reaches it, however unlikely, would otherwise
+                # double-post it.
+                await channel.send(f"⏭️ [{i}/{total}] `{report_code}` — already being summarized elsewhere right now, skipped.")
+                continue
+
+            self._reports_in_progress.add(report_code)
             try:
                 result = await self._assemble_and_post_summary(
                     channel.guild, forum_channel, tier_data, report_code, clear_status, raid_type,
@@ -2358,6 +2394,8 @@ class RaidSummaryCog(commands.Cog):
                 log.exception("Bulk import: unexpected error on report %s", report_code)
                 await channel.send(f"❌ [{i}/{total}] `{report_code}` — unexpected error, check the bot's logs.")
                 continue
+            finally:
+                self._reports_in_progress.discard(report_code)
 
             if not result["ok"]:
                 await channel.send(f"❌ [{i}/{total}] `{report_code}` — {result['error']}")
