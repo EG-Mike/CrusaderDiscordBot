@@ -181,11 +181,10 @@ import config
 import icons
 import gargul_loot
 import wowhead
+from wcl_client import extract_report_code as _extract_report_code
 from storage import ApplicationStore
 
 log = logging.getLogger("wow-apply-bot.raidsummary")
-
-REPORT_LINK_RE = re.compile(r"(?:reports/|^)([A-Za-z0-9]{8,20})(?:[/#].*)?$")
 
 # Used to pull a report code out of #logs channel embeds (see
 # _fetch_recent_log_entries) - deliberately looser than REPORT_LINK_RE
@@ -235,13 +234,6 @@ AMSTERDAM_TZ = ZoneInfo("Europe/Amsterdam")
 # note on Components V2's ~4000-char/40-component caps.
 MAX_CHARS_PER_PAGE = 3500
 MAX_UNITS_PER_PAGE = 24
-
-
-def _extract_report_code(link: str) -> str:
-    """Accepts a bare report code or a full WCL report URL."""
-    link = link.strip().rstrip("/")
-    match = REPORT_LINK_RE.search(link)
-    return match.group(1) if match else link
 
 
 def _wcl_fetch_error_message(report_code: str, exc: Exception) -> str:
@@ -2357,6 +2349,16 @@ class RaidSummaryCog(commands.Cog):
         posted = 0
         for i, raw in enumerate(report_codes, start=1):
             report_code = _extract_report_code(raw)
+
+            if report_code in self._reports_in_progress:
+                # Same guard _create_summary uses - a moderator running
+                # /raidsummary for this exact report at the same moment a
+                # bulk import reaches it, however unlikely, would otherwise
+                # double-post it. Checked up front, before spending a WCL
+                # fetch on a report we're just going to skip anyway.
+                await channel.send(f"⏭️ [{i}/{total}] `{report_code}` — already being summarized elsewhere right now, skipped.")
+                continue
+
             await self._wait_for_rate_limit_budget()
 
             try:
@@ -2375,14 +2377,6 @@ class RaidSummaryCog(commands.Cog):
             fights_by_encounter = self._group_fights_by_encounter(summary["fights"])
             killed_count, _, _ = self._tier_stats(tier_data, fights_by_encounter)
             clear_status = "full_clear" if killed_count == len(tier_data["bosses"]) else "progress"
-
-            if report_code in self._reports_in_progress:
-                # Same guard _create_summary uses - a moderator running
-                # /raidsummary for this exact report at the same moment a
-                # bulk import reaches it, however unlikely, would otherwise
-                # double-post it.
-                await channel.send(f"⏭️ [{i}/{total}] `{report_code}` — already being summarized elsewhere right now, skipped.")
-                continue
 
             self._reports_in_progress.add(report_code)
             try:

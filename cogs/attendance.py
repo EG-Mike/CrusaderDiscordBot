@@ -37,6 +37,7 @@ from discord.ext import commands
 
 import config
 import icons
+from wcl_client import extract_report_code as _extract_report_code
 
 log = logging.getLogger("wow-apply-bot.attendance")
 
@@ -60,8 +61,6 @@ EXPLAINER_MESSAGE_KEY = "attendance_explainer_message"
 LOG_LIST_MARKER = "attendance-log-list"
 ROSTER_MARKER = "attendance-roster"
 EXPLAINER_MARKER = "attendance-explainer"
-
-REPORT_LINK_RE = re.compile(r"(?:reports/|^)([A-Za-z0-9]{8,20})(?:[/#].*)?$")
 
 REFRESH_COOLDOWN_SECONDS = 300  # 5 minutes - button only, /checkattendance run is never limited
 
@@ -110,13 +109,6 @@ def _strip_name_tag(name: str) -> str:
     matching against WCL rosters (real character names never contain
     literal < or > characters, so this is always safe to strip)."""
     return _NAME_TAG_RE.sub("", name).strip()
-
-
-def _extract_report_code(link: str) -> str:
-    """Accepts a bare report code or a full WCL report URL."""
-    link = link.strip().rstrip("/")
-    match = REPORT_LINK_RE.search(link)
-    return match.group(1) if match else link
 
 
 def _footer_with_update_stamp(marker: str, updated_by: str = None) -> str:
