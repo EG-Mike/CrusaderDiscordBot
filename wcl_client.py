@@ -9,6 +9,7 @@ Docs: https://www.warcraftlogs.com/api/docs
              serves its own database)
 """
 
+import re
 import time
 import asyncio
 import logging
@@ -22,6 +23,20 @@ log = logging.getLogger("wow-apply-bot.wcl")
 
 TOKEN_URL = "https://www.warcraftlogs.com/oauth/token"
 API_URL = "https://fresh.warcraftlogs.com/api/v2/client"
+
+# Matches a bare WCL report code or a full report URL/link - the one place
+# this parsing lives (cogs/raid_summary.py and cogs/attendance.py both used
+# to keep their own identical copy of this regex/function; kept here since
+# it's WCL-specific, not generic Discord-bot logic).
+REPORT_LINK_RE = re.compile(r"(?:reports/|^)([A-Za-z0-9]{8,20})(?:[/#].*)?$")
+
+
+def extract_report_code(link: str) -> str:
+    """Accepts a bare report code or a full WCL report URL."""
+    link = link.strip().rstrip("/")
+    match = REPORT_LINK_RE.search(link)
+    return match.group(1) if match else link
+
 
 # Backoff schedule for a 429 Too Many Requests from API_URL (WCL's hourly
 # points budget, not a dead endpoint) - see _post_graphql. Sums to 220s;
