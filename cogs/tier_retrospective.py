@@ -288,6 +288,8 @@ class TierRetrospectiveCog(commands.Cog):
         sub_instances = config.TIER_SUB_INSTANCES.get(tier_name) or {tier_name: list(tier_data["bosses"].keys())}
         fastest_clears = {}
         fastest_raidnight = None
+        slowest_raidnight = None
+        most_wipes_raid = None
         unique_chars = set()
         total_boss_kills = 0
         total_raid_time_ms = 0
@@ -344,6 +346,20 @@ class TierRetrospectiveCog(commands.Cog):
             session_ms = sum(member_spans_ms)
             if fastest_raidnight is None or session_ms < fastest_raidnight["ms"]:
                 fastest_raidnight = {"ms": session_ms, "week": week_by_session[sid], "date": _session_date(members)}
+            if slowest_raidnight is None or session_ms > slowest_raidnight["ms"]:
+                slowest_raidnight = {"ms": session_ms, "week": week_by_session[sid], "date": _session_date(members)}
+
+        # Worst raid by wipes - also per SESSION, summing every member
+        # report's non-kill pulls on this tier's bosses. fights_by_encounter
+        # already drops 100%-HP resets (see _group_fights_by_encounter), so
+        # this matches the "Wipe N" lines each raid's own summary lists.
+        for sid, members in sessions.items():
+            wipes = sum(
+                1 for m in members for eid in tier_data["bosses"].values()
+                for f in m["fights_by_encounter"].get(eid, []) if not f["kill"]
+            )
+            if wipes and (most_wipes_raid is None or wipes > most_wipes_raid["wipes"]):
+                most_wipes_raid = {"wipes": wipes, "week": week_by_session[sid], "date": _session_date(members)}
 
         # --- personal: medals ---------------------------------------------
 
@@ -386,15 +402,13 @@ class TierRetrospectiveCog(commands.Cog):
                 deaths_total[name] = deaths_total.get(name, 0) + v
             for name, v in (s.get("potion_casts") or {}).items():
                 potion_totals[name] = potion_totals.get(name, 0) + v
-            # Every row counts as 1 item toward its winner, mainspec or off
-            # - not attributed to whoever's tracking loot, so a disenchant
-            # winner name (whatever the guild's Gargul setup records that
-            # as) shows up here like any other "character" would, same as
-            # cogs/raid_summary.py's own per-raid loot list never special-
-            # cases it either.
+            # Every row counts as 1 item toward its winner, mainspec or off.
+            # Gargul's "_disenchanted" pseudo-winner (items sent to the
+            # disenchanter) isn't a raider, so it's skipped here rather than
+            # topping the leaderboard.
             for row in r["loot_rows"]:
                 character = row.get("character")
-                if character:
+                if character and not character.lower().startswith("_disenchant"):
                     loot_counts[character] = loot_counts.get(character, 0) + 1
 
         # Attendance is counted per SESSION (raid week), not per report -
@@ -435,6 +449,8 @@ class TierRetrospectiveCog(commands.Cog):
             "total_weeks": len(sessions),
             "fastest_clears": fastest_clears,
             "fastest_raidnight": fastest_raidnight,
+            "slowest_raidnight": slowest_raidnight,
+            "most_wipes_raid": most_wipes_raid,
             "unique_chars": unique_chars,
             "total_boss_kills": total_boss_kills,
             "total_raid_time_ms": total_raid_time_ms,
@@ -479,6 +495,18 @@ class TierRetrospectiveCog(commands.Cog):
             lines.append(
                 f"⚡ Fastest raid night (first pull → last kill): **{_format_duration_words(fr['ms'])}** "
                 f"(Week {fr['week']}, {fr['date']})"
+            )
+        if agg.get("slowest_raidnight"):
+            sr = agg["slowest_raidnight"]
+            lines.append(
+                f"🐌 Longest raid night (first pull → last kill): **{_format_duration_words(sr['ms'])}** "
+                f"(Week {sr['week']}, {sr['date']})"
+            )
+        if agg.get("most_wipes_raid"):
+            mw = agg["most_wipes_raid"]
+            lines.append(
+                f"🪦 Most wipes in one raid: **{mw['wipes']}** wipe{'s' if mw['wipes'] != 1 else ''} "
+                f"(Week {mw['week']}, {mw['date']})"
             )
         lines.append(f"👥 **{len(agg['unique_chars'])}** unique character{'s' if len(agg['unique_chars']) != 1 else ''} raided this tier.")
         lines.append(f"💀 **{agg['total_boss_kills']}** total boss kill{'s' if agg['total_boss_kills'] != 1 else ''} logged.")
@@ -576,6 +604,13 @@ class TierRetrospectiveCog(commands.Cog):
         )
         if loot_block:
             blocks.append(loot_block)
+
+        # Inside joke, not a computed stat - fixed names and a fixed 0.
+        warglaives_block = self._build_top_block(
+            "# of Warglaives Looted", "⚔️", {"Moffel": 0, "Scarfex": 0}, classes_map, guild,
+            lambda v: f"{int(v)}", top_n=5,
+        )
+        blocks.append(warglaives_block)
 
         attendance_block = self._build_attendance_block(agg, guild)
         if attendance_block:
