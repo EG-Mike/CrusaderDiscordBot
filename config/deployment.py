@@ -754,16 +754,33 @@ FUTURE_TIERS = {
 
 
 # --- Polls (cogs/polls.py) ---
-# Defaults for /poll create - each one can be overridden per poll via the
-# command's own options.
-# How many entries each member may submit during the suggestion phase.
-POLL_DEFAULT_MAX_SUGGESTIONS_PER_USER = 3
-# How many entries each member may vote for (1 = classic one-person-one-vote;
-# higher = approval-style voting, picking several favourites).
-POLL_DEFAULT_MAX_VOTES_PER_USER = 1
+# Defaults for /poll create. Every one of these can be overridden per poll
+# through the command's own options - these just decide what you get when
+# the poll starter leaves an option blank.
+#
+# Whether members may add their own options isn't a constant here: it
+# defaults to ON when the poll is created without any starting options
+# (e.g. "New guild name?") and OFF when starting options are given
+# (e.g. "Yes; No; Maybe").
+#
+# How many options each member may add.
+POLL_DEFAULT_MAX_ADDS_PER_MEMBER = 3
+# With member-added options: True = a separate "adding" phase first, and the
+# poll starter opens voting later (fair to people who add late). False =
+# members can add options and vote at the same time.
+POLL_DEFAULT_COLLECT_FIRST = True
+# How many options each member may vote for (1 = one person, one vote;
+# more = approval-style "pick your favourites").
+POLL_DEFAULT_MAX_VOTES_PER_MEMBER = 1
 # Show running vote counts while voting is open. False hides the tally until
-# the poll is closed (avoids bandwagoning on an early leader).
-POLL_DEFAULT_SHOW_LIVE_RESULTS = True
+# the poll closes (avoids bandwagoning on an early leader).
+POLL_DEFAULT_LIVE_RESULTS = True
+# Show who added each option.
+POLL_DEFAULT_SHOW_AUTHORS = True
+# Make votes public (who voted for what). Off = anonymous - only totals.
+POLL_DEFAULT_SHOW_VOTERS = False
+# Let members change or withdraw their vote while voting is open.
+POLL_DEFAULT_ALLOW_VOTE_CHANGE = True
 # True = only moderators (MOD_ROLE_ID / Manage Roles) can run /poll create.
 # The poll's creator can always manage their own poll either way.
 POLL_CREATE_MOD_ONLY = True
