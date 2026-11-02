@@ -83,24 +83,42 @@ moderator-driven announcement system.
 
 ### Polls
 
-1. A moderator runs **`/poll create`** with a question (e.g. "New guild
-   name?"). Optional settings per poll: description, how many entries each
-   member may suggest (`max_suggestions`, default 3), how many entries each
-   member may vote for (`max_votes`, default 1), and whether vote counts are
-   shown live (`live_results`). Defaults live in `config/deployment.py`'s
-   `POLL_*` constants.
-2. **Suggestion phase**: members press **💡 Suggest** and type an entry.
-   Duplicates are rejected, and a member can **🗑️ Withdraw mine** to swap
-   one out. Max 25 entries per poll (Discord's dropdown limit).
-3. The poll's creator or a moderator opens **⚙️ Manage** → **Open voting**.
-   Suggestions lock and a dropdown appears; picking again replaces your
-   vote. **🧾 My votes** / **↩️ Clear my votes** do what they say. Only
-   totals are shown - never who voted for what.
-4. **Manage** → **Close poll** shows the final ranking. The manage panel can
-   also reopen suggestions/voting, remove troll entries (their votes are
-   dropped too), and toggle live results.
-5. Passing `options: Yes; No; Maybe` skips suggestions entirely for a plain
-   fixed-option poll.
+**`/poll create`** posts a self-updating poll. It works for a quick
+yes/no, a multi-choice vote, or a "members suggest, then everyone votes"
+poll like picking a guild name. The poll starter sets the rules with the
+command's options; anything left blank uses the `POLL_*` defaults in
+`config/deployment.py`:
+
+| Option | What it does | Default |
+|---|---|---|
+| `question` / `description` | What the poll asks, plus optional context. | - |
+| `options` | Starting options, `;`-separated (`Yes; No; Maybe`). | none |
+| `members_can_add` | Members may add their own options. | on if no `options` given, else off |
+| `max_adds` | Options each member may add. | 3 |
+| `collect_first` | Separate "adding" phase before voting (off = add and vote at the same time). | on |
+| `max_votes` | Options each member may vote for (1 = classic, more = pick favourites). | 1 |
+| `live_results` | Show counts while voting (off = revealed when closed). | on |
+| `show_authors` | Show who added each option. | on |
+| `show_voters` | Public votes - show who voted for what. | off |
+| `allow_vote_change` | Members may change/withdraw their vote. | on |
+| `duration` | Auto-close voting this long after it opens (`2d`, `12h`, `1d6h`, `90m`). | none |
+
+Examples:
+- Guild name: `/poll create question:New guild name?` - members add up to
+  3 names, then the starter opens voting.
+- Raid night: `/poll create question:Extra raid night? options:Tue; Wed; Thu max_votes:3 duration:2d`
+
+Members use **➕ Add option**, **🗑️ Withdraw mine** (adding phase), the
+vote dropdown (picking again replaces your vote), **🧾 My vote**,
+**↩️ Clear vote**, and **👥 Voters** (public-vote polls only).
+
+The poll starter and moderators get **⚙️ Manage**: open/close/reopen
+voting, reopen adding, remove the deadline, add or remove options (removing
+one drops its votes), peek at hidden results, and toggle settings. The
+privacy settings (`show_authors`, `show_voters`) can only be switched
+**off** after posting, never back on, because people added options and
+voted expecting that privacy. When a poll closes, manually or by deadline,
+the bot replies to it with the winner (or the tie).
 
 Every poll carries the footer from `config.POLL_FOOTER`.
 
@@ -219,7 +237,7 @@ Every poll carries the footer from `config.POLL_FOOTER`.
 |---|---|
 | `/apply <character>` | Apply to the guild with your character name - kicks off the gear-check flow. |
 | `/update-application` | Add or update the note/screenshot(s) on your latest pending application. |
-| `/poll create` | Start a suggestion/voting poll (moderator only unless `config.POLL_CREATE_MOD_ONLY = False`). |
+| `/poll create` | Start a poll - fixed options, member-added options, or both (moderator only unless `config.POLL_CREATE_MOD_ONLY = False`). |
 
 ### Moderator only
 
