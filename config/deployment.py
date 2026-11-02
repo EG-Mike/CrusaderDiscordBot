@@ -62,6 +62,7 @@ FEATURE_ATTENDANCE_ENABLED = True
 FEATURE_RAID_SUMMARY_ENABLED = True
 FEATURE_RAID_LOGS_ENABLED = True
 FEATURE_TIER_RETROSPECTIVE_ENABLED = True
+FEATURE_POLLS_ENABLED = True
 
 # Fallback guild emoji names, used only if a class/role isn't in
 # CLASS_ICON_URLS / ROLE_ICON_URLS below (e.g. you already manually
@@ -750,3 +751,24 @@ FUTURE_TIERS = {
         },
     },
 }
+
+
+# --- Polls (cogs/polls.py) ---
+# Defaults for /poll create - each one can be overridden per poll via the
+# command's own options.
+# How many entries each member may submit during the suggestion phase.
+POLL_DEFAULT_MAX_SUGGESTIONS_PER_USER = 3
+# How many entries each member may vote for (1 = classic one-person-one-vote;
+# higher = approval-style voting, picking several favourites).
+POLL_DEFAULT_MAX_VOTES_PER_USER = 1
+# Show running vote counts while voting is open. False hides the tally until
+# the poll is closed (avoids bandwagoning on an early leader).
+POLL_DEFAULT_SHOW_LIVE_RESULTS = True
+# True = only moderators (MOD_ROLE_ID / Manage Roles) can run /poll create.
+# The poll's creator can always manage their own poll either way.
+POLL_CREATE_MOD_ONLY = True
+# Small-print line shown under every poll. Set to "" to drop it.
+POLL_FOOTER = (
+    "The Democratic Republic of Crusaders reserves the right to ignore a "
+    "majority vote and implement laws as they see fit."
+)

@@ -81,6 +81,29 @@ moderator-driven announcement system.
    containing just `---` splits the message into separate sections, each
    with a real divider between them.
 
+### Polls
+
+1. A moderator runs **`/poll create`** with a question (e.g. "New guild
+   name?"). Optional settings per poll: description, how many entries each
+   member may suggest (`max_suggestions`, default 3), how many entries each
+   member may vote for (`max_votes`, default 1), and whether vote counts are
+   shown live (`live_results`). Defaults live in `config/deployment.py`'s
+   `POLL_*` constants.
+2. **Suggestion phase**: members press **💡 Suggest** and type an entry.
+   Duplicates are rejected, and a member can **🗑️ Withdraw mine** to swap
+   one out. Max 25 entries per poll (Discord's dropdown limit).
+3. The poll's creator or a moderator opens **⚙️ Manage** → **Open voting**.
+   Suggestions lock and a dropdown appears; picking again replaces your
+   vote. **🧾 My votes** / **↩️ Clear my votes** do what they say. Only
+   totals are shown - never who voted for what.
+4. **Manage** → **Close poll** shows the final ranking. The manage panel can
+   also reopen suggestions/voting, remove troll entries (their votes are
+   dropped too), and toggle live results.
+5. Passing `options: Yes; No; Maybe` skips suggestions entirely for a plain
+   fixed-option poll.
+
+Every poll carries the footer from `config.POLL_FOOTER`.
+
 ### Raid summaries
 
 1. A moderator runs **`/raidsummary`** with no arguments at all. The bot
@@ -196,6 +219,7 @@ moderator-driven announcement system.
 |---|---|
 | `/apply <character>` | Apply to the guild with your character name - kicks off the gear-check flow. |
 | `/update-application` | Add or update the note/screenshot(s) on your latest pending application. |
+| `/poll create` | Start a suggestion/voting poll (moderator only unless `config.POLL_CREATE_MOD_ONLY = False`). |
 
 ### Moderator only
 
@@ -251,6 +275,7 @@ extension list, just flip the flag and restart:
 | `FEATURE_RAID_SUMMARY_ENABLED` | `cogs/raid_summary.py` | `/raidsummary` and every `raidsummary-*` command |
 | `FEATURE_RAID_LOGS_ENABLED` | `cogs/raid_logs.py` | the #logs tagging/auto-Summarize automation (section 11 below) |
 | `FEATURE_TIER_RETROSPECTIVE_ENABLED` | `cogs/tier_retrospective.py` | `/tier-recap` |
+| `FEATURE_POLLS_ENABLED` | `cogs/polls.py` | `/poll create` and every poll's buttons |
 
 Two of these lean on another cog to actually do anything:
 `FEATURE_RAID_LOGS_ENABLED` needs both `FEATURE_RAID_SUMMARY_ENABLED` and
