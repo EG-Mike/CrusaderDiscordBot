@@ -62,6 +62,7 @@ OPTIONAL_EXTENSIONS = [
     ("cogs.raid_logs", config.FEATURE_RAID_LOGS_ENABLED),
     ("cogs.tier_retrospective", config.FEATURE_TIER_RETROSPECTIVE_ENABLED),
     ("cogs.polls", config.FEATURE_POLLS_ENABLED),
+    ("cogs.audit_log", config.FEATURE_AUDIT_LOG_ENABLED),
 ]
 EXTENSIONS = ["cogs.apply"] + [name for name, enabled in OPTIONAL_EXTENSIONS if enabled]
 

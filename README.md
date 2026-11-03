@@ -263,6 +263,7 @@ Every poll carries the footer from `config.POLL_FOOTER`.
 | `/raidsummary-refresh-report <report>` | Force-refetch ONE report from WCL before posting/regenerating its summary, without waiting for the next full cache refresh. |
 | `/raidsummary-regenerate [report]` | Rebuild an already-posted summary's entire content from fresh WCL/Wowhead data, in place. |
 | `/raidsummary-merge-weeks <tier> <reports>` | Fold two or more already-imported reports into one raid week for `/tier-recap`'s stats, optionally consolidating their separate summary posts into one thread. |
+| `/auditlog [lines] [user]` | Show the most recent bot actions (who ran which command / clicked which button), optionally filtered to one member - see "Audit log" below. |
 | `/tier-recap <tier>` | Draft an end-of-tier stats recap (medals, records, most-improved, etc.) in the sandbox channel, same draft/Edit/Publish flow as `/announce` - built entirely from data already cached by past `/raidsummary` posts, no new WCL calls. |
 
 Five more commands exist purely for diagnosing API/lookup issues or doing a
@@ -294,6 +295,7 @@ extension list, just flip the flag and restart:
 | `FEATURE_RAID_LOGS_ENABLED` | `cogs/raid_logs.py` | the #logs tagging/auto-Summarize automation (section 11 below) |
 | `FEATURE_TIER_RETROSPECTIVE_ENABLED` | `cogs/tier_retrospective.py` | `/tier-recap` |
 | `FEATURE_POLLS_ENABLED` | `cogs/polls.py` | `/poll create` and every poll's buttons |
+| `FEATURE_AUDIT_LOG_ENABLED` | `cogs/audit_log.py` | the audit log file and `/auditlog` |
 
 Two of these lean on another cog to actually do anything:
 `FEATURE_RAID_LOGS_ENABLED` needs both `FEATURE_RAID_SUMMARY_ENABLED` and
@@ -327,6 +329,30 @@ that you see is controlled by two settings in `config/deployment.py`:
 
 An invalid value for either falls back to its default (with a startup
 warning for `LOG_LEVEL`) rather than crashing the bot.
+
+## Audit log
+
+`cogs/audit_log.py` writes one line to `audit.log` (next to
+`applications.json`) for every action a user takes with the bot - slash
+commands (with their options), context menus, button clicks (with the
+button's label), dropdown picks (with the chosen values) and modal
+submits. It hooks discord.py's global `on_interaction` event, so every
+cog's commands and buttons are covered automatically, including future
+ones. Example line (tab-separated):
+
+```
+2026-11-03 19:42:10Z	Mike [mike_eg] (123456789)	#gear-check(987654321)	BUTTON wow_apply_approve "Approve" msg=1122334455
+```
+
+Modal field *contents* (applicant notes, announcement text, etc.) are
+intentionally not logged - only which fields were filled in and their
+length. Autocomplete keystrokes are skipped.
+
+Moderators can run `/auditlog` to see the last 25 entries (or
+`lines:` up to 500, optionally `user:` to filter to one member) as an
+ephemeral reply; longer output is attached as a `.txt` file instead. The
+file rotates at 5 MB keeping 5 backups - tune via `AUDIT_LOG_*` in
+`config/deployment.py`.
 
 ## Restricting who can approve applications
 
@@ -597,6 +623,7 @@ cogs/
   raid_summary.py    - the whole raid-summary feature (self-contained)
   tier_retrospective.py - /tier-recap, an end-of-tier stats recap built entirely from
                         data raid_summary.py already cached (see its own module docstring)
+  audit_log.py       - who-did-what audit log file (on_interaction) + /auditlog
   raid_logs.py       - raid log tagging + attendance/raidsummary automation
                         (self-contained; reuses raid_summary.py's
                         RaidSummaryOptionsView and attendance.py's
