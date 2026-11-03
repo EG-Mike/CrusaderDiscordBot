@@ -17,3 +17,15 @@ env/
 
 # Bot audit log (cogs/audit_log.py) and its rotated backups
 audit.log*
+
+# Per-machine config overrides (see config/overrides.py)
+config/deployment_local.py
+
+# SQLite database (db.py) and its WAL side files
+*.db
+*.db-wal
+*.db-shm
+
+# Web dashboard frontend build output / dependencies
+web/node_modules/
+web/dist/

@@ -18,3 +18,10 @@ keeping the two kinds of constants easy to tell apart on disk.
 
 from .game_data import *  # noqa: F401,F403
 from .deployment import *  # noqa: F401,F403
+
+# Optional overrides on top of deployment.py: config/deployment_local.py
+# (per-machine, gitignored) and values saved in the web dashboard. See
+# config/overrides.py. A no-op on a deployment that uses neither.
+from . import overrides as _overrides  # noqa: E402
+
+_overrides.apply_all(__import__(__name__))

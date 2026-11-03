@@ -67,6 +67,13 @@ FEATURE_POLLS_ENABLED = True
 # to AUDIT_LOG_PATH below, plus the mod-only /auditlog command to view it.
 FEATURE_AUDIT_LOG_ENABLED = True
 
+# cogs/web_dashboard.py: the browser-based management dashboard (see the
+# README's "Web dashboard" section). Off by default - turn it on in
+# config/deployment_local.py on the machine that should serve it, along
+# with the WEB_* / DISCORD_CLIENT_SECRET values in .env. Can't be switched
+# off from the dashboard itself (that would lock everyone out of it).
+FEATURE_WEB_DASHBOARD_ENABLED = False
+
 # --- Audit log (cogs/audit_log.py) ---
 # Plain-text file, one line per user action (relative paths are relative to
 # wherever the bot is started from, same as applications.json etc.). It

@@ -296,6 +296,7 @@ extension list, just flip the flag and restart:
 | `FEATURE_TIER_RETROSPECTIVE_ENABLED` | `cogs/tier_retrospective.py` | `/tier-recap` |
 | `FEATURE_POLLS_ENABLED` | `cogs/polls.py` | `/poll create` and every poll's buttons |
 | `FEATURE_AUDIT_LOG_ENABLED` | `cogs/audit_log.py` | the audit log file and `/auditlog` |
+| `FEATURE_WEB_DASHBOARD_ENABLED` | `cogs/web_dashboard.py` | the web dashboard (**off** by default, see "Web dashboard" below) |
 
 Two of these lean on another cog to actually do anything:
 `FEATURE_RAID_LOGS_ENABLED` needs both `FEATURE_RAID_SUMMARY_ENABLED` and
@@ -597,6 +598,182 @@ python bot.py
 Check the console for `Synced N command(s): [...]` and
 `Logged in as ... (id=...)` to confirm startup succeeded.
 
+## Web dashboard (beta)
+
+A browser dashboard for managing the bot, running **inside the bot
+process** (so it uses the same live data and Discord connection as the
+slash commands). Log in with Discord; only members with the moderator role
+(`MOD_ROLE_ID` or Manage Roles), the server owner, and `WEB_ADMIN_USER_IDS`
+get in, checked against their current roles on every request.
+
+Built so far (phase 0):
+
+- **Overview**: bot status (online, latency, uptime, version), pending
+  applications, enabled features, and anything that needs attention.
+- **Settings**: every value from `config/deployment.py`, grouped, with
+  role/channel pickers, help text taken from the comments in that file,
+  validation, per-setting change history with revert, and "reset to
+  default". Saved values take effect on the **next bot restart** (the
+  dashboard lists what's waiting for one).
+- The other pages are placeholders for the next phases.
+
+**Nothing changes for an existing deployment** until you opt in: the
+dashboard is off (`FEATURE_WEB_DASHBOARD_ENABLED = False`) and storage
+stays on JSON files (`STORAGE_BACKEND=json`) by default.
+
+### How settings are layered
+
+1. `config/deployment.py`: the defaults, committed to git.
+2. `config/deployment_local.py`: optional, **not** committed. Values for
+   this machine only (copy `config/deployment_local.example.py`).
+3. Values saved in the dashboard (stored in `crusader.db`).
+
+Later layers win. Secrets and the IDs in `.env` stay in `.env`.
+
+### Storage: JSON or SQLite
+
+`STORAGE_BACKEND=sqlite` in `.env` moves every store (applications,
+announcements, polls, raid summary data, API caches) into one
+`crusader.db`. The first start imports each JSON file automatically and
+leaves the JSON files untouched as a backup. To go back:
+
+```bash
+python db_tools.py export
+```
+
+That writes the database back out as JSON files in `json_export/` (copy
+them over the originals, remove `STORAGE_BACKEND=sqlite`, restart).
+`python db_tools.py backup` makes a safe copy of the database while the bot
+runs; `python db_tools.py info` shows what's in it.
+
+### Setting up a test environment (recommended before going live)
+
+The test setup is a **second bot** (its own Discord application) in a
+**private test server**, running from its own folder on the same VPS. It
+never touches the live bot, the live server or the live data files, and
+its dashboard is never exposed to the internet: you reach it through an
+SSH tunnel.
+
+**1. Test Discord server.** Create a new server. Quickest way to copy the
+live server's channels and roles: in the live server, Server Settings ->
+Server Template -> create a template and open its link (it copies channels,
+roles and permissions, not messages or members). In the copy, re-create
+the raid-summary forum's tags (templates don't copy forum tags).
+
+**2. Test bot application.** At
+https://discord.com/developers/applications create a new application
+(e.g. "Crusader Test"):
+
+- Bot tab: enable the **Server Members** and **Message Content** intents,
+  copy the token.
+- Invite it to the test server the same way as the live bot (see "Setting
+  up on a new server" above) and give its role the same position.
+- OAuth2 tab: copy the **Client Secret**, and under **Redirects** add
+  `http://localhost:8081/auth/callback`.
+
+**3. Get the code on the VPS** (a separate folder from the live bot):
+
+```bash
+git clone https://github.com/EG-Mike/CrusaderDiscordBot.git /opt/crusader-test
+```
+
+```bash
+cd /opt/crusader-test && git checkout claude/kind-bell-m7yoj1
+```
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+```
+
+**4. Configure it.**
+
+```bash
+cp .env.example .env && cp config/deployment_local.example.py config/deployment_local.py
+```
+
+In `.env`: the **test** bot's `DISCORD_TOKEN`, `DISCORD_GUILD_ID` (the test
+server), the test server's channel/role IDs, your WCL credentials (these
+can be the live ones; both bots then share one WCL rate limit), plus:
+
+```
+STORAGE_BACKEND=sqlite
+DISCORD_CLIENT_SECRET=<test application's client secret>
+WEB_BASE_URL=http://localhost:8081
+WEB_PORT=8081
+WEB_ENVIRONMENT=test
+WEB_ADMIN_USER_IDS=<your Discord user ID>
+```
+
+In `config/deployment_local.py`: the test server's role, channel and tag
+IDs (the file lists which ones are hardcoded in `deployment.py`).
+
+Optional: copy the live bot's `*.json` data files into `/opt/crusader-test`
+to test with real data. **Copy**, don't link: the test bot will import them
+into its own database.
+
+**5. Build the dashboard frontend.** This needs Node.js 20 or newer on the
+VPS (only for building; the bot doesn't need Node to run). If `node -v`
+doesn't show one, install it from https://nodejs.org or your distribution's
+NodeSource packages. Then:
+
+```bash
+cd /opt/crusader-test/web && npm ci && npm run build
+```
+
+**6. Start the test bot.**
+
+```bash
+cd /opt/crusader-test && .venv/bin/python bot.py
+```
+
+Look for `Web dashboard listening on http://127.0.0.1:8081` in the
+console. To keep it running in the background, either add it as a second
+instance in AMP, or run it as a systemd service, for example
+`/etc/systemd/system/crusader-test.service`:
+
+```ini
+[Unit]
+Description=Crusader test bot
+After=network-online.target
+
+[Service]
+WorkingDirectory=/opt/crusader-test
+ExecStart=/opt/crusader-test/.venv/bin/python bot.py
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+systemctl daemon-reload && systemctl enable --now crusader-test
+```
+
+**7. Open the dashboard.** On your own computer, open an SSH tunnel to the
+VPS and leave it open:
+
+```bash
+ssh -L 8081:127.0.0.1:8081 root@<your-vps-address>
+```
+
+Then browse to http://localhost:8081 and log in with Discord. The orange
+**TEST** badge next to the logo confirms you're on the test bot.
+
+**Updating the test bot** after new changes are pushed:
+
+```bash
+cd /opt/crusader-test && git pull && (cd web && npm ci && npm run build)
+```
+
+Then restart it (`systemctl restart crusader-test`, or restart it in AMP).
+
+### Working on the frontend
+
+`npm run dev` in `web/` serves the UI with hot reload on
+http://localhost:5173 and forwards API calls to a running bot on port 8081
+(`BOT_URL` to change that). Log in through the bot's own address first
+(the session cookie is shared on localhost).
+
 ## Architecture
 
 ```
@@ -607,13 +784,20 @@ config/              - all tunable config, split into:
   deployment.py        - everything actually tuned per-deployment: logging, feature
                         flags, Discord role/channel/tag IDs, icon sourcing, tuning
                         knobs, tier definitions
+  overrides.py         - applies deployment_local.py (per-machine, gitignored) and
+                        web-dashboard settings on top of deployment.py's defaults
 wcl_client.py        - WarcraftLogs API client (fights/rankings/deaths/roster, cached per-report)
 wowhead.py           - Wowhead item name/icon/link lookup (cached permanently by item ID)
 blizzard_client.py   - optional Blizzard Game Data API client (item/spell icons, character
                         armory) - preferred over wowhead.py when BLIZZARD_CLIENT_ID/SECRET
                         are set, otherwise unused
 gargul_loot.py       - parser for Gargul's loot-export CSV format
-storage.py           - tiny JSON-backed persistence (generic - any cog can use it)
+storage.py           - tiny key/record persistence (generic - any cog can use it),
+                        JSON files or SQLite (STORAGE_BACKEND)
+db.py                - shared SQLite database (records, dashboard settings, sessions)
+db_tools.py          - database info / export back to JSON / backup
+webapi/              - the web dashboard's HTTP API (runs inside the bot process)
+web/                 - the web dashboard's frontend (React + Vite + Tailwind)
 icons.py             - shared icon resolution (guild emoji + auto-provisioned application emoji)
 cogs/
   apply.py           - the whole guild-application feature (self-contained)
@@ -624,6 +808,7 @@ cogs/
   tier_retrospective.py - /tier-recap, an end-of-tier stats recap built entirely from
                         data raid_summary.py already cached (see its own module docstring)
   audit_log.py       - who-did-what audit log file (on_interaction) + /auditlog
+  web_dashboard.py   - starts the web dashboard server (off by default)
   raid_logs.py       - raid log tagging + attendance/raidsummary automation
                         (self-contained; reuses raid_summary.py's
                         RaidSummaryOptionsView and attendance.py's
