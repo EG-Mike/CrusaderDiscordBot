@@ -29,3 +29,4 @@ config/deployment_local.py
 # Web dashboard frontend build output / dependencies
 web/node_modules/
 web/dist/
+web/*.tsbuildinfo
