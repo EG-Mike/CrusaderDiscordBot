@@ -63,6 +63,20 @@ FEATURE_RAID_SUMMARY_ENABLED = True
 FEATURE_RAID_LOGS_ENABLED = True
 FEATURE_TIER_RETROSPECTIVE_ENABLED = True
 FEATURE_POLLS_ENABLED = True
+# cogs/audit_log.py: records who ran which command / clicked which button
+# to AUDIT_LOG_PATH below, plus the mod-only /auditlog command to view it.
+FEATURE_AUDIT_LOG_ENABLED = True
+
+# --- Audit log (cogs/audit_log.py) ---
+# Plain-text file, one line per user action (relative paths are relative to
+# wherever the bot is started from, same as applications.json etc.). It
+# rotates once it reaches AUDIT_LOG_MAX_BYTES, keeping AUDIT_LOG_BACKUP_COUNT
+# older files (audit.log.1, audit.log.2, ...) - defaults keep ~5 x 5 MB,
+# which is many months of history for a guild-sized bot. /auditlog reads
+# across the backups too when asked for more lines than the current file has.
+AUDIT_LOG_PATH = "audit.log"
+AUDIT_LOG_MAX_BYTES = 5 * 1024 * 1024
+AUDIT_LOG_BACKUP_COUNT = 5
 
 # Fallback guild emoji names, used only if a class/role isn't in
 # CLASS_ICON_URLS / ROLE_ICON_URLS below (e.g. you already manually
