@@ -122,8 +122,7 @@ async def levels_for(bot, user_id: int, *, fresh: bool = False) -> set:
                 member = None
     if member is not None:
         role_ids = {role.id for role in member.roles}
-        mod_role_id = int(os.environ.get("MOD_ROLE_ID", "0") or 0)
-        if member.guild_permissions.manage_roles or mod_role_id in role_ids:
+        if member.guild_permissions.manage_roles or (config.MOD_ROLE_ID and config.MOD_ROLE_ID in role_ids):
             levels.add("moderator")
         if config.APPROVER_ROLE_ID in role_ids:
             levels.add("approver")

@@ -22,6 +22,72 @@ has the same suspicious shape and is flagged unverified for exactly this
 reason.
 """
 
+import os as _os
+
+
+def _env_int(name: str) -> int:
+    value = (_os.environ.get(name) or "").strip()
+    return int(value) if value.isdigit() else 0
+
+
+# --- Discord server: channels, roles and realm ---
+# Set these in the web dashboard (Settings -> Discord server). The values
+# below are only the fallback: whatever .env has for the same name (how
+# they were configured before the dashboard existed), else 0 / empty =
+# "not set". A feature whose channel isn't set yet just stays inactive
+# instead of stopping the bot from starting.
+
+# Role allowed to use moderator commands, buttons and the web dashboard
+# (anyone with the Manage Roles permission counts as a moderator too).
+MOD_ROLE_ID = _env_int("MOD_ROLE_ID")
+
+# Role given to an approved applicant (your "Fresh" role).
+FRESH_ROLE_ID = _env_int("FRESH_ROLE_ID")
+
+# Channel where applications are posted for review (Approve/Deny buttons).
+REVIEW_CHANNEL_ID = _env_int("REVIEW_CHANNEL_ID")
+
+# Channel where new members apply. The bot posts and pins a short "how to
+# apply" explainer with the Start button here. Optional.
+GEAR_CHECK_CHANNEL_ID = _env_int("GEAR_CHECK_CHANNEL_ID")
+
+# Moderator-only channel where announcement and tier-recap drafts are
+# posted for editing before they're published. Needed for /announce.
+ANNOUNCEMENT_SANDBOX_CHANNEL_ID = _env_int("ANNOUNCEMENT_SANDBOX_CHANNEL_ID")
+
+# Channel for the pinned attendance messages (log list, roster, overview).
+ATTENDANCE_CHANNEL_ID = _env_int("ATTENDANCE_CHANNEL_ID")
+
+# General moderator chat. Optional: when set, attendance overview
+# refreshes are mirrored here too, since the attendance channel is easy to
+# miss.
+MODERATOR_CHANNEL_ID = _env_int("MODERATOR_CHANNEL_ID")
+
+# FORUM channel where /raidsummary posts each raid's recap as a new thread.
+# Create the tier and clear-status tags in the forum's settings first.
+RAID_SUMMARY_FORUM_CHANNEL_ID = _env_int("RAID_SUMMARY_FORUM_CHANNEL_ID")
+
+# Channel where your WCL report webhook (e.g. "Crusader's Logs") posts new
+# reports. Optional: enables /raidsummary's report picker and the raid log
+# automation. Usually hidden from members.
+RAID_LOGS_CHANNEL_ID = _env_int("RAID_LOGS_CHANNEL_ID")
+
+# Channel the bot posts its cleaned-up, taggable copy of each new report
+# to. Optional: leave unset to turn the raid log tagging automation off.
+RAID_LOGS_REPOST_CHANNEL_ID = _env_int("RAID_LOGS_REPOST_CHANNEL_ID")
+
+# Your realm as WarcraftLogs writes it in character URLs, e.g. "spineshatter"
+# for fresh.warcraftlogs.com/character/eu/spineshatter/Name.
+SERVER_SLUG = _os.environ.get("SERVER_SLUG", "")
+
+# Region code: us, eu, kr, tw or cn.
+SERVER_REGION = _os.environ.get("SERVER_REGION", "us")
+
+# Your guild's exact name on WarcraftLogs. Optional: enables the guild-rank
+# section of raid summaries.
+GUILD_NAME = _os.environ.get("GUILD_NAME", "")
+
+
 # --- Logging ---
 # Controls how chatty the bot's OWN console logging is (every logger named
 # "wow-apply-bot" or "wow-apply-bot.<cog>" - see each file's `log =
@@ -72,7 +138,10 @@ FEATURE_AUDIT_LOG_ENABLED = True
 # config/deployment_local.py on the machine that should serve it, along
 # with the WEB_* / DISCORD_CLIENT_SECRET values in .env. Can't be switched
 # off from the dashboard itself (that would lock everyone out of it).
-FEATURE_WEB_DASHBOARD_ENABLED = False
+#
+# Can also be switched on with WEB_DASHBOARD_ENABLED=true in the
+# environment (that's how the Docker setup in deploy/ does it).
+FEATURE_WEB_DASHBOARD_ENABLED = _os.environ.get("WEB_DASHBOARD_ENABLED", "").strip().lower() in ("1", "true", "yes")
 
 # --- Audit log (cogs/audit_log.py) ---
 # Plain-text file, one line per user action (relative paths are relative to

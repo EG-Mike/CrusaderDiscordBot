@@ -200,7 +200,7 @@ def _who_field(line: str) -> str:
 class AuditLogCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.mod_role_id = int(os.environ["MOD_ROLE_ID"])
+        self.mod_role_id = config.MOD_ROLE_ID
         self.path = config.AUDIT_LOG_PATH
         self._handler = None
 

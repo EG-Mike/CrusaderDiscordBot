@@ -628,7 +628,10 @@ stays on JSON files (`STORAGE_BACKEND=json`) by default.
    this machine only (copy `config/deployment_local.example.py`).
 3. Values saved in the dashboard (stored in `crusader.db`).
 
-Later layers win. Secrets and the IDs in `.env` stay in `.env`.
+Later layers win. Only secrets (tokens, client secrets) have to be in
+`.env`. The channel/role IDs and realm that used to be required there are
+now settings too ("Discord server" section): a value still in `.env` is
+used as the starting value, so an existing setup keeps working unchanged.
 
 ### Storage: JSON or SQLite
 
@@ -685,8 +688,8 @@ You need the *Manage Server* permission on the live server.
 
 In the new server, check that the raid-summary forum still has its tags
 (Tier, Main/Alt, clear status) and add any that are missing. Everything in
-the copy has **new IDs**, which is why the test bot gets its own `.env` and
-`deployment_local.py` below.
+the copy has **new IDs**, which you'll pick in the test bot's dashboard
+(step 8).
 
 #### 2. Create the test bot application
 
@@ -727,16 +730,13 @@ Paste the token as the password. Docker remembers it.
 mkdir -p /opt/crusader-test/data && cd /opt/crusader-test
 ```
 
-Put these four files from the repository in that folder (on GitHub, open
-each file, click **Raw**, and copy-paste it into the editor of your
-choice, e.g. `nano docker-compose.yml`):
+Put these two files from the repository in that folder (on GitHub, open
+each file, click **Raw**, and copy-paste it into e.g. `nano update.sh`):
 
 | Repository file | Save on the VPS as |
 |---|---|
 | `deploy/test/docker-compose.yml` | `docker-compose.yml` |
 | `deploy/test/update.sh` | `update.sh` |
-| `.env.example` | `.env` |
-| `config/deployment_local.example.py` | `deployment_local.py` |
 
 Then:
 
@@ -747,26 +747,23 @@ chmod +x update.sh && chown 1000:1000 data
 (The container runs as user 1000, which needs to be able to write to
 `data/`.)
 
-**`docker-compose.yml`**: replace `OWNER/REPO` in the `image:` line with
-the repository path in lowercase: `ghcr.io/eg-mike/crusaderdiscordbot:test`.
-
-**`.env`**: the **test** bot's `DISCORD_TOKEN`, `DISCORD_GUILD_ID` (the
-test server's ID), the test server's channel and role IDs, and your WCL
-credentials (the live ones work; both bots then share one WarcraftLogs
-rate limit). Plus:
+Create `.env` (`nano .env`) with just the secrets. Channels, roles and
+the realm are **not** needed here: you pick those in the dashboard.
 
 ```
-STORAGE_BACKEND=sqlite
-DISCORD_CLIENT_SECRET=<test application's client secret>
+DISCORD_TOKEN=<test bot's token>
+WCL_CLIENT_ID=<your WarcraftLogs client ID>
+WCL_CLIENT_SECRET=<your WarcraftLogs client secret>
+DISCORD_CLIENT_SECRET=<test application's OAuth2 client secret>
 WEB_BASE_URL=http://localhost:8081
 WEB_ADMIN_USER_IDS=<your Discord user ID>
 ```
 
-(`WEB_HOST`, `WEB_PORT` and `WEB_ENVIRONMENT` are already set by
-`docker-compose.yml`.)
-
-**`deployment_local.py`**: keep `FEATURE_WEB_DASHBOARD_ENABLED = True`
-and fill in the test server's role, channel and tag IDs.
+`WEB_ADMIN_USER_IDS` is what lets you into the dashboard before a
+moderator role has been chosen (Discord: Settings -> Advanced -> turn on
+Developer Mode, then right-click your own name -> Copy User ID). The WCL
+credentials can be the live bot's; both bots then share one WarcraftLogs
+rate limit.
 
 Optional, to test with real data: copy the live bot's `*.json` data files
 into `data/` (then run the `chown` above again). **Copy**, never link: the
@@ -813,6 +810,24 @@ ssh -L 8081:127.0.0.1:8081 root@<your-vps-address>
 
 Browse to http://localhost:8081 and log in with Discord. The orange
 **TEST** badge next to the logo confirms you're on the test bot.
+
+#### 8. First-time setup in the dashboard
+
+The Overview shows a **Finish setup** list of what isn't configured yet.
+
+1. Open **Settings -> Discord server** and pick the test server's
+   moderator role, review channel, Fresh role, sandbox, attendance and
+   forum channels, and the realm (`SERVER_SLUG`, `SERVER_REGION`).
+2. Check the other sections for IDs that still point at the live server
+   (they show as "Unknown role" / "Unknown channel" in the dropdowns):
+   **Applications** (approver role, auto-assigned class/role roles,
+   archive channel), **Attendance** (Regular/Organizer roles) and **Raid
+   summaries** (forum tag IDs).
+3. Restart the bot so it picks everything up:
+
+```bash
+docker compose restart
+```
 
 #### Day-to-day commands (run in `/opt/crusader-test`)
 

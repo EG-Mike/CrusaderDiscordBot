@@ -1,17 +1,13 @@
 # Test bot + dashboard. Lives in its own folder on the VPS (e.g.
 # /opt/crusader-test) next to:
-#   .env                  test bot's settings (copy of the repo's .env.example)
-#   deployment_local.py   test server's role/channel/tag IDs
-#                         (copy of config/deployment_local.example.py)
-#   data/                 everything the bot saves (created automatically)
-#   update.sh             pulls new builds (run by cron, see README)
-#
-# Replace OWNER/REPO below with the lowercase GitHub path, e.g.
-# ghcr.io/eg-mike/crusaderdiscordbot:test
+#   .env        the test bot's secrets (copy of the repo's .env.example;
+#               channels/roles are set in the dashboard, not here)
+#   data/       everything the bot saves, incl. dashboard settings
+#   update.sh   pulls new builds (run by cron, see README)
 
 services:
   bot:
-    image: ghcr.io/OWNER/REPO:test
+    image: ghcr.io/eg-mike/crusaderdiscordbot:test
     container_name: crusader-test
     restart: unless-stopped
     env_file: .env
@@ -21,9 +17,12 @@ services:
       WEB_HOST: 0.0.0.0
       WEB_PORT: "8081"
       WEB_ENVIRONMENT: test
+      WEB_DASHBOARD_ENABLED: "true"
+      STORAGE_BACKEND: sqlite
     volumes:
       - ./data:/data
-      - ./deployment_local.py:/app/config/deployment_local.py:ro
+      # Optional, for values you'd rather keep in a file than the dashboard:
+      # - ./deployment_local.py:/app/config/deployment_local.py:ro
     ports:
       # 127.0.0.1 = NOT reachable from the internet. Open it from your own
       # computer through an SSH tunnel (see README).

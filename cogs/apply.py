@@ -373,11 +373,11 @@ class ApplyCog(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.review_channel_id = int(os.environ["REVIEW_CHANNEL_ID"])
-        self.fresh_role_id = int(os.environ["FRESH_ROLE_ID"])
-        self.mod_role_id = int(os.environ["MOD_ROLE_ID"])
-        self.server_slug = os.environ["SERVER_SLUG"]
-        self.server_region = os.environ.get("SERVER_REGION", "us")
+        self.review_channel_id = config.REVIEW_CHANNEL_ID
+        self.fresh_role_id = config.FRESH_ROLE_ID
+        self.mod_role_id = config.MOD_ROLE_ID
+        self.server_slug = config.SERVER_SLUG
+        self.server_region = config.SERVER_REGION
         self.start_view = StartApplicationView(self)
 
     async def cog_load(self):
@@ -844,6 +844,15 @@ class ApplyCog(commands.Cog):
         }
 
         review_channel = self.bot.get_channel(self.review_channel_id)
+        if review_channel is None:
+            log.error("Can't post %s's application: REVIEW_CHANNEL_ID isn't set to a channel the bot can see",
+                      application["character_name"])
+            await interaction.followup.send(
+                "Sorry, applications can't be submitted right now (the review channel isn't set up). "
+                "Please let a moderator know.",
+                ephemeral=True,
+            )
+            return
         view = self._render_application_view(application)
         message = await review_channel.send(view=view)
 
@@ -1206,8 +1215,13 @@ class ApplyCog(commands.Cog):
 
         review_channel = self.bot.get_channel(self.review_channel_id)
         try:
-            review_message = await review_channel.fetch_message(message_id)
+            if review_channel is None:
+                review_message = None
+            else:
+                review_message = await review_channel.fetch_message(message_id)
         except (discord.NotFound, discord.Forbidden):
+            review_message = None
+        if review_message is None:
             await interaction.followup.send(
                 "Couldn't find your application's message to update - please "
                 "let a moderator know.",
@@ -1319,7 +1333,7 @@ class ApplyCog(commands.Cog):
             )
 
     async def _ensure_gear_check_explainer(self):
-        gear_check_channel_id = os.environ.get("GEAR_CHECK_CHANNEL_ID")
+        gear_check_channel_id = (config.GEAR_CHECK_CHANNEL_ID or None)
         if not gear_check_channel_id:
             return
         channel = self.bot.get_channel(int(gear_check_channel_id))
@@ -1658,6 +1672,8 @@ class ApplyCog(commands.Cog):
 
         updated = self.bot.store.get(message_id)
         review_channel = self.bot.get_channel(self.review_channel_id)
+        if review_channel is None:
+            return
         try:
             message = await review_channel.fetch_message(message_id)
         except (discord.NotFound, discord.Forbidden):

@@ -38,6 +38,8 @@ import re
 import logging
 
 import discord
+
+import config
 from discord import app_commands
 from discord.ext import commands
 import aiohttp
@@ -68,7 +70,7 @@ def _slugify(name: str) -> str:
 class EmojiAdminCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.mod_role_id = int(os.environ["MOD_ROLE_ID"])
+        self.mod_role_id = config.MOD_ROLE_ID
 
     async def _is_mod(self, guild: discord.Guild, user_id: int) -> bool:
         member = guild.get_member(user_id) or await guild.fetch_member(user_id)

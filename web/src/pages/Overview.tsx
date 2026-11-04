@@ -49,7 +49,8 @@ export default function Overview({ me }: { me: Me }) {
 
   const features = Object.entries(status.features);
   const enabled = features.filter(([, on]) => on).length;
-  const attention = status.warnings.length + (status.pending_restart.length ? 1 : 0);
+  const missing = status.missing_setup;
+  const attention = status.warnings.length + (status.pending_restart.length ? 1 : 0) + (missing.length ? 1 : 0);
 
   return (
     <>
@@ -65,6 +66,40 @@ export default function Overview({ me }: { me: Me }) {
           {attention ? `${attention} thing${attention === 1 ? " needs" : "s need"} your attention.` : "Everything looks good."}
         </p>
       </div>
+
+      {missing.length > 0 && (
+        <section className="card mb-5 border-gold/30 p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="label mb-1.5 text-gold/90">● Finish setup</div>
+              <h2 className="text-base font-semibold">
+                {missing.length} thing{missing.length === 1 ? "" : "s"} to set before every feature works
+              </h2>
+              <p className="mt-1 text-muted">Pick them in Settings, then restart the bot.</p>
+            </div>
+            <Link
+              to="/settings?group=server"
+              className="inline-flex h-9 items-center rounded-lg border border-gold/50 bg-gold/15 px-3.5 font-medium text-gold transition hover:bg-gold/25"
+            >
+              Open settings
+            </Link>
+          </div>
+          <ul className="mt-4 grid gap-2 sm:grid-cols-2">
+            {missing.map((m) => (
+              <li key={m.key}>
+                <Link
+                  to={`/settings?group=server#${m.key}`}
+                  className="flex items-center gap-2.5 rounded-lg border border-line bg-bg/50 px-3 py-2 transition hover:border-gold/40"
+                >
+                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-gold" />
+                  <span className="min-w-0 flex-1 truncate">{m.label}</span>
+                  <span className="font-mono text-2xs text-faint">{m.key}</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatTile

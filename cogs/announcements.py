@@ -34,6 +34,8 @@ import asyncio
 import logging
 
 import discord
+
+import config
 from discord import app_commands
 from discord.ext import commands
 
@@ -90,8 +92,8 @@ class AnnouncementModal(discord.ui.Modal, title="Announcement"):
 class AnnouncementsCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.mod_role_id = int(os.environ["MOD_ROLE_ID"])
-        self.sandbox_channel_id = os.environ.get("ANNOUNCEMENT_SANDBOX_CHANNEL_ID")
+        self.mod_role_id = config.MOD_ROLE_ID
+        self.sandbox_channel_id = (config.ANNOUNCEMENT_SANDBOX_CHANNEL_ID or None)
         # Separate JSON file from applications.json, but the same small
         # generic store mechanism - see storage.py.
         self.store = ApplicationStore(path="announcements.json")

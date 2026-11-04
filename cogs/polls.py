@@ -166,7 +166,7 @@ class PollsCog(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.mod_role_id = int(os.environ["MOD_ROLE_ID"])
+        self.mod_role_id = config.MOD_ROLE_ID
         self.store = ApplicationStore(path="polls.json")
         # One lock per poll message: serializes "mutate record + re-render
         # message" so two near-simultaneous votes can't have their message

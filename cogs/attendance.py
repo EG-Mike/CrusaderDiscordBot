@@ -389,11 +389,11 @@ class AttendanceCog(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.attendance_channel_id = int(os.environ["ATTENDANCE_CHANNEL_ID"])
-        self.fresh_role_id = int(os.environ["FRESH_ROLE_ID"])
-        self.mod_role_id = int(os.environ["MOD_ROLE_ID"])
-        self.server_slug = os.environ["SERVER_SLUG"]
-        self.server_region = os.environ.get("SERVER_REGION", "us")
+        self.attendance_channel_id = config.ATTENDANCE_CHANNEL_ID
+        self.fresh_role_id = config.FRESH_ROLE_ID
+        self.mod_role_id = config.MOD_ROLE_ID
+        self.server_slug = config.SERVER_SLUG
+        self.server_region = config.SERVER_REGION
 
         # Optional - every overview refresh that has a real acting user/
         # label (button click, /checkattendance run, or cogs/raid_logs.py's
@@ -401,7 +401,7 @@ class AttendanceCog(commands.Cog):
         # pass) also mirrors the overview into this channel, since
         # #attendance-check itself is easy to miss unless a mod happens to
         # already be looking at it. See _refresh_overview_message.
-        moderator_channel_id = os.environ.get("MODERATOR_CHANNEL_ID")
+        moderator_channel_id = (config.MODERATOR_CHANNEL_ID or None)
         self.moderator_channel_id = int(moderator_channel_id) if moderator_channel_id else None
 
         self.log_list_view = LogListView(self)

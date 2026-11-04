@@ -112,7 +112,7 @@ bot.wowhead = WowheadClient()
 blizzard_client_id = os.environ.get("BLIZZARD_CLIENT_ID")
 blizzard_client_secret = os.environ.get("BLIZZARD_CLIENT_SECRET")
 bot.blizzard = (
-    BlizzardClient(blizzard_client_id, blizzard_client_secret, region=os.environ.get("SERVER_REGION", "us"))
+    BlizzardClient(blizzard_client_id, blizzard_client_secret, region=config.SERVER_REGION)
     if blizzard_client_id and blizzard_client_secret else None
 )
 bot.store = ApplicationStore()
@@ -131,6 +131,11 @@ async def on_ready():
     log.info("Startup: syncing slash commands...")
     step_start = time.monotonic()
     guild_id = os.environ.get("DISCORD_GUILD_ID")
+    if not guild_id and len(bot.guilds) == 1:
+        # The bot only ever runs in one server: use it, so commands sync
+        # instantly even when DISCORD_GUILD_ID isn't set in .env.
+        guild_id = str(bot.guilds[0].id)
+        log.info("DISCORD_GUILD_ID not set - using the only server the bot is in (%s)", guild_id)
     if guild_id:
         # Guild-scoped sync propagates in seconds instead of global sync's
         # up-to-an-hour delay. copy_global_to() first copies every

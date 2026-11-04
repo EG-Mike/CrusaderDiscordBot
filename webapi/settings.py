@@ -10,6 +10,7 @@ and the dashboard flags any difference as "pending restart".
 
 import ast
 import io
+import os
 import re
 import tokenize
 
@@ -21,7 +22,8 @@ from config import overrides
 # Settings shown but not editable from the dashboard.
 READ_ONLY = {
     # Turning the dashboard off from the dashboard would lock everyone out.
-    "FEATURE_WEB_DASHBOARD_ENABLED": "Change this in config/deployment_local.py - switching it off here would lock you out.",
+    "FEATURE_WEB_DASHBOARD_ENABLED": "Set by WEB_DASHBOARD_ENABLED in .env (or config/deployment_local.py) - "
+                                     "switching it off here would lock you out.",
     # Moving the audit log file is a server-side file operation.
     "AUDIT_LOG_PATH": "A file path on the server - change it in config/deployment_local.py.",
 }
@@ -31,10 +33,34 @@ LOG_LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 ENUMS = {
     "LOG_LEVEL": LOG_LEVELS,
     "LOG_DISCORD_LIBRARY_LEVEL": LOG_LEVELS,
+    "SERVER_REGION": ["us", "eu", "kr", "tw", "cn"],
 }
+
+# Settings whose fallback comes from .env (see deployment.py's "Discord
+# server" section).
+SERVER_KEYS = [
+    "MOD_ROLE_ID", "FRESH_ROLE_ID", "REVIEW_CHANNEL_ID", "GEAR_CHECK_CHANNEL_ID",
+    "ANNOUNCEMENT_SANDBOX_CHANNEL_ID", "ATTENDANCE_CHANNEL_ID", "MODERATOR_CHANNEL_ID",
+    "RAID_SUMMARY_FORUM_CHANNEL_ID", "RAID_LOGS_CHANNEL_ID", "RAID_LOGS_REPOST_CHANNEL_ID",
+    "SERVER_SLUG", "SERVER_REGION", "GUILD_NAME",
+]
+
+# What each feature needs before it does anything: (setting, needed by
+# feature flag or None = always). Shown on the Overview as setup to do.
+REQUIRED = [
+    ("MOD_ROLE_ID", None, "Moderator role (who can use mod commands and this dashboard)"),
+    ("REVIEW_CHANNEL_ID", None, "Application review channel"),
+    ("FRESH_ROLE_ID", None, "Role given to approved applicants"),
+    ("SERVER_SLUG", None, "WarcraftLogs realm"),
+    ("ANNOUNCEMENT_SANDBOX_CHANNEL_ID", "FEATURE_ANNOUNCEMENTS_ENABLED", "Announcement drafts channel"),
+    ("ATTENDANCE_CHANNEL_ID", "FEATURE_ATTENDANCE_ENABLED", "Attendance channel"),
+    ("RAID_SUMMARY_FORUM_CHANNEL_ID", "FEATURE_RAID_SUMMARY_ENABLED", "Raid summary forum"),
+]
 
 # (group id, label, description, predicate) - first match wins.
 GROUPS = [
+    ("server", "Discord server", "Channels, roles and realm the bot works with.",
+     lambda k: k in SERVER_KEYS),
     ("general", "General", "Logging and diagnostics.",
      lambda k: k.startswith("LOG_") or k == "DEBUG_COMMANDS_ENABLED"),
     ("features", "Features", "Turn whole features on or off.",
@@ -247,7 +273,11 @@ def describe(key: str, saved=None) -> dict:
         "value": _plain(saved_value),
         "running_value": _plain(running),
         "default": _plain(file_default),
-        "default_source": "local" if overrides.OVERRIDE_SOURCES.get(key) == "local" else "deployment",
+        "default_source": (
+            "local" if overrides.OVERRIDE_SOURCES.get(key) == "local"
+            else "env" if key in SERVER_KEYS and os.environ.get(key)
+            else "deployment"
+        ),
         "overridden": saved is not None,
         "updated_at": saved["updated_at"] if saved else None,
         "updated_by": saved["updated_by"] if saved else None,
@@ -353,6 +383,16 @@ def history(key: str, limit: int = 50) -> list:
 
 def pending_restart_keys() -> list:
     return [s["key"] for s in list_settings()["settings"] if s["pending_restart"]]
+
+
+def missing_setup() -> list:
+    """Required settings that are still unset (in their SAVED value)."""
+    saved = {s["key"]: s["value"] for s in list_settings()["settings"]}
+    return [
+        {"key": key, "label": label}
+        for key, feature, label in REQUIRED
+        if (feature is None or saved.get(feature)) and saved.get(key) in (0, "0", "", None)
+    ]
 
 
 def dependency_warnings() -> list:

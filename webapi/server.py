@@ -241,6 +241,7 @@ def _status(app) -> dict:
             key: bool(getattr(config, key)) for key in settings_api.all_keys() if key.startswith("FEATURE_")
         },
         "counts": {"pending_applications": pending_applications},
+        "missing_setup": settings_api.missing_setup(),
         "pending_restart": pending_restart,
         "warnings": warnings,
     }

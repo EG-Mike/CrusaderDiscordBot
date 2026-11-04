@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useLocation, useSearchParams } from "react-router-dom";
 import { ChevronDown, History, Lock, RotateCcw, Search, SlidersHorizontal } from "lucide-react";
 import {
   api,
@@ -246,6 +246,7 @@ function SettingRow({
             {setting.overridden && <Badge tone="gold">Changed</Badge>}
             {setting.pending_restart && <Badge tone="warn">Pending restart</Badge>}
             {setting.default_source === "local" && <Badge tone="info">Local file</Badge>}
+            {setting.default_source === "env" && !setting.overridden && <Badge tone="info">From .env</Badge>}
             {ro && (
               <Badge>
                 <Lock className="h-2.5 w-2.5" /> Read-only
@@ -272,7 +273,12 @@ function SettingRow({
 
       <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3 text-xs text-faint">
         <span className="mr-auto min-w-0 truncate">
-          Default: <span className="font-mono text-muted">{formatValue(setting.default).slice(0, 120)}</span>
+          Default:{" "}
+          <span className="font-mono text-muted">
+            {(setting.kind === "role" || setting.kind === "channel") && String(setting.default) === "0"
+              ? "not set"
+              : formatValue(setting.default).slice(0, 120)}
+          </span>
           {setting.updated_at && (
             <>
               {" "}· changed {utc(setting.updated_at)}
@@ -348,7 +354,7 @@ export default function SettingsPage() {
 
   const query = params.get("q") ?? "";
   const filter = (params.get("filter") as Filter) ?? "all";
-  const group = params.get("group") ?? (query || filter !== "all" ? "" : "general");
+  const group = params.get("group") ?? (query || filter !== "all" ? "" : "server");
 
   const setParam = (updates: Record<string, string | null>) => {
     const next = new URLSearchParams(params);
@@ -369,6 +375,19 @@ export default function SettingsPage() {
     // Another moderator saved something: refresh.
     return subscribe((event) => event.type === "settings.changed" && load());
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Links like /settings?group=server#REVIEW_CHANNEL_ID: scroll to that
+  // setting once it has rendered, and highlight it briefly.
+  const { hash } = useLocation();
+  useEffect(() => {
+    if (!data || !hash) return;
+    const el = document.getElementById(hash.slice(1));
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+    el.classList.add("ring-2", "ring-gold/50");
+    const t = window.setTimeout(() => el.classList.remove("ring-2", "ring-gold/50"), 1800);
+    return () => window.clearTimeout(t);
+  }, [data, hash]);
 
   const visible = useMemo(() => {
     if (!data) return [];
@@ -457,7 +476,7 @@ export default function SettingsPage() {
               ).map(([id, label]) => (
                 <button
                   key={id}
-                  onClick={() => setParam({ filter: id === "all" ? null : id, group: id === "all" ? group || "general" : null })}
+                  onClick={() => setParam({ filter: id === "all" ? null : id, group: id === "all" ? group || "server" : null })}
                   className={cx(
                     "rounded-md px-3 py-1.5 text-xs font-medium transition",
                     filter === id ? "bg-gold/15 text-gold" : "text-muted hover:text-fg",

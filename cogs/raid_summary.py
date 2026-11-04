@@ -635,12 +635,12 @@ class RaidSummaryRegenerateView(discord.ui.View):
 class RaidSummaryCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.forum_channel_id = int(os.environ["RAID_SUMMARY_FORUM_CHANNEL_ID"])
-        self.mod_role_id = int(os.environ["MOD_ROLE_ID"])
-        self.server_slug = os.environ["SERVER_SLUG"]
-        self.server_region = os.environ.get("SERVER_REGION", "us")
-        self.guild_name = os.environ.get("GUILD_NAME")  # optional - enables the guild-rank section
-        logs_channel_id = os.environ.get("RAID_LOGS_CHANNEL_ID")
+        self.forum_channel_id = config.RAID_SUMMARY_FORUM_CHANNEL_ID
+        self.mod_role_id = config.MOD_ROLE_ID
+        self.server_slug = config.SERVER_SLUG
+        self.server_region = config.SERVER_REGION
+        self.guild_name = (config.GUILD_NAME or None)  # optional - enables the guild-rank section
+        logs_channel_id = (config.RAID_LOGS_CHANNEL_ID or None)
         self.logs_channel_id = int(logs_channel_id) if logs_channel_id else None  # optional - enables the report picker
         self._bulk_tasks = []  # keeps /raidsummary-bulk's background task(s) alive - see raidsummary_bulk
 

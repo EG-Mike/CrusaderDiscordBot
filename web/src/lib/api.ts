@@ -50,6 +50,7 @@ export interface Status {
   guild: { id: string; name: string; icon_url: string | null; member_count: number } | null;
   features: Record<string, boolean>;
   counts: { pending_applications: number };
+  missing_setup: { key: string; label: string }[];
   pending_restart: string[];
   warnings: string[];
 }
@@ -69,7 +70,7 @@ export interface Setting {
   value: Json;
   running_value: Json;
   default: Json;
-  default_source: "deployment" | "local";
+  default_source: "deployment" | "local" | "env";
   overridden: boolean;
   updated_at: string | null;
   updated_by: string | null;
