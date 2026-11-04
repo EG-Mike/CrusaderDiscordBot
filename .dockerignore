@@ -17,3 +17,4 @@ deploy
 audit.log*
 json_export
 config/deployment_local.py
+CLAUDE.md
