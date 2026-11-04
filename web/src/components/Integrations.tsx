@@ -1,18 +1,30 @@
 // API keys for external services. Write-only: a saved key is never sent
-// back to the browser, only whether one is set.
+// back to the browser, only whether one is set. Saved keys are locked until
+// "Change keys" is confirmed, so they can't be overwritten by accident.
 import { useEffect, useState } from "react";
-import { CheckCircle2, KeyRound, PlugZap, XCircle } from "lucide-react";
+import { CheckCircle2, KeyRound, Lock, PencilLine, PlugZap, XCircle } from "lucide-react";
 import { api, type SecretField, type Service } from "../lib/api";
 import { useToast } from "./Toast";
-import { Badge, Button, Skeleton, cx } from "./ui";
+import { Badge, Button, Dialog, Skeleton, cx } from "./ui";
 
 function ServiceCard({ service, onChange }: { service: Service; onChange: () => void }) {
   const toast = useToast();
   const [values, setValues] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<"save" | "test" | null>(null);
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [confirm, setConfirm] = useState<"edit" | "remove" | null>(null);
+  const hasKeys = service.fields.some((f) => f.set);
+  // Keys that aren't set yet can be typed straight away; saved ones need a confirmation first.
+  const [editing, setEditing] = useState(!hasKeys);
+  const locked = hasKeys && !editing;
   const [idField, secretField] = service.fields;
   const dirty = Object.values(values).some((v) => v.trim());
+
+  const cancelEdit = () => {
+    setValues({});
+    setResult(null);
+    setEditing(!hasKeys);
+  };
 
   const test = async () => {
     setBusy("test");
@@ -38,6 +50,7 @@ function ServiceCard({ service, onChange }: { service: Service; onChange: () => 
         if (value.trim()) await api.put(`/api/integrations/${key}`, { value });
       }
       setValues({});
+      setEditing(false);
       toast("ok", `${service.label} keys saved. They're used straight away.`);
       onChange();
     } catch (e) {
@@ -48,9 +61,10 @@ function ServiceCard({ service, onChange }: { service: Service; onChange: () => 
   };
 
   const remove = async () => {
-    if (!window.confirm(`Remove the saved ${service.label} keys?`)) return;
+    setConfirm(null);
     for (const field of service.fields) await api.del(`/api/integrations/${field.key}`).catch(() => undefined);
     setResult(null);
+    toast("ok", `${service.label} keys removed.`);
     onChange();
   };
 
@@ -66,7 +80,8 @@ function ServiceCard({ service, onChange }: { service: Service; onChange: () => 
         autoComplete="off"
         spellCheck={false}
         className="input font-mono"
-        placeholder={f.set ? "•••••••••••• (saved, type to replace)" : "Not set"}
+        disabled={locked}
+        placeholder={f.set ? (locked ? "•••••••••••• (saved)" : "•••••••••••• (saved, type to replace)") : "Not set"}
         value={values[f.key] ?? ""}
         onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
       />
@@ -106,14 +121,79 @@ function ServiceCard({ service, onChange }: { service: Service; onChange: () => 
         </Button>
         <span className="flex-1" />
         {service.fields.some((f) => f.source === "dashboard") && (
-          <Button size="sm" variant="ghost" onClick={remove}>
+          <Button size="sm" variant="ghost" onClick={() => setConfirm("remove")}>
             Remove
           </Button>
         )}
-        <Button size="sm" variant="primary" loading={busy === "save"} disabled={!dirty} onClick={save}>
-          Save keys
-        </Button>
+        {locked ? (
+          <Button size="sm" icon={<PencilLine className="h-3.5 w-3.5" />} onClick={() => setConfirm("edit")}>
+            Change keys
+          </Button>
+        ) : (
+          <>
+            {hasKeys && (
+              <Button size="sm" variant="ghost" onClick={cancelEdit}>
+                Cancel
+              </Button>
+            )}
+            <Button size="sm" variant="primary" loading={busy === "save"} disabled={!dirty} onClick={save}>
+              Save keys
+            </Button>
+          </>
+        )}
       </div>
+      {locked && (
+        <p className="mt-2 flex items-center gap-1.5 text-2xs text-faint">
+          <Lock className="h-3 w-3" /> Saved keys are locked. Choose Change keys to replace them.
+        </p>
+      )}
+
+      <Dialog
+        open={confirm === "edit"}
+        onClose={() => setConfirm(null)}
+        title={`Change the ${service.label} keys?`}
+        actions={
+          <>
+            <Button variant="ghost" onClick={() => setConfirm(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                setConfirm(null);
+                setEditing(true);
+              }}
+            >
+              Change keys
+            </Button>
+          </>
+        }
+      >
+        <p className="text-muted">
+          New keys replace the saved ones as soon as you save, and the bot uses them straight away. The old keys can't be shown or brought back,
+          so have the new ones ready, and use Test connection before saving.
+        </p>
+      </Dialog>
+      <Dialog
+        open={confirm === "remove"}
+        onClose={() => setConfirm(null)}
+        title={`Remove the ${service.label} keys?`}
+        actions={
+          <>
+            <Button variant="ghost" onClick={() => setConfirm(null)}>
+              Cancel
+            </Button>
+            <Button variant="danger" onClick={remove}>
+              Remove keys
+            </Button>
+          </>
+        }
+      >
+        <p className="text-muted">
+          The bot stops using {service.label} until new keys are saved
+          {service.fields.some((f) => f.source === "env") ? " (or falls back to the ones in .env)" : ""}.
+        </p>
+      </Dialog>
     </div>
   );
 }

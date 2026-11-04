@@ -2,9 +2,10 @@
 // (roles and channels by name, never raw IDs), optional {placeholder} chips
 // and a character counter. Shared by the announcement builder and the bot
 // messages page.
-import { useRef, type ReactNode } from "react";
+import { Fragment, useRef, useState, type ReactNode } from "react";
 import {
   Bold,
+  CircleHelp,
   Code,
   Heading2,
   Italic,
@@ -66,6 +67,50 @@ const TOOLS: { icon: LucideIcon; label: string; edit: Edit; sectionsOnly?: boole
   { icon: Minus, label: "New section (a divider line)", edit: insert("\n---\n"), sectionsOnly: true },
 ];
 
+// Discord's formatting, for the cheatsheet: [what to type, what it does].
+const CHEATSHEET: [string, string][] = [
+  ["**bold**", "Bold (Ctrl+B)"],
+  ["*italic*", "Italic (Ctrl+I)"],
+  ["__underline__", "Underline (Ctrl+U)"],
+  ["~~strike~~", "Strikethrough"],
+  ["||spoiler||", "Hidden until clicked"],
+  ["`code`", "Code, inline"],
+  ["```\ncode\n```", "Code block"],
+  ["# Title", "Big heading (also ## and ###)"],
+  ["-# note", "Small grey text"],
+  ["> quote", "Quote (>>> quotes the rest)"],
+  ["- item", "Bulleted list (1. for numbered)"],
+  ["[text](https://…)", "Link"],
+  ["<t:1767225600:R>", "A time in each reader's own time zone (R: \"in 3 days\", F: full date)"],
+];
+const CHEATSHEET_KEY = "editor.cheatsheet";
+
+function readCheatsheet() {
+  try {
+    return localStorage.getItem(CHEATSHEET_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function Cheatsheet({ sections }: { sections?: boolean }) {
+  const rows = sections ? [...CHEATSHEET, ["---", "New section: a divider between parts of the message"] as [string, string]] : CHEATSHEET;
+  return (
+    <div className="border-b border-line bg-surface/60 px-3 py-2">
+      <div className="mb-1 text-2xs font-semibold uppercase tracking-wider text-faint">Formatting</div>
+      <dl className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-2xs">
+        {rows.map(([code, what]) => (
+          <Fragment key={code}>
+            <dt className="whitespace-pre font-mono text-gold/90">{code.replace(/\n/g, " ")}</dt>
+            <dd className="text-muted">{what}</dd>
+          </Fragment>
+        ))}
+      </dl>
+      <p className="mt-1.5 text-2xs text-faint">Mentions and emoji: use the buttons above, they insert the right code.</p>
+    </div>
+  );
+}
+
 export function MarkdownEditor({
   value,
   onChange,
@@ -93,6 +138,17 @@ export function MarkdownEditor({
   label: string;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
+  const [showHelp, setShowHelp] = useState(readCheatsheet);
+  const toggleHelp = () => {
+    setShowHelp((on) => {
+      try {
+        localStorage.setItem(CHEATSHEET_KEY, on ? "0" : "1");
+      } catch {
+        /* not remembered in a private window */
+      }
+      return !on;
+    });
+  };
 
   const apply = (edit: Edit) => {
     const el = ref.current;
@@ -155,7 +211,21 @@ export function MarkdownEditor({
           </select>
         )}
         </div>
+        <button
+          type="button"
+          title="Formatting help"
+          aria-label="Formatting help"
+          aria-pressed={showHelp}
+          onClick={toggleHelp}
+          className={cx(
+            "flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition hover:bg-raised hover:text-fg",
+            showHelp ? "text-gold" : "text-muted",
+          )}
+        >
+          <CircleHelp className="h-3.5 w-3.5" />
+        </button>
       </div>
+      {showHelp && <Cheatsheet sections={sections} />}
       <textarea
         ref={ref}
         aria-label={label}

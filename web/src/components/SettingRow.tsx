@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { History, Plus, RotateCcw, X } from "lucide-react";
+import { ArrowUp, History, Plus, RotateCcw, X } from "lucide-react";
 import { api, type Channel, type HistoryEntry, type Json, type Role, type Setting } from "../lib/api";
 import { useToast } from "./Toast";
 import { Badge, Button, Skeleton, Toggle, cx } from "./ui";
@@ -178,9 +178,57 @@ function RoleSetEditor({ value, roles, onChange, disabled }: { value: Record<str
   );
 }
 
+/** An ordered pick from fixed options (e.g. which Blizzard data to search, in order). */
+function ChoiceListEditor({ value, options, onChange, disabled }: { value: Json[]; options: { value: string | number; label: string }[]; onChange: (v: Json[]) => void; disabled?: boolean }) {
+  const label = (v: Json) => options.find((o) => o.value === v)?.label ?? String(v);
+  const remaining = options.filter((o) => !value.includes(o.value));
+  const moveUp = (i: number) => onChange([...value.slice(0, i - 1), value[i], value[i - 1], ...value.slice(i + 1)]);
+  return (
+    <div>
+      <ol className="flex flex-wrap gap-1.5">
+        {value.map((v, i) => (
+          <li key={String(v)} className="inline-flex items-center gap-1 rounded-md border border-line bg-raised py-0.5 pl-1.5 pr-1 text-xs">
+            <span className="tabular-nums text-faint">{i + 1}.</span>
+            {label(v)}
+            {i > 0 && (
+              <button type="button" onClick={() => moveUp(i)} disabled={disabled} className="rounded p-0.5 text-faint hover:text-fg" aria-label={`Search ${label(v)} earlier`} title="Search this earlier">
+                <ArrowUp className="h-3 w-3" />
+              </button>
+            )}
+            {value.length > 1 && (
+              <button type="button" onClick={() => onChange(value.filter((x) => x !== v))} disabled={disabled} className="rounded p-0.5 text-faint hover:text-crimson" aria-label={`Remove ${label(v)}`}>
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </li>
+        ))}
+      </ol>
+      {remaining.length > 0 && (
+        <select
+          className="input mt-2 h-8 max-w-xs text-xs"
+          value=""
+          disabled={disabled}
+          onChange={(e) => {
+            const option = remaining.find((o) => String(o.value) === e.target.value);
+            if (option) onChange([...value, option.value]);
+          }}
+        >
+          <option value="">Add…</option>
+          {remaining.map((o) => (
+            <option key={String(o.value)} value={String(o.value)}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      )}
+    </div>
+  );
+}
+
 function describeDefault(setting: Setting): string {
   const d = setting.default;
   if ((setting.kind === "role" || setting.kind === "channel") && String(d) === "0") return "not set";
+  if (setting.widget === "choice_list") return (d as Json[]).map((v) => setting.options?.find((o) => o.value === v)?.label ?? String(v)).join(", then ");
   if (setting.options) return setting.options.find((o) => o.value === d)?.label ?? formatValue(d);
   if (setting.widget === "text_list" || setting.widget === "number_list") return (d as Json[]).length ? (d as Json[]).join(", ") : "none";
   if (setting.widget === "role_map" || setting.widget === "role_set") return `${Object.keys(d as object).length} roles`;
@@ -346,6 +394,10 @@ export function SettingRow({
     case "json":
       if (setting.widget === "text_list" || setting.widget === "number_list") {
         control = <ListEditor value={setting.value as Json[]} numbers={setting.widget === "number_list"} disabled={saving} onChange={(v) => save(v)} />;
+        break;
+      }
+      if (setting.widget === "choice_list") {
+        control = <ChoiceListEditor value={setting.value as Json[]} options={setting.options ?? []} disabled={saving} onChange={(v) => save(v)} />;
         break;
       }
       if (setting.widget === "role_map") {

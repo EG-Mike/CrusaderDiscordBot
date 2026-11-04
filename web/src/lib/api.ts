@@ -87,7 +87,7 @@ export interface Setting {
   /** Only shown with "Show advanced settings" on. */
   advanced: boolean;
   /** A friendlier editor than raw JSON. */
-  widget: "text_list" | "number_list" | "role_map" | "role_set" | null;
+  widget: "text_list" | "number_list" | "role_map" | "role_set" | "choice_list" | null;
   /** Shown after a number field, e.g. "minutes". */
   unit: string | null;
   value: Json;
@@ -107,6 +107,17 @@ export interface SettingGroup {
   section: string;
   label: string;
   description: string;
+  count: number;
+  advanced_count: number;
+}
+
+/** One entry in the Settings menu: one group, or several shown as subsections. */
+export interface SettingTab {
+  id: string;
+  section: string;
+  label: string;
+  description: string;
+  groups: string[];
   count: number;
   advanced_count: number;
 }

@@ -29,7 +29,10 @@ class CatalogTests(unittest.TestCase):
     def test_choices_include_the_default(self):
         for key, entry in catalog.CATALOG.items():
             if entry.choices:
-                self.assertIn(getattr(deployment, key), [v for v, _ in entry.choices], key)
+                default = getattr(deployment, key)
+                allowed = [v for v, _ in entry.choices]
+                for value in (default if entry.widget == "choice_list" else [default]):
+                    self.assertIn(value, allowed, key)
 
 
 class SettingsTests(DatabaseTestCase):
@@ -47,15 +50,27 @@ class SettingsTests(DatabaseTestCase):
         self.assertIn({"value": "WARNING", "label": "Warnings and errors"}, level["options"])
         self.assertTrue(settings.describe("GUILD_DISPLAY_NAME")["live"])
         data = settings.list_settings()
-        self.assertEqual([s["id"] for s in data["sections"]], ["general", "features", "integrations", "system"])
+        self.assertEqual([s["id"] for s in data["sections"]], ["general", "features", "system"])
         self.assertIn("setup", [g["id"] for g in data["groups"]])  # custom panel, no settings of its own
+        tabs = {t["id"]: t for t in data["tabs"]}
+        self.assertEqual(tabs["integrations"]["groups"], ["api_keys", "blizzard", "warcraftlogs", "icons"])
+        self.assertEqual(tabs["logs"]["groups"], ["logging", "audit"])
+        self.assertNotIn("api_keys", tabs)
+        self.assertEqual([t["id"] for t in data["tabs"] if t["section"] == "general"], ["guild", "discord", "integrations"])
+        namespaces = settings.describe("EMOJI_BLIZZARD_NAMESPACES")
+        self.assertEqual((namespaces["kind"], namespaces["widget"]), ("json", "choice_list"))
 
     def test_validation(self):
         self.assertEqual(settings.validate("SERVER_REGION", "eu"), "eu")
         self.assertEqual(settings.validate("EMOJI_WOWHEAD_DATA_ENV", 1), 1)
+        self.assertEqual(settings.validate("EMOJI_BLIZZARD_NAMESPACES", ["static-forever", "static"]),
+                         ["static-forever", "static"])
         for key, value, message in [("SERVER_REGION", "mars", "pick one"), ("MAX_SCREENSHOTS", 12, "between 1 and 9"),
                                     ("LEVELING_REFRESH_MINUTES", 0, "between"),
-                                    ("RAID_LOG_AUTO_SUMMARIZE_TIME", "25:00", "HH:MM")]:
+                                    ("RAID_LOG_AUTO_SUMMARIZE_TIME", "25:00", "HH:MM"),
+                                    ("EMOJI_BLIZZARD_NAMESPACES", ["static-mars"], "pick from"),
+                                    ("EMOJI_BLIZZARD_NAMESPACES", ["static", "static"], "each once"),
+                                    ("EMOJI_BLIZZARD_NAMESPACES", [], "at least one")]:
             with self.assertRaisesRegex(settings.SettingError, message, msg=key):
                 settings.validate(key, value)
 
