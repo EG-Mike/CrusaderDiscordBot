@@ -2,7 +2,6 @@ import { Hourglass } from "lucide-react";
 import { SectionHeader } from "../components/ui";
 
 const PHASE: Record<string, string> = {
-  "/audit-log": "Phase 1",
   "/announcements": "Phase 2",
   "/applications": "Phase 3",
   "/polls": "Phase 3",

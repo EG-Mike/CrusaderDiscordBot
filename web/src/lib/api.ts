@@ -142,3 +142,57 @@ export interface SetupState {
   guild: { name: string; icon_url: string | null } | null;
   restart_available: boolean;
 }
+
+// --- audit log -----------------------------------------------------------------
+
+export type AuditSource = "discord" | "dashboard";
+export type AuditKind =
+  | "command"
+  | "context_menu"
+  | "button"
+  | "select"
+  | "modal"
+  | "login"
+  | "setting"
+  | "integration"
+  | "setup"
+  | "bot"
+  | "audit"
+  | "other";
+
+export interface AuditEvent {
+  id: number;
+  created_at: string; // ISO 8601, UTC
+  source: AuditSource;
+  kind: AuditKind;
+  action: string;
+  summary: string;
+  actor_id: string | null;
+  actor_name: string | null;
+  actor_avatar_url: string | null;
+  channel_id: string | null;
+  channel_name: string | null;
+  target: string | null;
+  details: Record<string, Json>;
+}
+
+export interface AuditPage {
+  events: AuditEvent[];
+  has_more: boolean;
+}
+
+export interface AuditMeta {
+  actors: { id: string; name: string | null; count: number; avatar_url: string | null }[];
+  channels: { id: string; name: string | null; count: number }[];
+  kinds: { kind: AuditKind; count: number }[];
+  stats: {
+    events_24h: number;
+    events_7d: number;
+    members_7d: number;
+    dashboard_7d: number;
+    total: number;
+    oldest: string | null;
+    retention_days: number;
+  };
+  discord_capture_enabled: boolean;
+}

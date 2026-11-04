@@ -69,7 +69,11 @@ version or raid tier is a configuration change.
   environment variables (`DISCORD_TOKEN`, `WCL_CLIENT_ID`,
   `WCL_CLIENT_SECRET`, `BLIZZARD_CLIENT_ID`, `BLIZZARD_CLIENT_SECRET`), and
   network access to Discord, WarcraftLogs, Blizzard and Wowhead. Verify
-  with `python scripts/check_integrations.py` (never prints secrets). Use
+  with `python scripts/check_integrations.py` (never prints secrets).
+  Discord's REST API works through the session's proxy; to run the bot
+  itself, set `DISCORD_PROXY=$HTTPS_PROXY`, and note the gateway host
+  (`gateway.discord.gg`) must be allowed in the environment's network
+  settings. Tests: `python -m unittest discover -s tests -t .`. Use
   it to run the bot for real and test against the live APIs. Keep
   WarcraftLogs usage modest: the client is shared with the test bot, so
   they share one hourly rate limit. Never print, log or commit these
@@ -86,6 +90,10 @@ version or raid tier is a configuration change.
 - `storage.py`: key/record stores, JSON files or SQLite
   (`STORAGE_BACKEND`); `db.py`: the shared SQLite database; `db_tools.py`:
   info/export/backup.
+- `audit.py`: the audit trail (structured events in the database,
+  mirrored to the `audit.log` text file); written by `cogs/audit_log.py`
+  (Discord) and `webapi.server.audit` (dashboard), read by the dashboard
+  and `/auditlog`.
 - `secret_store.py`: external API keys, Fernet-encrypted in the database
   (key file `secret.key` next to it). Write-only towards the browser.
 - `webapi/`: aiohttp dashboard API inside the bot process: Discord OAuth
@@ -131,8 +139,8 @@ set in the dashboard.
 
 - Phase 0 (done): foundation, login, settings, SQLite, Docker, setup
   wizard, encrypted integrations, restart.
-- Phase 1: Audit log page (structured storage, filters, live feed), and
-  the Overview activity feed.
+- Phase 1 (done): Audit log page (structured storage in `audit.py`,
+  filters, live feed, CSV export), and the Overview activity feed.
 - Phase 2: Announcement builder (live Discord-style preview, drafts,
   publish/edit, templates). No scheduled posting.
 - Phase 3: Applications, Polls.

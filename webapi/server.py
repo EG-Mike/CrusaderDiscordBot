@@ -7,7 +7,9 @@ the same files.
 Routes:
   /auth/login, /auth/callback, /auth/logout   Discord login
   /api/...                                    JSON API (login required)
-  /api/ws                                     live updates (WebSocket)
+  /api/ws                                     live updates (WebSocket):
+                                              bot status, setting changes,
+                                              new audit events
   everything else                             the built frontend (web/dist)
 
 Binds to 127.0.0.1 by default: put a reverse proxy (Caddy) in front of it
@@ -15,6 +17,8 @@ for real use, or reach it over an SSH tunnel while testing.
 """
 
 import asyncio
+import csv
+import io
 import json
 import logging
 import os
@@ -27,6 +31,7 @@ from urllib.parse import quote
 import discord
 from aiohttp import WSMsgType, web
 
+import audit as audit_store
 import config
 import db
 import secret_store
@@ -34,7 +39,6 @@ from webapi import auth, integrations
 from webapi import settings as settings_api
 
 log = logging.getLogger("wow-apply-bot.web")
-audit_logger = logging.getLogger("wow-apply-bot.audit")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIST = os.path.join(ROOT, "web", "dist")
@@ -71,29 +75,70 @@ def _error(message, status):
 # --- live updates ----------------------------------------------------------------
 
 class Hub:
-    """Fan-out of events to every open dashboard tab."""
+    """Fan-out of events to every open dashboard tab. Each socket remembers
+    who opened it, so events can be limited to an access level and sockets
+    are closed once their session ends or their roles no longer allow
+    access (see _revalidate_sockets)."""
 
     def __init__(self):
-        self.sockets = set()
+        self.sockets = {}  # ws -> {"user_id", "token", "levels"}
 
-    async def broadcast(self, event: dict):
+    def add(self, ws, user_id: int, token: str, levels: set):
+        self.sockets[ws] = {"user_id": user_id, "token": token, "levels": set(levels)}
+
+    def discard(self, ws):
+        self.sockets.pop(ws, None)
+
+    async def broadcast(self, event: dict, level: str = "moderator"):
         payload = json.dumps(event, default=str)
-        for ws in list(self.sockets):
+        for ws, info in list(self.sockets.items()):
+            if level not in info["levels"]:
+                continue
             try:
                 await ws.send_str(payload)
             except Exception:
-                self.sockets.discard(ws)
+                self.discard(ws)
+
+
+async def _revalidate_sockets(app):
+    """Closes live connections whose login was logged out/expired or whose
+    Discord roles no longer give access - a WebSocket otherwise keeps
+    streaming after the HTTP checks would start refusing that person."""
+    hub = app[HUB_KEY]
+    bot = app[BOT_KEY]
+    for ws, info in list(hub.sockets.items()):
+        session = auth.get_session(info["token"])
+        levels = await auth.levels_for(bot, info["user_id"]) if session else set()
+        if session is None or not auth.can_access(levels):
+            hub.discard(ws)
+            await ws.close(code=4403, message=b"Access ended")
+        else:
+            info["levels"] = set(levels)
 
 
 # --- audit -------------------------------------------------------------------------
 
-def audit(request, action: str):
-    """Same tab-separated line format cogs/audit_log.py writes, so web
-    actions show up in /auditlog (and the future Audit Log page) next to
-    Discord ones. Written only if the audit log feature is loaded."""
+def audit(request, kind: str, action: str, summary: str, *, target=None, details=None):
+    """Records a dashboard action in the audit trail (audit.py). Always on
+    while the dashboard runs. Never pass secrets or private text."""
     user = request["user"]
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
-    audit_logger.info("%s\t%s (%s)\tweb dashboard\tWEB %s", timestamp, user["username"], user["user_id"], action)
+    audit_store.record(
+        source="dashboard", kind=kind, action=action, summary=summary,
+        actor_id=user["user_id"], actor_name=user["username"], target=target, details=details,
+    )
+
+
+def _avatar_for(guild, actor_id):
+    if guild is None or not actor_id or not str(actor_id).isdigit():
+        return None
+    member = guild.get_member(int(actor_id))
+    return member.display_avatar.url if member else None
+
+
+def _public_event(event: dict, guild) -> dict:
+    """An audit event as the browser gets it: IDs are already strings;
+    adds the member's current avatar when they're still in the server."""
+    return {**event, "actor_avatar_url": _avatar_for(guild, event.get("actor_id"))}
 
 
 # --- middlewares ---------------------------------------------------------------------
@@ -175,13 +220,19 @@ async def callback(request):
         return _login_error(str(exc))
 
     levels = await auth.levels_for(bot, int(user["id"]), fresh=True)
+    name = user.get("global_name") or user.get("username")
     if not auth.can_access(levels):
         log.info("Dashboard login refused for %s (%s): no moderator role", user.get("username"), user["id"])
+        audit_store.record(source="dashboard", kind="login", action="auth.refused",
+                           summary="Was refused dashboard access (no moderator role)",
+                           actor_id=user["id"], actor_name=name)
         return _login_error("Your Discord account doesn't have the moderator role in the server.")
 
     token = auth.create_session(user)
     auth.purge_expired_sessions()
     log.info("Dashboard login: %s (%s)", user.get("username"), user["id"])
+    audit_store.record(source="dashboard", kind="login", action="auth.login", summary="Logged in to the dashboard",
+                       actor_id=user["id"], actor_name=name)
     response = web.HTTPFound("/")
     response.set_cookie(auth.SESSION_COOKIE, token, max_age=auth.SESSION_DAYS * 86400, httponly=True,
                         secure=auth.cookie_secure(), samesite="Lax", path="/")
@@ -192,7 +243,13 @@ async def callback(request):
 async def logout(request):
     if request.headers.get(CSRF_HEADER) != "1":
         return _error("Missing request header", 403)
-    auth.delete_session(request.cookies.get(auth.SESSION_COOKIE))
+    token = request.cookies.get(auth.SESSION_COOKIE)
+    session = auth.get_session(token)
+    auth.delete_session(token)
+    if session:
+        audit_store.record(source="dashboard", kind="login", action="auth.logout",
+                           summary="Logged out of the dashboard",
+                           actor_id=session["user_id"], actor_name=session["username"])
     response = _json({"ok": True})
     response.del_cookie(auth.SESSION_COOKIE, path="/")
     return response
@@ -311,8 +368,9 @@ async def settings_update(request):
     except settings_api.SettingError as exc:
         return _error(str(exc), 400)
     user = request["user"]
+    before = settings_api.describe(key)
     result = settings_api.save(key, typed, f"{user['username']} ({user['user_id']})")
-    audit(request, f"settings.update {key}")
+    _audit_setting(request, "settings.update", f"Changed setting {result['label']}", before, result, guild)
     await request.app[HUB_KEY].broadcast({"type": "settings.changed", "key": key})
     return _json(result)
 
@@ -322,13 +380,42 @@ async def settings_reset(request):
     if key not in settings_api.all_keys():
         return _error("Unknown setting", 404)
     user = request["user"]
+    before = settings_api.describe(key)
     try:
         result = settings_api.reset(key, f"{user['username']} ({user['user_id']})")
     except settings_api.SettingError as exc:
         return _error(str(exc), 400)
-    audit(request, f"settings.reset {key}")
+    _audit_setting(request, "settings.reset", f"Reset setting {result['label']} to its default", before, result,
+                   auth.guild_for(request.app[BOT_KEY]))
     await request.app[HUB_KEY].broadcast({"type": "settings.changed", "key": key})
     return _json(result)
+
+
+def _describe_value(kind: str, value, guild):
+    """A role/channel setting's ID -> its name, for the audit trail."""
+    if guild is None or value in (None, "", 0, "0") or not str(value).isdigit():
+        return None
+    if kind == "role":
+        role = guild.get_role(int(value))
+        return f"@{role.name}" if role else None
+    if kind == "channel":
+        channel = guild.get_channel(int(value))
+        return f"#{channel.name}" if channel else None
+    return None
+
+
+def _audit_setting(request, action: str, summary: str, before: dict, after: dict, guild):
+    """Setting changes keep their old and new value (agreed exception to
+    the "no content in the audit log" rule: needed for history/revert).
+    Unchanged saves aren't recorded."""
+    if json.dumps(before["value"], default=str) == json.dumps(after["value"], default=str):
+        return
+    details = {"key": after["key"], "label": after["label"], "old": before["value"], "new": after["value"]}
+    for side in ("old", "new"):
+        name = _describe_value(after["kind"], details[side], guild)
+        if name:
+            details[f"{side}_name"] = name
+    audit(request, "setting", action, summary, target=after["key"], details=details)
 
 
 async def settings_history(request):
@@ -355,7 +442,8 @@ async def integration_set(request):
     user = request["user"]
     secret_store.set(key, value, f"{user['username']} ({user['user_id']})")
     integrations.apply_to_bot(request.app[BOT_KEY])
-    audit(request, f"integrations.set {key}")  # never the value
+    audit(request, "integration", "integrations.set", f"Saved API key {secret_store.SECRETS[key][1]}",
+          target=key)  # never the value
     await request.app[HUB_KEY].broadcast({"type": "settings.changed", "key": key})
     return _json(secret_store.describe(key))
 
@@ -366,7 +454,8 @@ async def integration_delete(request):
         return _error("Unknown key", 404)
     secret_store.delete(key)
     integrations.apply_to_bot(request.app[BOT_KEY])
-    audit(request, f"integrations.remove {key}")
+    audit(request, "integration", "integrations.remove", f"Removed API key {secret_store.SECRETS[key][1]}",
+          target=key)
     await request.app[HUB_KEY].broadcast({"type": "settings.changed", "key": key})
     return _json(secret_store.describe(key))
 
@@ -382,6 +471,115 @@ async def integration_test(request):
     client_secret = str(body.get("client_secret") or "").strip() or secret_store.get(secret_key)
     ok, message = await integrations.test(service, client_id, client_secret)
     return _json({"ok": ok, "message": message})
+
+
+# --- audit log ---------------------------------------------------------------------
+
+AUDIT_LEVEL = "moderator"  # who may read the audit trail
+
+
+def _audit_filters(request) -> dict:
+    """Query string -> audit.search() filters. Raises ValueError for bad input."""
+    query = request.query
+    filters = {}
+    source = query.get("source")
+    if source:
+        if source not in audit_store.SOURCES:
+            raise ValueError("Unknown source")
+        filters["source"] = source
+    kind = query.get("kind")
+    if kind:
+        if kind not in audit_store.KINDS:
+            raise ValueError("Unknown action type")
+        filters["kind"] = kind
+    for name in ("actor_id", "channel_id"):
+        value = query.get(name)
+        if value:
+            if not value.isdigit():
+                raise ValueError(f"{name} must be a Discord ID")
+            filters[name] = value
+    for name in ("since", "until"):
+        if query.get(name):
+            try:
+                filters[name] = audit_store.parse_time(query[name])
+            except ValueError:
+                raise ValueError(f"'{name}' must be an ISO date/time") from None
+    q = query.get("q", "").strip()
+    if q:
+        filters["q"] = q[:100]
+    return filters
+
+
+async def audit_list(request):
+    if AUDIT_LEVEL not in request["levels"]:
+        return _error("You don't have access to the audit log", 403)
+    try:
+        filters = _audit_filters(request)
+    except ValueError as exc:
+        return _error(str(exc), 400)
+    try:
+        before_id = int(request.query["before_id"]) if request.query.get("before_id") else None
+        limit = int(request.query.get("limit", 50))
+    except ValueError:
+        return _error("before_id and limit must be numbers", 400)
+    events, has_more = await asyncio.to_thread(audit_store.search, filters, before_id=before_id, limit=limit)
+    guild = auth.guild_for(request.app[BOT_KEY])
+    return _json({"events": [_public_event(e, guild) for e in events], "has_more": has_more})
+
+
+async def audit_meta(request):
+    """Filter options (members, channels, action types) and headline numbers."""
+    if AUDIT_LEVEL not in request["levels"]:
+        return _error("You don't have access to the audit log", 403)
+    facets, stats = await asyncio.gather(asyncio.to_thread(audit_store.facets), asyncio.to_thread(audit_store.stats))
+    guild = auth.guild_for(request.app[BOT_KEY])
+    for actor in facets["actors"]:
+        actor["avatar_url"] = _avatar_for(guild, actor["id"])
+    return _json({
+        **facets,
+        "stats": stats,
+        "discord_capture_enabled": bool(config.FEATURE_AUDIT_LOG_ENABLED),
+    })
+
+
+EXPORT_CAP = 10000
+
+
+async def audit_export(request):
+    """The filtered audit trail as a CSV download (newest first)."""
+    if AUDIT_LEVEL not in request["levels"]:
+        return _error("You don't have access to the audit log", 403)
+    try:
+        filters = _audit_filters(request)
+    except ValueError as exc:
+        return _error(str(exc), 400)
+    events = await asyncio.to_thread(audit_store.iter_all, filters, EXPORT_CAP)
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(["time_utc", "source", "type", "member", "member_id", "channel", "channel_id",
+                     "action", "summary", "target", "details"])
+    for e in events:
+        writer.writerow([
+            e["created_at"], e["source"], audit_store.KINDS.get(e["kind"], e["kind"]), e.get("actor_name") or "",
+            e.get("actor_id") or "", e.get("channel_name") or "", e.get("channel_id") or "", e["action"],
+            # A leading = + - @ would make spreadsheet apps run it as a formula.
+            *(_csv_safe(v) for v in (e["summary"], e.get("target") or "",
+                                     json.dumps(e["details"]) if e["details"] else "")),
+        ])
+    audit(request, "audit", "audit.export", f"Exported {len(events)} audit log entr{'y' if len(events) == 1 else 'ies'}",
+          details={"filters": filters, "rows": len(events)})
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
+    return web.Response(
+        text=out.getvalue(),
+        content_type="text/csv",
+        charset="utf-8",
+        headers={"Content-Disposition": f'attachment; filename="audit-log-{stamp}.csv"',
+                 "Cache-Control": "no-store"},
+    )
+
+
+def _csv_safe(value: str) -> str:
+    return "'" + value if value[:1] in ("=", "+", "-", "@", "\t", "\r") else value
 
 
 # --- setup & restart -----------------------------------------------------------------
@@ -428,7 +626,7 @@ async def setup_state(request):
 
 async def setup_complete(request):
     db.set_meta("setup_completed_at", datetime.now(timezone.utc).isoformat())
-    audit(request, "setup.complete")
+    audit(request, "setup", "setup.complete", "Finished the setup guide")
     return _json({"ok": True})
 
 
@@ -437,7 +635,7 @@ async def restart(request):
         return _error("Only admins can restart the bot", 403)
     if not _restart_available():
         return _error("Restarting from the dashboard isn't enabled on this server (WEB_RESTART_ENABLED)", 400)
-    audit(request, "bot.restart")
+    audit(request, "bot", "bot.restart", "Restarted the bot")
     log.warning("Restart requested from the dashboard by %s", request["user"]["username"])
     bot = request.app[BOT_KEY]
 
@@ -453,27 +651,33 @@ async def websocket(request):
     ws = web.WebSocketResponse(heartbeat=30)
     await ws.prepare(request)
     hub = request.app[HUB_KEY]
-    hub.sockets.add(ws)
+    hub.add(ws, request["user"]["user_id"], request.cookies.get(auth.SESSION_COOKIE), request["levels"])
     try:
         await ws.send_str(json.dumps({"type": "status", "data": _status(request.app)}, default=str))
         async for msg in ws:
             if msg.type == WSMsgType.ERROR:
                 break
     finally:
-        hub.sockets.discard(ws)
+        hub.discard(ws)
     return ws
 
 
 async def _status_pusher(app):
-    """Pushes bot status to open dashboards every 15 s (latency, uptime)."""
+    """Every 15 s: re-checks who may keep their live connection, then
+    pushes bot status (latency, uptime) to open dashboards."""
     while True:
         await asyncio.sleep(15)
         hub = app[HUB_KEY]
         if hub.sockets:
             try:
+                await _revalidate_sockets(app)
                 await hub.broadcast({"type": "status", "data": _status(app)})
             except Exception:
                 log.exception("Status push failed")
+
+
+async def api_not_found(request):
+    return _error("Not found", 404)
 
 
 # --- frontend ------------------------------------------------------------------------
@@ -522,14 +726,30 @@ def create_app(bot) -> web.Application:
     app.router.add_get("/api/setup", setup_state)
     app.router.add_post("/api/setup/complete", setup_complete)
     app.router.add_post("/api/bot/restart", restart)
+    app.router.add_get("/api/audit", audit_list)
+    app.router.add_get("/api/audit/meta", audit_meta)
+    app.router.add_get("/api/audit/export", audit_export)
     app.router.add_get("/api/ws", websocket)
-    app.router.add_route("*", "/api/{tail:.*}", lambda r: _error("Not found", 404))
+    app.router.add_route("*", "/api/{tail:.*}", api_not_found)
 
     app.router.add_get("/{path:.*}", frontend)
 
     async def start_background(app):
         task = asyncio.create_task(_status_pusher(app))
+        loop = asyncio.get_running_loop()
+        hub = app[HUB_KEY]
+
+        def on_audit_event(event):
+            # record() may run off the event loop thread (e.g. in to_thread).
+            def send():
+                guild = auth.guild_for(bot)
+                loop.create_task(hub.broadcast({"type": "audit.event", "event": _public_event(event, guild)},
+                                               level=AUDIT_LEVEL))
+            loop.call_soon_threadsafe(send)
+
+        unsubscribe = audit_store.subscribe(on_audit_event)
         yield
+        unsubscribe()
         task.cancel()
 
     app.cleanup_ctx.append(start_background)

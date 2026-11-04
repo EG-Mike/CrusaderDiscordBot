@@ -333,27 +333,43 @@ warning for `LOG_LEVEL`) rather than crashing the bot.
 
 ## Audit log
 
-`cogs/audit_log.py` writes one line to `audit.log` (next to
-`applications.json`) for every action a user takes with the bot - slash
-commands (with their options), context menus, button clicks (with the
-button's label), dropdown picks (with the chosen values) and modal
-submits. It hooks discord.py's global `on_interaction` event, so every
-cog's commands and buttons are covered automatically, including future
-ones. Example line (tab-separated):
+Every action members take with the bot is recorded: slash commands (with
+their options), context menus, button clicks (with the button's label),
+dropdown picks (with the chosen values) and form (modal) submits.
+`cogs/audit_log.py` hooks discord.py's global `on_interaction` event, so
+every cog's commands and buttons are covered automatically, including
+future ones. Dashboard actions (logins, setting and API key changes,
+setup, restarts, audit exports) are recorded too whenever the dashboard
+runs.
+
+Entries are stored in the database (`crusader.db`, see `audit.py`) and
+kept for `AUDIT_LOG_RETENTION_DAYS` (365 by default, editable in the
+dashboard). The first start with this version imports an existing
+`audit.log` once, so older history isn't lost. Each entry is also still
+written as one tab-separated line to `audit.log` for reading on the
+server:
 
 ```
 2026-11-03 19:42:10Z	Mike [mike_eg] (123456789)	#gear-check(987654321)	BUTTON wow_apply_approve "Approve" msg=1122334455
 ```
 
-Modal field *contents* (applicant notes, announcement text, etc.) are
-intentionally not logged - only which fields were filled in and their
-length. Autocomplete keystrokes are skipped.
+Form *contents* (applicant notes, announcement text, etc.) are never
+recorded, only which fields were filled in and their length. API keys are
+never recorded. Setting changes keep their old and new value.
+Autocomplete keystrokes are skipped.
 
-Moderators can run `/auditlog` to see the last 25 entries (or
-`lines:` up to 500, optionally `user:` to filter to one member) as an
-ephemeral reply; longer output is attached as a `.txt` file instead. The
-file rotates at 5 MB keeping 5 backups - tune via `AUDIT_LOG_*` in
-`config/deployment.py`.
+Where to read it:
+
+- **Dashboard, Audit log page**: search, filter by member, channel,
+  action type, Discord/dashboard and time range, live updates, details
+  per entry (with a link to the Discord message), and CSV export.
+- **Dashboard, Overview**: the latest activity, live.
+- **Discord, `/auditlog`** (moderators): the last 25 entries (or
+  `lines:` up to 500, optionally `user:` to filter to one member) as an
+  ephemeral reply; longer output is attached as a `.txt` file.
+
+The text file rotates at 5 MB keeping 5 backups (`AUDIT_LOG_MAX_BYTES`,
+`AUDIT_LOG_BACKUP_COUNT`).
 
 ## Restricting who can approve applications
 
@@ -615,7 +631,7 @@ slash commands). Log in with Discord; only members with the moderator role
 (`MOD_ROLE_ID` or Manage Roles), the server owner, and `WEB_ADMIN_USER_IDS`
 get in, checked against their current roles on every request.
 
-Built so far (phase 0):
+Built so far (phases 0 and 1):
 
 - **Overview**: bot status (online, latency, uptime, version), pending
   applications, enabled features, and anything that needs attention.
@@ -630,6 +646,9 @@ Built so far (phase 0):
 - **Integrations**: API keys entered in the browser, stored encrypted.
 - **Restart** button for admins, when the hosting restarts the bot after
   it stops (`WEB_RESTART_ENABLED`, on in the Docker setup).
+- **Audit log** (phase 1): the full, searchable history of who did what,
+  in Discord and on the dashboard, updating live, with CSV export. The
+  Overview shows the latest activity. See "Audit log" above.
 - The other pages are placeholders for the next phases.
 
 **Nothing changes for an existing deployment** until you opt in: the

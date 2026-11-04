@@ -130,7 +130,8 @@ FEATURE_RAID_LOGS_ENABLED = True
 FEATURE_TIER_RETROSPECTIVE_ENABLED = True
 FEATURE_POLLS_ENABLED = True
 # cogs/audit_log.py: records who ran which command / clicked which button
-# to AUDIT_LOG_PATH below, plus the mod-only /auditlog command to view it.
+# in Discord, for the dashboard's Audit log page and the mod-only /auditlog
+# command. (Dashboard actions are always recorded while the dashboard runs.)
 FEATURE_AUDIT_LOG_ENABLED = True
 
 # cogs/web_dashboard.py: the browser-based management dashboard (see the
@@ -143,14 +144,19 @@ FEATURE_AUDIT_LOG_ENABLED = True
 # environment (that's how the Docker setup in deploy/ does it).
 FEATURE_WEB_DASHBOARD_ENABLED = _os.environ.get("WEB_DASHBOARD_ENABLED", "").strip().lower() in ("1", "true", "yes")
 
-# --- Audit log (cogs/audit_log.py) ---
-# Plain-text file, one line per user action (relative paths are relative to
-# wherever the bot is started from, same as applications.json etc.). It
-# rotates once it reaches AUDIT_LOG_MAX_BYTES, keeping AUDIT_LOG_BACKUP_COUNT
-# older files (audit.log.1, audit.log.2, ...) - defaults keep ~5 x 5 MB,
-# which is many months of history for a guild-sized bot. /auditlog reads
-# across the backups too when asked for more lines than the current file has.
+# --- Audit log (audit.py, cogs/audit_log.py) ---
+# Every action is stored in the database (crusader.db) for the dashboard's
+# Audit log page and /auditlog, and also written as one line to a
+# plain-text file for reading on the server. The file path is relative to
+# wherever the bot is started from, same as applications.json etc.
 AUDIT_LOG_PATH = "audit.log"
+
+# How many days of audit history the database keeps. Older entries are
+# deleted automatically. 0 keeps everything forever.
+AUDIT_LOG_RETENTION_DAYS = 365
+
+# The plain-text file rotates once it reaches this many bytes, keeping
+# AUDIT_LOG_BACKUP_COUNT older files (audit.log.1, audit.log.2, ...).
 AUDIT_LOG_MAX_BYTES = 5 * 1024 * 1024
 AUDIT_LOG_BACKUP_COUNT = 5
 

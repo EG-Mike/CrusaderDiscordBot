@@ -7,6 +7,7 @@ Used by:
     until it explicitly switches).
   - the web dashboard (webapi/): login sessions, dashboard-edited settings
     and their change history, encrypted API keys (secret_store.py).
+  - audit.py: the audit trail (who did what with the bot, and when).
 
 One process-wide connection guarded by a lock: the bot is a single asyncio
 process and every query here is tiny, so a connection pool would be pure
@@ -21,7 +22,7 @@ from threading import RLock
 _LOCK = RLock()
 _CONN = None
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA = [
     # Generic key -> JSON record store, one "store" per former JSON file
@@ -79,6 +80,28 @@ _SCHEMA = [
         value TEXT NOT NULL
     )
     """,
+    # Audit trail (audit.py): one row per user action, from Discord or the
+    # dashboard. Never holds private text (modal contents, notes, keys).
+    """
+    CREATE TABLE IF NOT EXISTS audit_events (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at   TEXT NOT NULL,
+        source       TEXT NOT NULL,
+        kind         TEXT NOT NULL,
+        action       TEXT NOT NULL,
+        summary      TEXT NOT NULL,
+        actor_id     TEXT,
+        actor_name   TEXT,
+        channel_id   TEXT,
+        channel_name TEXT,
+        target       TEXT,
+        details      TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_events(created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_events(actor_id, id)",
+    "CREATE INDEX IF NOT EXISTS idx_audit_channel ON audit_events(channel_id, id)",
+    "CREATE INDEX IF NOT EXISTS idx_audit_kind ON audit_events(kind, id)",
     # Web dashboard login sessions. Only a SHA-256 of the cookie token is
     # stored, so a leaked database file can't be replayed as a login.
     """

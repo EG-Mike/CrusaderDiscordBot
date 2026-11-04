@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Activity,
@@ -10,10 +11,96 @@ import {
   ScrollText,
   ToggleRight,
 } from "lucide-react";
-import type { Me } from "../lib/api";
+import { api, type AuditEvent, type AuditPage, type Me } from "../lib/api";
 import { formatDuration, useLive } from "../lib/live";
-import { Badge, Skeleton, StatTile, cx } from "../components/ui";
+import { fullDateTime, timeAgo, useNow } from "../lib/time";
+import { Badge, EmptyState, Skeleton, StatTile, cx } from "../components/ui";
 import { RestartButton } from "../components/Restart";
+import { Avatar, KindBadge, Where } from "../components/Audit";
+
+const FEED_SIZE = 8;
+
+/** The latest audit entries, updated live. */
+function ActivityFeed({ className }: { className?: string }) {
+  const { subscribe } = useLive();
+  const now = useNow();
+  const [events, setEvents] = useState<AuditEvent[] | null>(null);
+  const [error, setError] = useState(false);
+  const [fresh, setFresh] = useState<number | null>(null);
+
+  useEffect(() => {
+    api
+      .get<AuditPage>(`/api/audit?limit=${FEED_SIZE}`)
+      .then((page) => setEvents(page.events))
+      .catch(() => setError(true));
+    return subscribe((message) => {
+      if (message.type !== "audit.event") return;
+      const event = message.event as AuditEvent;
+      setEvents((current) => (current && !current.some((e) => e.id === event.id) ? [event, ...current].slice(0, FEED_SIZE) : current));
+      setFresh(event.id);
+    });
+  }, [subscribe]);
+
+  return (
+    <section className={cx("card min-w-0", className)}>
+      <header className="flex items-center justify-between border-b border-line px-5 py-3.5">
+        <div className="flex items-center gap-2">
+          <div className="label">Recent activity</div>
+          <span className="relative flex h-1.5 w-1.5" title="Updates live">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-gold opacity-40" />
+            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-gold" />
+          </span>
+        </div>
+        <Link to="/audit-log" className="text-xs text-gold hover:underline">
+          Open audit log
+        </Link>
+      </header>
+      {error ? (
+        <div className="px-5 py-6 text-muted">Couldn't load recent activity.</div>
+      ) : events === null ? (
+        <div className="space-y-2 p-4">
+          {[0, 1, 2, 3].map((i) => (
+            <Skeleton key={i} className="h-8" />
+          ))}
+        </div>
+      ) : events.length === 0 ? (
+        <EmptyState icon={<ScrollText className="h-6 w-6" />} title="No activity yet">
+          Commands, buttons and dashboard changes will show up here as they happen.
+        </EmptyState>
+      ) : (
+        <ul className="divide-y divide-line">
+          {events.map((event) => (
+            <li key={event.id}>
+              <Link
+                to={event.actor_id ? `/audit-log?actor=${event.actor_id}` : "/audit-log"}
+                className={cx(
+                  "flex items-center gap-3 px-5 py-2.5 transition-colors duration-1000 hover:bg-raised/50",
+                  fresh === event.id && "bg-gold/[0.06]",
+                )}
+                title={`${fullDateTime(event.created_at)} · show everything by ${event.actor_name ?? "this member"}`}
+              >
+                <Avatar url={event.actor_avatar_url} name={event.actor_name} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="shrink-0 font-medium">{event.actor_name ?? "Unknown"}</span>
+                    <span className="truncate text-muted">{event.summary}</span>
+                  </div>
+                  <div className="mt-0.5 flex items-center gap-2 text-2xs">
+                    <KindBadge kind={event.kind} />
+                    <Where event={event} />
+                  </div>
+                </div>
+                <time dateTime={event.created_at} className="shrink-0 text-2xs tabular-nums text-faint">
+                  {timeAgo(event.created_at, now)}
+                </time>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
 
 const FEATURE_LABELS: Record<string, string> = {
   FEATURE_ANNOUNCEMENTS_ENABLED: "Announcements",
@@ -87,7 +174,7 @@ export default function Overview({ me }: { me: Me }) {
           </div>
           <ul className="mt-4 grid gap-2 sm:grid-cols-2">
             {missing.map((m) => (
-              <li key={m.key}>
+              <li key={m.key} className="min-w-0">
                 <Link
                   to={`/settings?group=${m.group}#${m.key}`}
                   className="flex items-center gap-2.5 rounded-lg border border-line bg-bg/50 px-3 py-2 transition hover:border-gold/40"
@@ -183,16 +270,7 @@ export default function Overview({ me }: { me: Me }) {
           </ul>
         </section>
 
-        <section className="card lg:col-span-5">
-          <header className="flex items-center justify-between border-b border-line px-5 py-3.5">
-            <div className="label">Recent activity</div>
-            <Badge>Phase 1</Badge>
-          </header>
-          <div className="flex items-center gap-3 px-5 py-6 text-muted">
-            <ScrollText className="h-4 w-4 text-faint" />
-            The live audit feed arrives with the Audit Log page. Until then, use <span className="font-mono text-fg">/auditlog</span> in Discord.
-          </div>
-        </section>
+        <ActivityFeed className="lg:col-span-5" />
       </div>
     </>
   );

@@ -97,7 +97,10 @@ intents.message_content = True  # needed so message.attachments is populated
                                  # for the screenshot-reply step (this is a
                                  # privileged intent - see README step below)
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+# Optional hosting option: route Discord traffic (REST and gateway) through
+# an HTTP proxy, for hosts without direct internet access (e.g. the cloud
+# dev environment: DISCORD_PROXY=$HTTPS_PROXY). Unset = direct, as before.
+bot = commands.Bot(command_prefix="!", intents=intents, proxy=os.environ.get("DISCORD_PROXY") or None)
 
 # Shared singletons every cog can reach via self.bot.<name> - avoids each
 # feature file re-instantiating its own WCL client / storage.

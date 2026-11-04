@@ -1,5 +1,5 @@
 // Live bot status + event stream over /api/ws, shared app-wide.
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, type Status } from "./api";
 
 type Listener = (event: { type: string; [k: string]: unknown }) => void;
@@ -18,9 +18,9 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   const [connected, setConnected] = useState(false);
   const listeners = useRef(new Set<Listener>());
 
-  const refreshStatus = () => {
+  const refreshStatus = useCallback(() => {
     api.get<Status>("/api/status").then(setStatus).catch(() => undefined);
-  };
+  }, []);
 
   useEffect(() => {
     let ws: WebSocket | null = null;
@@ -51,14 +51,20 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const subscribe = (fn: Listener) => {
+  // Stable identity, so pages can subscribe in an effect without
+  // re-subscribing (and re-fetching) on every status push.
+  const subscribe = useCallback((fn: Listener) => {
     listeners.current.add(fn);
-    return () => listeners.current.delete(fn);
-  };
+    return () => {
+      listeners.current.delete(fn);
+    };
+  }, []);
 
-  return (
-    <LiveContext.Provider value={{ status, connected, subscribe, refreshStatus }}>{children}</LiveContext.Provider>
+  const value = useMemo(
+    () => ({ status, connected, subscribe, refreshStatus }),
+    [status, connected, subscribe, refreshStatus],
   );
+  return <LiveContext.Provider value={value}>{children}</LiveContext.Provider>;
 }
 
 export function useLive() {

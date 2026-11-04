@@ -1,8 +1,9 @@
 """
-Audit log: records WHO did WHAT with the bot - every slash command, context
-menu, button click, dropdown pick and modal submit - one line per action,
-to a plain-text file (config.AUDIT_LOG_PATH, rotated by size so it never
-grows unbounded). Mods can pull the most recent lines into Discord with
+Audit log, Discord side: records WHO did WHAT with the bot - every slash
+command, context menu, button click, dropdown pick and modal submit - as a
+structured event in audit.py's store (the dashboard's Audit log page reads
+it), mirrored as one line in the plain-text file config.AUDIT_LOG_PATH
+(rotated by size). Mods can pull recent entries into Discord with
 /auditlog.
 
 How it captures everything without touching any other cog: discord.py
@@ -12,44 +13,41 @@ listener here sees them all - including buttons on persistent views
 registered by other cogs, and interactions that end up failing. New
 features get audited automatically with no extra code.
 
-What's logged per line (tab-separated, UTC timestamp first):
-  - who: display name + username + user ID (the ID is what /auditlog's
-    user filter matches on, since names change)
-  - where: guild channel name + ID, or "DM"
+What's recorded per action:
+  - who: user ID, display name and username
+  - where: channel ID and name, or "DM"
   - what:
       * slash command: full path incl. subcommand, plus option values
         (long text values truncated - see MAX_VALUE_LEN)
       * context menu: command name + target
       * button/select: custom_id, the button's label when it can be found
-        on the message, and selected values for dropdowns
+        on the message, selected values for dropdowns, and the message
       * modal submit: custom_id + which fields were filled in. Field
-        CONTENTS are deliberately NOT logged (applicant notes,
-        announcement drafts etc. would otherwise land in a mod-readable
-        file) - only their field IDs and lengths.
+        CONTENTS are deliberately NOT recorded (applicant notes,
+        announcement drafts etc.) - only their field IDs and lengths.
 Autocomplete requests (fired on every keystroke while typing an option)
 are skipped as noise.
+
+On first start with this version, an existing audit.log (and its rotated
+backups) is imported into the database once, so older history shows up on
+the dashboard too.
 """
 
-import os
-import logging
+import asyncio
 import io
-from collections import deque
-from datetime import datetime, timezone
+import logging
+import os
+from datetime import datetime
 from logging.handlers import RotatingFileHandler
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
+import audit
 import config
 
 log = logging.getLogger("wow-apply-bot.audit_log")
-
-# Dedicated logger that ONLY writes to the audit file (propagate=False), so
-# audit lines don't also spam the console.
-audit_logger = logging.getLogger("wow-apply-bot.audit")
-audit_logger.propagate = False
-audit_logger.setLevel(logging.INFO)
 
 MAX_VALUE_LEN = 100       # truncate long option values (free-text fields)
 MAX_LINES_PER_CALL = 500  # hard cap for /auditlog's `lines` option
@@ -89,15 +87,23 @@ def _resolved_name(data: dict, opt_type: int, value) -> str:
     return _clean(value)
 
 
-def _describe_app_command(data: dict) -> str:
+def describe_app_command(data: dict) -> dict:
+    """Slash command / context menu payload -> audit event fields."""
     cmd_type = data.get("type", 1)
-    name = data.get("name", "?")
+    name = _clean(data.get("name", "?"))
 
     # Context menus (2 = user, 3 = message): name + what it was used on.
     if cmd_type in (2, 3):
-        target = data.get("target_id")
         kind = "user" if cmd_type == 2 else "message"
-        return f"CONTEXT_MENU \"{_clean(name)}\" on {kind} {target}"
+        target = data.get("target_id")
+        return {
+            "kind": "context_menu",
+            "action": name,
+            "summary": f'Used "{name}" on a {kind}',
+            "target": target,
+            "details": {"target_type": kind},
+            "text": f'CONTEXT_MENU "{name}" on {kind} {target}',
+        }
 
     parts = [name]
     options = data.get("options") or []
@@ -106,11 +112,19 @@ def _describe_app_command(data: dict) -> str:
         parts.append(options[0].get("name", "?"))
         options = options[0].get("options") or []
 
-    rendered = [
-        f"{opt.get('name')}={_resolved_name(data, opt.get('type'), opt.get('value'))}"
+    rendered = {
+        str(opt.get("name")): _resolved_name(data, opt.get("type"), opt.get("value"))
         for opt in options
-    ]
-    return "COMMAND /" + " ".join(parts) + (" " + " ".join(rendered) if rendered else "")
+    }
+    path = "/" + " ".join(parts)
+    summary = path + "".join(f" {k}={v}" for k, v in rendered.items())
+    return {
+        "kind": "command",
+        "action": path,
+        "summary": summary,
+        "details": {"options": rendered} if rendered else {},
+        "text": "COMMAND " + summary,
+    }
 
 
 def _iter_components(components):
@@ -141,26 +155,43 @@ def _find_component_label(message, custom_id: str):
     return None
 
 
-def _describe_component(interaction: discord.Interaction) -> str:
-    data = interaction.data or {}
-    custom_id = data.get("custom_id", "?")
-    component_type = data.get("component_type")
-    label = _find_component_label(interaction.message, custom_id)
+def describe_component(data: dict, message=None) -> dict:
+    """Button / dropdown payload -> audit event fields."""
+    custom_id = _clean(data.get("custom_id", "?"))
+    kind = "button" if data.get("component_type") == 2 else "select"
+    label = _find_component_label(message, data.get("custom_id"))
+    label = _clean(label) if label else None
+    values = [_clean(v) for v in data.get("values") or []]
 
-    kind = "BUTTON" if component_type == 2 else "SELECT"
-    text = f"{kind} {_clean(custom_id)}"
+    details = {"custom_id": custom_id}
     if label:
-        text += f" \"{_clean(label)}\""
-    values = data.get("values")
+        details["label"] = label
     if values:
-        text += " values=" + _clean(",".join(str(v) for v in values))
-    if interaction.message is not None:
-        text += f" msg={interaction.message.id}"
-    return text
+        details["values"] = values
+    message_id = str(message.id) if message is not None else None
+    if message_id:
+        details["message_id"] = message_id
+
+    text = f"{kind.upper()} {custom_id}"
+    if label:
+        text += f' "{label}"'
+    if values:
+        text += " values=" + _clean(",".join(values))
+    if message_id:
+        text += f" msg={message_id}"
+    return {
+        "kind": kind,
+        "action": label or custom_id,
+        "summary": audit.component_summary(kind, label or custom_id, values),
+        "target": message_id,
+        "details": details,
+        "text": text,
+    }
 
 
-def _describe_modal(interaction: discord.Interaction) -> str:
-    data = interaction.data or {}
+def describe_modal(data: dict) -> dict:
+    """Modal submit -> audit event fields. Only field IDs and sizes, never
+    what was typed."""
     fields = []
     for row in data.get("components") or []:
         # Modal rows are either action rows wrapping inputs, or (newer
@@ -171,47 +202,88 @@ def _describe_modal(interaction: discord.Interaction) -> str:
                 fields.append(f"{comp.get('custom_id')}({len(comp.get('value') or '')} chars)")
             elif "values" in comp:
                 fields.append(f"{comp.get('custom_id')}({len(comp.get('values') or [])} picked)")
-    text = f"MODAL {_clean(data.get('custom_id', '?'))}"
+    custom_id = _clean(data.get("custom_id", "?"))
+    text = f"MODAL {custom_id}"
     if fields:
         text += " fields=" + ",".join(fields)
-    return text
+    return {
+        "kind": "modal",
+        "action": custom_id,
+        "summary": f"Submitted form {custom_id}",
+        "details": {"custom_id": custom_id, "fields": fields} if fields else {"custom_id": custom_id},
+        "text": text,
+    }
 
 
-def _describe_where(interaction: discord.Interaction) -> str:
-    channel = interaction.channel
+def describe_interaction(interaction: discord.Interaction):
+    """Any interaction -> (event fields, text-line "what"), or None for
+    interactions that aren't user actions (autocomplete, ping)."""
+    itype = interaction.type
+    data = interaction.data or {}
+    if itype == discord.InteractionType.application_command:
+        return describe_app_command(data)
+    if itype == discord.InteractionType.component:
+        return describe_component(data, interaction.message)
+    if itype == discord.InteractionType.modal_submit:
+        return describe_modal(data)
+    return None
+
+
+def _where(interaction: discord.Interaction):
+    """(channel_id, channel_name, text-line "where")."""
     if interaction.guild is None:
-        return "DM"
-    name = getattr(channel, "name", None)
-    return f"#{name}({interaction.channel_id})" if name else f"channel({interaction.channel_id})"
+        return None, "DM", "DM"
+    name = getattr(interaction.channel, "name", None)
+    text = f"#{name}({interaction.channel_id})" if name else f"channel({interaction.channel_id})"
+    return interaction.channel_id, name, text
 
 
-def _describe_who(user: discord.abc.User) -> str:
+def _who_text(user: discord.abc.User) -> str:
     display = getattr(user, "display_name", None) or user.name
     if display != user.name:
         return f"{display} [{user.name}] ({user.id})"
     return f"{user.name} ({user.id})"
 
 
-def _who_field(line: str) -> str:
-    fields = line.split("\t")
-    return fields[1] if len(fields) > 1 else ""
+def format_entry(event: dict) -> str:
+    """One compact /auditlog line: time, who, where, what."""
+    when = datetime.strptime(event["created_at"], audit.TIME_FORMAT).strftime("%Y-%m-%d %H:%M")
+    who = event.get("actor_name") or event.get("actor_id") or "?"
+    if event["source"] == "dashboard":
+        where = "dashboard"
+    elif event.get("channel_name") and event.get("channel_id"):
+        where = f"#{event['channel_name']}"
+    else:
+        where = event.get("channel_name") or "?"
+    return f"{when}  {who}  {where}  {event['summary']}"
 
 
 class AuditLogCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.mod_role_id = config.MOD_ROLE_ID
         self.path = config.AUDIT_LOG_PATH
         self._handler = None
 
     async def cog_load(self):
         # Avoid stacking duplicate handlers if the cog is ever reloaded.
-        for existing in list(audit_logger.handlers):
-            audit_logger.removeHandler(existing)
+        for existing in list(audit.text_logger.handlers):
+            audit.text_logger.removeHandler(existing)
             existing.close()
         directory = os.path.dirname(self.path)
         if directory:
             os.makedirs(directory, exist_ok=True)
+
+        # Import the existing text file before attaching the handler, so
+        # nothing written from now on is imported twice.
+        try:
+            imported = await asyncio.to_thread(
+                audit.import_text_files, self.path, config.AUDIT_LOG_BACKUP_COUNT,
+            )
+            if imported:
+                log.info("Audit log: imported %d earlier event(s) from %s into the database", imported, self.path)
+        except Exception:
+            log.exception("Audit log: importing %s into the database failed - carrying on without it", self.path)
+
         self._handler = RotatingFileHandler(
             self.path,
             maxBytes=config.AUDIT_LOG_MAX_BYTES,
@@ -219,70 +291,64 @@ class AuditLogCog(commands.Cog):
             encoding="utf-8",
         )
         self._handler.setFormatter(logging.Formatter("%(message)s"))
-        audit_logger.addHandler(self._handler)
-        log.info("Audit log writing to %s", os.path.abspath(self.path))
+        audit.text_logger.addHandler(self._handler)
+        log.info("Audit log: recording to the database and %s", os.path.abspath(self.path))
 
     async def cog_unload(self):
         if self._handler is not None:
-            audit_logger.removeHandler(self._handler)
+            audit.text_logger.removeHandler(self._handler)
             self._handler.close()
             self._handler = None
 
     # --- permission check ------------------------------------------------
 
     async def _is_mod(self, guild: discord.Guild, user_id: int) -> bool:
-        member = guild.get_member(user_id) or await guild.fetch_member(user_id)
+        member = guild.get_member(user_id)
         if member is None:
-            return False
+            try:
+                member = await guild.fetch_member(user_id)
+            except discord.HTTPException:
+                return False
         if member.guild_permissions.manage_roles:
             return True
-        return any(role.id == self.mod_role_id for role in member.roles)
+        return bool(config.MOD_ROLE_ID) and any(role.id == config.MOD_ROLE_ID for role in member.roles)
 
     # --- capture -----------------------------------------------------------
 
     @commands.Cog.listener()
     async def on_interaction(self, interaction: discord.Interaction):
         try:
-            itype = interaction.type
-            if itype == discord.InteractionType.application_command:
-                what = _describe_app_command(interaction.data or {})
-            elif itype == discord.InteractionType.component:
-                what = _describe_component(interaction)
-            elif itype == discord.InteractionType.modal_submit:
-                what = _describe_modal(interaction)
-            else:
+            described = describe_interaction(interaction)
+            if described is None:
                 return  # autocomplete / ping: not user actions worth auditing
-
-            timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
-            audit_logger.info(
-                "%s\t%s\t%s\t%s",
-                timestamp, _describe_who(interaction.user), _describe_where(interaction), what,
+            user = interaction.user
+            display = getattr(user, "display_name", None) or user.name
+            channel_id, channel_name, where_text = _where(interaction)
+            details = dict(described.get("details") or {})
+            if display != user.name:
+                details["username"] = user.name
+            timestamp = audit.now()
+            audit.record(
+                source="discord",
+                kind=described["kind"],
+                action=described["action"],
+                summary=described["summary"],
+                actor_id=user.id,
+                actor_name=display,
+                channel_id=channel_id,
+                channel_name=channel_name,
+                target=described.get("target"),
+                details=details,
+                created_at=timestamp,
+                text_line="\t".join(
+                    (timestamp.replace("T", " "), _who_text(user), where_text, described["text"])
+                ),
             )
         except Exception:
             # Auditing must never interfere with the actual interaction.
-            log.exception("Failed to write audit log entry")
+            log.exception("Failed to record audit event")
 
     # --- reading -----------------------------------------------------------
-
-    def _tail(self, count: int, user_id=None) -> list:
-        """Last `count` lines (optionally only one user's), reading the
-        rotated backups too when the current file alone doesn't have enough."""
-        files = [self.path] + [f"{self.path}.{i}" for i in range(1, config.AUDIT_LOG_BACKUP_COUNT + 1)]
-        needle = f"({user_id})" if user_id else None
-        collected = []  # newest file first; each chunk is in chronological order
-        remaining = count
-        for path in files:
-            if remaining <= 0 or not os.path.exists(path):
-                break  # done, or no older backups exist
-            chunk = deque(maxlen=remaining)
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
-                for line in f:
-                    # Match only the "who" column (2nd field), not channel IDs.
-                    if needle is None or _who_field(line).endswith(needle):
-                        chunk.append(line.rstrip("\n"))
-            collected.insert(0, list(chunk))
-            remaining -= len(chunk)
-        return [line for chunk in collected for line in chunk]
 
     @app_commands.command(name="auditlog", description="Show the most recent bot actions (who used which command/button)")
     @app_commands.describe(
@@ -299,24 +365,28 @@ class AuditLogCog(commands.Cog):
             await interaction.response.send_message("Only moderators can view the audit log.", ephemeral=True)
             return
 
-        # Fetch one extra: the newest line is normally this very /auditlog
-        # call (logged a moment ago by on_interaction) - drop it as noise.
-        entries = self._tail(lines + 1, user.id if user else None)
+        # Fetch one extra: the newest entry is normally this very /auditlog
+        # call (recorded a moment ago by on_interaction) - drop it as noise.
+        filters = {"actor_id": user.id} if user else {}
+        events, _ = await asyncio.to_thread(audit.search, filters, limit=lines + 1)
         if (
-            entries
-            and _who_field(entries[-1]).endswith(f"({interaction.user.id})")
-            and "\tCOMMAND /auditlog" in entries[-1]
+            events
+            and events[0].get("actor_id") == str(interaction.user.id)
+            and events[0]["kind"] == "command"
+            and events[0]["action"] == "/auditlog"
         ):
-            entries = entries[:-1]
-        entries = entries[-lines:]
+            events = events[1:]
+        events = list(reversed(events[:lines]))  # oldest first, like a log
 
         scope = f" by {user.mention}" if user else ""
-        if not entries:
+        if not events:
             await interaction.response.send_message(f"No audit log entries{scope} yet.", ephemeral=True)
             return
 
-        body = "\n".join(entries)
-        header = f"Last {len(entries)} audit log entr{'y' if len(entries) == 1 else 'ies'}{scope} (UTC):"
+        body = "\n".join(format_entry(e) for e in events)
+        header = f"Last {len(events)} audit log entr{'y' if len(events) == 1 else 'ies'}{scope} (UTC):"
+        if config.FEATURE_WEB_DASHBOARD_ENABLED:
+            header += "\n-# Search and filter the full history on the dashboard's Audit log page."
         if len(body) + len(header) + 10 <= INLINE_CHAR_LIMIT:
             await interaction.response.send_message(
                 f"{header}\n```\n{body}\n```",
@@ -326,7 +396,7 @@ class AuditLogCog(commands.Cog):
         else:
             file = discord.File(io.BytesIO(body.encode("utf-8")), filename="audit_log.txt")
             await interaction.response.send_message(
-                f"{header} (too long to show inline - attached)",
+                f"{header}\n(too long to show inline - attached)",
                 file=file,
                 ephemeral=True,
                 allowed_mentions=discord.AllowedMentions.none(),

@@ -35,6 +35,8 @@ def info():
     sessions = db.query("SELECT COUNT(*) AS n FROM web_sessions WHERE expires_at > datetime('now')")[0]["n"]
     print(f"  dashboard setting overrides: {overrides}")
     print(f"  active web sessions:         {sessions}")
+    audit_count = db.query("SELECT COUNT(*) AS n FROM audit_events")[0]["n"]
+    print(f"  audit log entries:           {audit_count}")
 
 
 def export(folder="json_export"):

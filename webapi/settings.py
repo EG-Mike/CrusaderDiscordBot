@@ -78,7 +78,7 @@ GROUPS = [
      lambda k: k.startswith(("TRACKED_", "TOP_", "EXCLUDED_", "PARSE_")) or k in {
          "RAID_TIER_BANNERS", "CLEAR_STATUS_TAG_NAMES", "TIER_TAG_IDS", "RAID_TYPE_TAG_IDS"}),
     ("polls", "Polls", "Defaults for new polls.", lambda k: k.startswith("POLL_")),
-    ("audit", "Audit log", "The bot's action log.", lambda k: k.startswith("AUDIT_LOG_")),
+    ("audit", "Audit log", "Who did what with the bot, and how long that history is kept.", lambda k: k.startswith("AUDIT_LOG_")),
     ("icons", "Icons & emoji", "Where class, role, spec and ability icons come from.",
      lambda k: "ICON" in k or "EMOJI" in k),
     ("other", "Other", "Everything else.", lambda k: True),
@@ -104,7 +104,8 @@ FEATURES = {
                                   "Needs Raid summaries and Attendance."),
     "FEATURE_TIER_RETROSPECTIVE_ENABLED": ("Tier recap", "/tier-recap. Needs Raid summaries."),
     "FEATURE_POLLS_ENABLED": ("Polls", "/poll create and every poll's buttons."),
-    "FEATURE_AUDIT_LOG_ENABLED": ("Audit log", "The audit log file and /auditlog."),
+    "FEATURE_AUDIT_LOG_ENABLED": ("Audit log", "Records the commands, buttons and forms members use in Discord, "
+                                                "for the Audit log page and /auditlog."),
     "FEATURE_WEB_DASHBOARD_ENABLED": ("Web dashboard", "This dashboard."),
 }
 
