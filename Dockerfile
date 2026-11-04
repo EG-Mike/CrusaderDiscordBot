@@ -8,7 +8,10 @@
 # optional /app/config/deployment_local.py mounted read-only.
 
 # --- stage 1: build the dashboard frontend -------------------------------------
-FROM node:22-alpine AS web
+# Runs on the build machine's own platform even for an arm64 image: the
+# output is plain HTML/JS/CSS, identical for every platform, and emulating
+# Node for it would only make multi-platform builds much slower.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS web
 WORKDIR /web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci --no-audit --no-fund
