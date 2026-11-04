@@ -171,6 +171,7 @@ function PollDetail({ poll, onChanged, onDeleted }: { poll: Poll; onChanged: (p:
   const [newOption, setNewOption] = useState("");
   const [removing, setRemoving] = useState<number | null>(null);
   const [confirm, setConfirm] = useState<null | "close" | "delete">(null);
+  const [postResult, setPostResult] = useState(true);
 
   const act = async (action: string, extra: Record<string, unknown> = {}, ok?: string) => {
     setBusy(action + (extra.key ?? ""));
@@ -342,7 +343,7 @@ function PollDetail({ poll, onChanged, onDeleted }: { poll: Poll; onChanged: (p:
               variant="danger"
               onClick={async () => {
                 setConfirm(null);
-                await act("close", {}, "Poll closed; the result was posted");
+                await act("close", { post_result: postResult }, postResult ? "Poll closed; the result was posted" : "Poll closed without posting the result");
               }}
             >
               Close poll
@@ -350,7 +351,10 @@ function PollDetail({ poll, onChanged, onDeleted }: { poll: Poll; onChanged: (p:
           </>
         }
       >
-        <p className="text-muted">Voting stops and the bot replies to the poll with the result. You can reopen voting later.</p>
+        <p className="text-muted">Voting stops and the poll shows the final tally. You can reopen voting later.</p>
+        <label className="mt-3 flex items-center gap-2">
+          <Toggle checked={postResult} onChange={setPostResult} label="Post the result" /> Post the result in #{poll.channel_name ?? "the channel"}
+        </label>
       </Dialog>
       <Dialog
         open={confirm === "delete"}

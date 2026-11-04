@@ -209,6 +209,12 @@ class PollApiTests(DatabaseTestCase, unittest.IsolatedAsyncioTestCase):
         status, body = await self.call("POST", f"/api/polls/{pid}/action", {"action": "set_deadline", "closes_at": 5})
         self.assertEqual(status, 400)
 
+        replies = self.message.reply.call_count
+        status, poll = await self.call("POST", f"/api/polls/{pid}/action", {"action": "close", "post_result": False})
+        self.assertEqual(poll["phase"], "closed")
+        self.assertEqual(self.message.reply.call_count, replies)  # closed quietly
+        await self.call("POST", f"/api/polls/{pid}/action", {"action": "reopen_voting"})
+
         status, poll = await self.call("POST", f"/api/polls/{pid}/action", {"action": "close"})
         self.assertEqual(poll["phase"], "closed")
         self.assertIn("Wed", self.message.reply.call_args.args[0])  # the result was announced

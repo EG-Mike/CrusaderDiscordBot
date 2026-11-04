@@ -883,12 +883,16 @@ class PollsCog(commands.Cog):
         tied = ", ".join(f"**{w}**" for w in winners[:-1]) + f" and **{winners[-1]}**"
         return f"🔒 **{record['question']}** has closed - it's a tie between {tied} ({votes} each)."
 
-    async def _close(self, message, record: dict):
-        """Caller holds the lock. Closes, saves, re-renders and announces."""
+    async def _close(self, message, record: dict, post_result: bool = True):
+        """Caller holds the lock. Closes, saves, re-renders and (unless
+        `post_result` is off) replies with the result. The poll message
+        itself always shows the final tally once closed."""
         record["phase"] = PHASE_CLOSED
         record["closes_at"] = None
         self._save(message.id, record)
         await self._refresh(message)
+        if not post_result:
+            return
         try:
             await message.reply(self._result_announcement(record), allowed_mentions=NO_PINGS)
         except discord.HTTPException:
@@ -966,7 +970,8 @@ class PollsCog(commands.Cog):
         if phase == PHASE_ADDING:
             add("🗳️ Open voting", discord.ButtonStyle.success, self._manage_open_voting, 0)
         if phase == PHASE_VOTING:
-            add("🔒 Close poll", discord.ButtonStyle.danger, self._manage_close, 0)
+            add("🔒 Close & post result", discord.ButtonStyle.danger, self._manage_close, 0)
+            add("🔒 Close quietly", discord.ButtonStyle.secondary, self._manage_close_quietly, 0)
             if record["members_can_add"] and record["collect_first"]:
                 add("➕ Reopen adding", discord.ButtonStyle.secondary, self._manage_reopen_adding, 0)
         if phase == PHASE_CLOSED:
@@ -1075,7 +1080,7 @@ class PollsCog(commands.Cog):
             return "Unknown action."
         return None
 
-    async def _update_phase(self, interaction, poll_message, mutate, ok_text, close=False):
+    async def _update_phase(self, interaction, poll_message, mutate, ok_text, close=False, post_result=True):
         async with self._lock(poll_message.id):
             record = self._get(poll_message.id)
             if record is None:
@@ -1090,7 +1095,7 @@ class PollsCog(commands.Cog):
                 allowed_mentions=NO_PINGS,
             )
             if close:
-                await self._close(poll_message, record)
+                await self._close(poll_message, record, post_result)
             else:
                 self._save(poll_message.id, record)
                 await self._refresh(poll_message)
@@ -1102,6 +1107,11 @@ class PollsCog(commands.Cog):
     async def _manage_close(self, interaction, poll_message):
         await self._update_phase(interaction, poll_message, lambda r: self._phase_change(r, "close"),
                                  "🔒 Poll closed - results posted.", close=True)
+
+    async def _manage_close_quietly(self, interaction, poll_message):
+        await self._update_phase(interaction, poll_message, lambda r: self._phase_change(r, "close"),
+                                 "🔒 Poll closed. No result was posted; the poll shows the final tally.",
+                                 close=True, post_result=False)
 
     async def _manage_reopen_adding(self, interaction, poll_message):
         await self._update_phase(interaction, poll_message, lambda r: self._phase_change(r, "reopen_adding"),
@@ -1280,7 +1290,7 @@ class PollsCog(commands.Cog):
             if error:
                 raise PollError(error.replace("**", ""))
             if action == "close":
-                await self._close(message, record)
+                await self._close(message, record, post_result=bool(payload.get("post_result", True)))
             else:
                 self._save(message_id, record)
                 await self._refresh(message)
