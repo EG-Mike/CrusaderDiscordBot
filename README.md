@@ -649,123 +649,181 @@ runs; `python db_tools.py info` shows what's in it.
 ### Setting up a test environment (recommended before going live)
 
 The test setup is a **second bot** (its own Discord application) in a
-**private test server**, running from its own folder on the same VPS. It
-never touches the live bot, the live server or the live data files, and
-its dashboard is never exposed to the internet: you reach it through an
-SSH tunnel.
+**private test server**, running as a Docker container on the same VPS. It
+never touches the live bot, the live server or the live data, and its
+dashboard is never exposed to the internet: you open it through an SSH
+tunnel.
 
-**1. Test Discord server.** Create a new server. Quickest way to copy the
-live server's channels and roles: in the live server, Server Settings ->
-Server Template -> create a template and open its link (it copies channels,
-roles and permissions, not messages or members). In the copy, re-create
-the raid-summary forum's tags (templates don't copy forum tags).
+How updates flow:
 
-**2. Test bot application.** At
-https://discord.com/developers/applications create a new application
+1. Code is pushed to GitHub.
+2. GitHub Actions (`.github/workflows/docker-image.yml`) builds a Docker
+   image (bot and dashboard together) and publishes it to GitHub's
+   container registry: tag `test` for the dashboard branch, `latest` for
+   `main`.
+3. On the VPS, `update.sh` runs every 5 minutes from cron. When there's a
+   new image it restarts the container with it; otherwise it does nothing.
+   Data lives in a folder outside the container, so it survives updates.
+
+#### 1. Copy your live server with a server template
+
+A server template copies a server's **channels, categories, channel
+settings, roles and permissions** into a brand-new server. It does **not**
+copy messages, members, bots, emoji, stickers, the server icon or boosts.
+You need the *Manage Server* permission on the live server.
+
+1. In the live server, open **Server Settings**, then **Server Template**
+   in the left-hand menu.
+2. Give it a title (e.g. "Crusader test copy") and click **Generate
+   Template**.
+3. Click **Copy** next to the template link (`https://discord.new/...`).
+4. Open that link in your browser (or paste it in any Discord chat and
+   click it). Discord shows a preview: click **Create** to make the new
+   server.
+5. Back on the template page in the live server, you can **Delete
+   Template** so the link stops working. The test server you made stays.
+
+In the new server, check that the raid-summary forum still has its tags
+(Tier, Main/Alt, clear status) and add any that are missing. Everything in
+the copy has **new IDs**, which is why the test bot gets its own `.env` and
+`deployment_local.py` below.
+
+#### 2. Create the test bot application
+
+At https://discord.com/developers/applications create a new application
 (e.g. "Crusader Test"):
 
-- Bot tab: enable the **Server Members** and **Message Content** intents,
-  copy the token.
-- Invite it to the test server the same way as the live bot (see "Setting
-  up on a new server" above) and give its role the same position.
-- OAuth2 tab: copy the **Client Secret**, and under **Redirects** add
+- **Bot** tab: enable the **Server Members** and **Message Content**
+  intents, then reset and copy the token.
+- Invite it to the **test** server the same way as the live bot (see
+  "Setting up on a new server" above), and drag its role to the same
+  position.
+- **OAuth2** tab: copy the **Client Secret**, and under **Redirects** add
   `http://localhost:8081/auth/callback`.
 
-**3. Get the code on the VPS** (a separate folder from the live bot):
+#### 3. Let GitHub build the image
+
+The workflow runs automatically on every push to the dashboard branch. To
+check it: on GitHub, open the repository's **Actions** tab, then **Docker
+image**. A green run means the image is published; the repository page's
+**Packages** section then lists it.
+
+If the repository is **private**, the VPS needs a login to pull it:
+
+1. GitHub, then your profile picture, then **Settings > Developer settings
+   > Personal access tokens > Tokens (classic) > Generate new token**.
+2. Tick only **read:packages**, set an expiry, generate, copy the token.
+3. On the VPS:
 
 ```bash
-git clone https://github.com/EG-Mike/CrusaderDiscordBot.git /opt/crusader-test
+docker login ghcr.io -u <your-github-username>
 ```
+
+Paste the token as the password. Docker remembers it.
+
+#### 4. Set up the folder on the VPS
 
 ```bash
-cd /opt/crusader-test && git checkout claude/kind-bell-m7yoj1
+mkdir -p /opt/crusader-test/data && cd /opt/crusader-test
 ```
+
+Put these four files from the repository in that folder (on GitHub, open
+each file, click **Raw**, and copy-paste it into the editor of your
+choice, e.g. `nano docker-compose.yml`):
+
+| Repository file | Save on the VPS as |
+|---|---|
+| `deploy/test/docker-compose.yml` | `docker-compose.yml` |
+| `deploy/test/update.sh` | `update.sh` |
+| `.env.example` | `.env` |
+| `config/deployment_local.example.py` | `deployment_local.py` |
+
+Then:
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+chmod +x update.sh && chown 1000:1000 data
 ```
 
-**4. Configure it.**
+(The container runs as user 1000, which needs to be able to write to
+`data/`.)
 
-```bash
-cp .env.example .env && cp config/deployment_local.example.py config/deployment_local.py
-```
+**`docker-compose.yml`**: replace `OWNER/REPO` in the `image:` line with
+the repository path in lowercase: `ghcr.io/eg-mike/crusaderdiscordbot:test`.
 
-In `.env`: the **test** bot's `DISCORD_TOKEN`, `DISCORD_GUILD_ID` (the test
-server), the test server's channel/role IDs, your WCL credentials (these
-can be the live ones; both bots then share one WCL rate limit), plus:
+**`.env`**: the **test** bot's `DISCORD_TOKEN`, `DISCORD_GUILD_ID` (the
+test server's ID), the test server's channel and role IDs, and your WCL
+credentials (the live ones work; both bots then share one WarcraftLogs
+rate limit). Plus:
 
 ```
 STORAGE_BACKEND=sqlite
 DISCORD_CLIENT_SECRET=<test application's client secret>
 WEB_BASE_URL=http://localhost:8081
-WEB_PORT=8081
-WEB_ENVIRONMENT=test
 WEB_ADMIN_USER_IDS=<your Discord user ID>
 ```
 
-In `config/deployment_local.py`: the test server's role, channel and tag
-IDs (the file lists which ones are hardcoded in `deployment.py`).
+(`WEB_HOST`, `WEB_PORT` and `WEB_ENVIRONMENT` are already set by
+`docker-compose.yml`.)
 
-Optional: copy the live bot's `*.json` data files into `/opt/crusader-test`
-to test with real data. **Copy**, don't link: the test bot will import them
-into its own database.
+**`deployment_local.py`**: keep `FEATURE_WEB_DASHBOARD_ENABLED = True`
+and fill in the test server's role, channel and tag IDs.
 
-**5. Build the dashboard frontend.** This needs Node.js 20 or newer on the
-VPS (only for building; the bot doesn't need Node to run). If `node -v`
-doesn't show one, install it from https://nodejs.org or your distribution's
-NodeSource packages. Then:
+Optional, to test with real data: copy the live bot's `*.json` data files
+into `data/` (then run the `chown` above again). **Copy**, never link: the
+test bot imports them into its own database.
 
-```bash
-cd /opt/crusader-test/web && npm ci && npm run build
-```
-
-**6. Start the test bot.**
+#### 5. Start it
 
 ```bash
-cd /opt/crusader-test && .venv/bin/python bot.py
-```
-
-Look for `Web dashboard listening on http://127.0.0.1:8081` in the
-console. To keep it running in the background, either add it as a second
-instance in AMP, or run it as a systemd service, for example
-`/etc/systemd/system/crusader-test.service`:
-
-```ini
-[Unit]
-Description=Crusader test bot
-After=network-online.target
-
-[Service]
-WorkingDirectory=/opt/crusader-test
-ExecStart=/opt/crusader-test/.venv/bin/python bot.py
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
+./update.sh
 ```
 
 ```bash
-systemctl daemon-reload && systemctl enable --now crusader-test
+docker compose logs -f
 ```
 
-**7. Open the dashboard.** On your own computer, open an SSH tunnel to the
-VPS and leave it open:
+Look for `Web dashboard listening on http://0.0.0.0:8081` and the bot
+logging in. `Ctrl+C` stops following the logs; the bot keeps running.
+
+#### 6. Turn on automatic updates
+
+```bash
+crontab -e
+```
+
+Add this line, save and close:
+
+```
+*/5 * * * * /opt/crusader-test/update.sh >> /opt/crusader-test/update.log 2>&1
+```
+
+From now on, a push to the branch reaches the test bot within about 5
+minutes after GitHub finishes building (usually 1 to 3 minutes).
+`update.log` lists every update with its build number, which also shows
+in the dashboard's sidebar.
+
+#### 7. Open the dashboard
+
+On **your own computer**, open an SSH tunnel to the VPS and leave the
+window open while you use the dashboard:
 
 ```bash
 ssh -L 8081:127.0.0.1:8081 root@<your-vps-address>
 ```
 
-Then browse to http://localhost:8081 and log in with Discord. The orange
+Browse to http://localhost:8081 and log in with Discord. The orange
 **TEST** badge next to the logo confirms you're on the test bot.
 
-**Updating the test bot** after new changes are pushed:
+#### Day-to-day commands (run in `/opt/crusader-test`)
 
-```bash
-cd /opt/crusader-test && git pull && (cd web && npm ci && npm run build)
-```
-
-Then restart it (`systemctl restart crusader-test`, or restart it in AMP).
+| What | Command |
+|---|---|
+| Follow the logs | `docker compose logs -f` |
+| Restart (e.g. after saving settings in the dashboard) | `docker compose restart` |
+| Update now instead of waiting for cron | `./update.sh` |
+| Stop / start | `docker compose stop` / `docker compose start` |
+| Run a database tool | `docker compose exec bot python /app/db_tools.py info` |
+| Go back to an earlier build | set `image:` to `...:sha-<commit>`, then `docker compose up -d` |
 
 ### Working on the frontend
 
@@ -798,6 +856,9 @@ db.py                - shared SQLite database (records, dashboard settings, sess
 db_tools.py          - database info / export back to JSON / backup
 webapi/              - the web dashboard's HTTP API (runs inside the bot process)
 web/                 - the web dashboard's frontend (React + Vite + Tailwind)
+Dockerfile           - one image with the bot and the built dashboard
+.github/workflows/   - builds and publishes that image to ghcr.io on every push
+deploy/test/         - docker-compose.yml + auto-update script for the test bot
 icons.py             - shared icon resolution (guild emoji + auto-provisioned application emoji)
 cogs/
   apply.py           - the whole guild-application feature (self-contained)

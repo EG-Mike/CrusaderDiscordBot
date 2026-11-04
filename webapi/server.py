@@ -44,6 +44,9 @@ STARTED_KEY = web.AppKey("started", float)
 
 
 def _git_version() -> str:
+    # Docker images have no .git folder: the build passes the commit in.
+    if os.environ.get("APP_VERSION"):
+        return os.environ["APP_VERSION"][:12]
     try:
         return subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True, timeout=5,
