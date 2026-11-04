@@ -10,6 +10,7 @@ import {
   LogOut,
   Megaphone,
   Menu,
+  Rocket,
   ScrollText,
   Search,
   Settings,
@@ -59,6 +60,7 @@ export const NAV: { group: string; items: NavItem[] }[] = [
   {
     group: "System",
     items: [
+      { to: "/setup", label: "Setup", icon: Rocket },
       { to: "/audit-log", label: "Audit log", icon: ScrollText, soon: true },
       { to: "/settings", label: "Settings", icon: Settings },
       { to: "/maintenance", label: "Maintenance", icon: Wrench, soon: true },

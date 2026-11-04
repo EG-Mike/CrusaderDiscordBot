@@ -409,6 +409,12 @@ class WarcraftLogsClient:
             log.debug("Reusing cached WCL API token (expires in %.0fs)", self._token_expires_at - time.time())
             return self._token
 
+        if not (self.client_id and self.client_secret):
+            raise RuntimeError(
+                "WarcraftLogs isn't connected yet: add the WarcraftLogs API keys in the web dashboard "
+                "(Settings -> Integrations)."
+            )
+
         # Build the Basic auth header explicitly (rather than aiohttp's
         # `auth=` kwarg, which triggers a deprecation warning on newer
         # aiohttp versions) using BasicAuth's own encoder.

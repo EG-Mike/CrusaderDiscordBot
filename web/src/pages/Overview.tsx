@@ -13,6 +13,7 @@ import {
 import type { Me } from "../lib/api";
 import { formatDuration, useLive } from "../lib/live";
 import { Badge, Skeleton, StatTile, cx } from "../components/ui";
+import { RestartButton } from "../components/Restart";
 
 const FEATURE_LABELS: Record<string, string> = {
   FEATURE_ANNOUNCEMENTS_ENABLED: "Announcements",
@@ -75,20 +76,20 @@ export default function Overview({ me }: { me: Me }) {
               <h2 className="text-base font-semibold">
                 {missing.length} thing{missing.length === 1 ? "" : "s"} to set before every feature works
               </h2>
-              <p className="mt-1 text-muted">Pick them in Settings, then restart the bot.</p>
+              <p className="mt-1 text-muted">The setup guide walks you through them; it only takes a few minutes.</p>
             </div>
             <Link
-              to="/settings?group=server"
+              to="/setup"
               className="inline-flex h-9 items-center rounded-lg border border-gold/50 bg-gold/15 px-3.5 font-medium text-gold transition hover:bg-gold/25"
             >
-              Open settings
+              {status.setup_completed ? "Open setup" : "Continue setup"}
             </Link>
           </div>
           <ul className="mt-4 grid gap-2 sm:grid-cols-2">
             {missing.map((m) => (
               <li key={m.key}>
                 <Link
-                  to={`/settings?group=server#${m.key}`}
+                  to={`/settings?group=${m.group}#${m.key}`}
                   className="flex items-center gap-2.5 rounded-lg border border-line bg-bg/50 px-3 py-2 transition hover:border-gold/40"
                 >
                   <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-gold" />
@@ -139,13 +140,16 @@ export default function Overview({ me }: { me: Me }) {
                     {status.pending_restart.length} setting change{status.pending_restart.length === 1 ? "" : "s"} waiting for a restart
                   </div>
                   <p className="mt-0.5 text-muted">
-                    Restart the bot (in AMP) to apply them:{" "}
+                    Restart the bot to apply them:{" "}
                     <span className="font-mono text-2xs text-faint">{status.pending_restart.join(", ")}</span>
                   </p>
                 </div>
-                <Link to="/settings?filter=pending" className="shrink-0 self-center text-xs text-gold hover:underline">
-                  Review
-                </Link>
+                <div className="flex shrink-0 items-center gap-3 self-center">
+                  <Link to="/settings?filter=pending" className="text-xs text-gold hover:underline">
+                    Review
+                  </Link>
+                  <RestartButton />
+                </div>
               </div>
             )}
             {status.warnings.map((warning) => (

@@ -6,7 +6,7 @@ Used by:
     the original JSON files, so an existing deployment changes nothing
     until it explicitly switches).
   - the web dashboard (webapi/): login sessions, dashboard-edited settings
-    and their change history.
+    and their change history, encrypted API keys (secret_store.py).
 
 One process-wide connection guarded by a lock: the bot is a single asyncio
 process and every query here is tiny, so a connection pool would be pure
@@ -63,6 +63,22 @@ _SCHEMA = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_settings_history_key ON settings_history(key, id)",
+    # API keys entered in the dashboard, encrypted (see secret_store.py).
+    """
+    CREATE TABLE IF NOT EXISTS secrets (
+        key        TEXT PRIMARY KEY,
+        ciphertext TEXT NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_by TEXT
+    )
+    """,
+    # Small key/value facts about this installation (e.g. setup completed).
+    """
+    CREATE TABLE IF NOT EXISTS meta (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    )
+    """,
     # Web dashboard login sessions. Only a SHA-256 of the cookie token is
     # stored, so a leaked database file can't be replayed as a login.
     """
@@ -136,3 +152,13 @@ def exists() -> bool:
     override loader so a deployment that never enabled any of this doesn't
     get an empty crusader.db created just by importing config."""
     return os.path.exists(db_path())
+
+
+def get_meta(key: str, default=None):
+    rows = query("SELECT value FROM meta WHERE key = ?", (key,))
+    return rows[0]["value"] if rows else default
+
+
+def set_meta(key: str, value: str):
+    execute("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value))

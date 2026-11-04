@@ -28,7 +28,9 @@ import discord
 from aiohttp import WSMsgType, web
 
 import config
-from webapi import auth
+import db
+import secret_store
+from webapi import auth, integrations
 from webapi import settings as settings_api
 
 log = logging.getLogger("wow-apply-bot.web")
@@ -242,6 +244,8 @@ def _status(app) -> dict:
         },
         "counts": {"pending_applications": pending_applications},
         "missing_setup": settings_api.missing_setup(),
+        "setup_completed": db.get_meta("setup_completed_at") is not None,
+        "restart_available": _restart_available(),
         "pending_restart": pending_restart,
         "warnings": warnings,
     }
@@ -334,6 +338,117 @@ async def settings_history(request):
     return _json(settings_api.history(key))
 
 
+# --- integrations (API keys) -------------------------------------------------------
+
+async def integrations_list(request):
+    return _json(integrations.list_services())
+
+
+async def integration_set(request):
+    key = request.match_info["key"]
+    if key not in secret_store.SECRETS:
+        return _error("Unknown key", 404)
+    body = await request.json()
+    value = str(body.get("value", "")).strip()
+    if not value:
+        return _error("Enter a value, or use Remove to clear it", 400)
+    user = request["user"]
+    secret_store.set(key, value, f"{user['username']} ({user['user_id']})")
+    integrations.apply_to_bot(request.app[BOT_KEY])
+    audit(request, f"integrations.set {key}")  # never the value
+    await request.app[HUB_KEY].broadcast({"type": "settings.changed", "key": key})
+    return _json(secret_store.describe(key))
+
+
+async def integration_delete(request):
+    key = request.match_info["key"]
+    if key not in secret_store.SECRETS:
+        return _error("Unknown key", 404)
+    secret_store.delete(key)
+    integrations.apply_to_bot(request.app[BOT_KEY])
+    audit(request, f"integrations.remove {key}")
+    await request.app[HUB_KEY].broadcast({"type": "settings.changed", "key": key})
+    return _json(secret_store.describe(key))
+
+
+async def integration_test(request):
+    service = request.match_info["service"]
+    if service not in secret_store.SERVICES:
+        return _error("Unknown service", 404)
+    body = await request.json()
+    id_key, secret_key = secret_store.SERVICES[service][2]
+    # Blank fields = test what's already saved.
+    client_id = str(body.get("client_id") or "").strip() or secret_store.get(id_key)
+    client_secret = str(body.get("client_secret") or "").strip() or secret_store.get(secret_key)
+    ok, message = await integrations.test(service, client_id, client_secret)
+    return _json({"ok": ok, "message": message})
+
+
+# --- setup & restart -----------------------------------------------------------------
+
+def _restart_available() -> bool:
+    """Only when something restarts the process after it exits (Docker's
+    restart policy, a systemd Restart=, AMP's auto-restart) - otherwise a
+    restart from the dashboard would just stop the bot."""
+    return os.environ.get("WEB_RESTART_ENABLED", "").strip().lower() in ("1", "true", "yes")
+
+
+async def setup_state(request):
+    bot = request.app[BOT_KEY]
+    guild = auth.guild_for(bot)
+    checks = []
+    if guild is not None and guild.me is not None:
+        perms = guild.me.guild_permissions
+        for attr, label in [
+            ("view_channel", "View channels"),
+            ("send_messages", "Send messages"),
+            ("embed_links", "Embed links"),
+            ("read_message_history", "Read message history"),
+            ("add_reactions", "Add reactions"),
+            ("manage_messages", "Manage messages (pin/unpin, clean up)"),
+            ("manage_roles", "Manage roles (give approved applicants their roles)"),
+            ("manage_nicknames", "Manage nicknames (rename approved applicants)"),
+            ("create_public_threads", "Create posts in the raid-summary forum"),
+        ]:
+            checks.append({"label": label, "ok": bool(getattr(perms, attr, False))})
+        fresh = guild.get_role(config.FRESH_ROLE_ID) if config.FRESH_ROLE_ID else None
+        if fresh is not None:
+            checks.append({
+                "label": f"Bot's role is above @{fresh.name} (needed to hand it out)",
+                "ok": guild.me.top_role > fresh,
+            })
+    return _json({
+        "completed": db.get_meta("setup_completed_at") is not None,
+        "missing": settings_api.missing_setup(),
+        "checks": checks,
+        "guild": {"name": guild.name, "icon_url": guild.icon.url if guild.icon else None} if guild else None,
+        "restart_available": _restart_available(),
+    })
+
+
+async def setup_complete(request):
+    db.set_meta("setup_completed_at", datetime.now(timezone.utc).isoformat())
+    audit(request, "setup.complete")
+    return _json({"ok": True})
+
+
+async def restart(request):
+    if "admin" not in request["levels"]:
+        return _error("Only admins can restart the bot", 403)
+    if not _restart_available():
+        return _error("Restarting from the dashboard isn't enabled on this server (WEB_RESTART_ENABLED)", 400)
+    audit(request, "bot.restart")
+    log.warning("Restart requested from the dashboard by %s", request["user"]["username"])
+    bot = request.app[BOT_KEY]
+
+    async def _shutdown():
+        await asyncio.sleep(0.5)  # let this response reach the browser first
+        await bot.close()  # bot.py's main() then returns and the process exits
+
+    asyncio.get_running_loop().create_task(_shutdown())
+    return _json({"ok": True}, status=202)
+
+
 async def websocket(request):
     ws = web.WebSocketResponse(heartbeat=30)
     await ws.prepare(request)
@@ -400,6 +515,13 @@ def create_app(bot) -> web.Application:
     app.router.add_put("/api/settings/{key}", settings_update)
     app.router.add_delete("/api/settings/{key}", settings_reset)
     app.router.add_get("/api/settings/{key}/history", settings_history)
+    app.router.add_get("/api/integrations", integrations_list)
+    app.router.add_put("/api/integrations/{key}", integration_set)
+    app.router.add_delete("/api/integrations/{key}", integration_delete)
+    app.router.add_post("/api/integrations/{service}/test", integration_test)
+    app.router.add_get("/api/setup", setup_state)
+    app.router.add_post("/api/setup/complete", setup_complete)
+    app.router.add_post("/api/bot/restart", restart)
     app.router.add_get("/api/ws", websocket)
     app.router.add_route("*", "/api/{tail:.*}", lambda r: _error("Not found", 404))
 

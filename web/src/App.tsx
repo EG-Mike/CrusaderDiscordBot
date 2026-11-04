@@ -1,14 +1,35 @@
 import { useEffect, useState } from "react";
-import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { api, type Me } from "./lib/api";
-import { LiveProvider } from "./lib/live";
+import { LiveProvider, useLive } from "./lib/live";
+import { MeContext } from "./lib/me";
+import SetupPage from "./pages/Setup";
 import { Layout, NAV } from "./components/Layout";
 import Login from "./pages/Login";
 import Overview from "./pages/Overview";
 import SettingsPage from "./pages/Settings";
 import ComingSoon from "./pages/ComingSoon";
 import { ToastProvider } from "./components/Toast";
+
+// First visit after install: open the setup wizard once per browser session
+// while required settings are missing and setup was never finished.
+function SetupRedirect() {
+  const { status } = useLive();
+  const { pathname } = useLocation();
+  const navigate = useNavigate();
+  useEffect(() => {
+    if (!status || status.setup_completed || !status.missing_setup.length || pathname !== "/") return;
+    try {
+      if (sessionStorage.getItem("setupPrompted")) return;
+      sessionStorage.setItem("setupPrompted", "1");
+    } catch {
+      /* storage unavailable: still redirect */
+    }
+    navigate("/setup");
+  }, [status, pathname, navigate]);
+  return null;
+}
 
 export default function App() {
   const { pathname } = useLocation();
@@ -34,11 +55,14 @@ export default function App() {
 
   const soon = NAV.flatMap((g) => g.items).filter((i) => i.soon);
   return (
+    <MeContext.Provider value={me}>
     <ToastProvider>
     <LiveProvider>
+      <SetupRedirect />
       <Layout me={me}>
         <Routes>
           <Route path="/" element={<Overview me={me} />} />
+          <Route path="/setup" element={<SetupPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           {soon.map((item) => (
             <Route key={item.to} path={item.to} element={<ComingSoon item={item} />} />
@@ -48,5 +72,6 @@ export default function App() {
       </Layout>
     </LiveProvider>
     </ToastProvider>
+    </MeContext.Provider>
   );
 }

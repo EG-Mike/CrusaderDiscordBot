@@ -21,6 +21,7 @@ from wowhead import WowheadClient
 from blizzard_client import BlizzardClient
 from storage import ApplicationStore
 import icons
+import secret_store
 
 load_dotenv()
 
@@ -100,7 +101,11 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 # Shared singletons every cog can reach via self.bot.<name> - avoids each
 # feature file re-instantiating its own WCL client / storage.
-bot.wcl = WarcraftLogsClient(os.environ["WCL_CLIENT_ID"], os.environ["WCL_CLIENT_SECRET"])
+# API keys come from the dashboard (encrypted in the database) or, for a
+# setup from before the dashboard, .env - see secret_store.py. Missing keys
+# don't stop the bot: WarcraftLogs-based features explain what's missing
+# when used, and the dashboard's setup asks for them.
+bot.wcl = WarcraftLogsClient(secret_store.get("WCL_CLIENT_ID"), secret_store.get("WCL_CLIENT_SECRET"))
 bot.wowhead = WowheadClient()
 # Optional - item lookups (loot names/icons, potion icons) prefer this over
 # wowhead.py's scraped XML feed when configured (see
@@ -109,8 +114,8 @@ bot.wowhead = WowheadClient()
 # it: unset BLIZZARD_CLIENT_ID/SECRET just means those lookups keep going
 # through bot.wowhead exactly as before this existed. Same
 # SERVER_REGION env var wcl_client.py already reads (defaults "us").
-blizzard_client_id = os.environ.get("BLIZZARD_CLIENT_ID")
-blizzard_client_secret = os.environ.get("BLIZZARD_CLIENT_SECRET")
+blizzard_client_id = secret_store.get("BLIZZARD_CLIENT_ID")
+blizzard_client_secret = secret_store.get("BLIZZARD_CLIENT_SECRET")
 bot.blizzard = (
     BlizzardClient(blizzard_client_id, blizzard_client_secret, region=config.SERVER_REGION)
     if blizzard_client_id and blizzard_client_secret else None

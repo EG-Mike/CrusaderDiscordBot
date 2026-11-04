@@ -452,9 +452,18 @@ from the URL:
 https://fresh.warcraftlogs.com/character/<region>/<THIS PART>/CharacterName
 ```
 
-### 6. Fill in `.env`
+### 6. Fill in `.env` (or use the dashboard)
 
-Copy `.env.example` to `.env` and fill in every value:
+**With the web dashboard (recommended):** `.env` only needs
+`DISCORD_TOKEN`, `DISCORD_CLIENT_SECRET`, `WEB_BASE_URL` and
+`WEB_ADMIN_USER_IDS` (see `.env.example`). Start the bot, log in, and the
+dashboard's setup guide asks for everything below, plus the WarcraftLogs
+keys from step 4 (stored encrypted). Wherever the steps in this section
+say "set X in `.env`", use the dashboard's Settings instead. See "Web
+dashboard" below for the full walkthrough.
+
+**Without the dashboard:** copy `.env.example` to `.env` and fill in every
+value:
 
 | Variable | What it's for |
 |---|---|
@@ -615,6 +624,12 @@ Built so far (phase 0):
   validation, per-setting change history with revert, and "reset to
   default". Saved values take effect on the **next bot restart** (the
   dashboard lists what's waiting for one).
+- **Setup guide**: a step-by-step first-time setup (roles, channels,
+  WarcraftLogs keys with a connection test, realm, features) that finishes
+  with a restart.
+- **Integrations**: API keys entered in the browser, stored encrypted.
+- **Restart** button for admins, when the hosting restarts the bot after
+  it stops (`WEB_RESTART_ENABLED`, on in the Docker setup).
 - The other pages are placeholders for the next phases.
 
 **Nothing changes for an existing deployment** until you opt in: the
@@ -628,10 +643,19 @@ stays on JSON files (`STORAGE_BACKEND=json`) by default.
    this machine only (copy `config/deployment_local.example.py`).
 3. Values saved in the dashboard (stored in `crusader.db`).
 
-Later layers win. Only secrets (tokens, client secrets) have to be in
-`.env`. The channel/role IDs and realm that used to be required there are
-now settings too ("Discord server" section): a value still in `.env` is
-used as the starting value, so an existing setup keeps working unchanged.
+Later layers win.
+
+**What goes where:**
+
+| Where | What |
+|---|---|
+| `.env` | Only what the bot needs to start and let you log in: `DISCORD_TOKEN`, `DISCORD_CLIENT_SECRET`, `WEB_BASE_URL`, `WEB_ADMIN_USER_IDS`, plus hosting options. See `.env.example`. |
+| Dashboard settings | Channels, roles, realm, features and every tuning value. Stored in the database. |
+| Dashboard integrations | External API keys (WarcraftLogs, Blizzard). Stored **encrypted** in the database (key file `secret.key` next to it) and never shown again after saving. |
+
+Setups from before the dashboard keep working: channel/role IDs, the realm
+and API keys still in `.env` are used as fallbacks and show as "From .env"
+in the dashboard.
 
 ### Storage: JSON or SQLite
 
@@ -747,13 +771,12 @@ chmod +x update.sh && chown 1000:1000 data
 (The container runs as user 1000, which needs to be able to write to
 `data/`.)
 
-Create `.env` (`nano .env`) with just the secrets. Channels, roles and
-the realm are **not** needed here: you pick those in the dashboard.
+Create `.env` (`nano .env`) with just the bot's startup settings.
+Everything else (channels, roles, realm, WarcraftLogs/Blizzard API keys,
+features) is filled in later in the dashboard's setup guide.
 
 ```
 DISCORD_TOKEN=<test bot's token>
-WCL_CLIENT_ID=<your WarcraftLogs client ID>
-WCL_CLIENT_SECRET=<your WarcraftLogs client secret>
 DISCORD_CLIENT_SECRET=<test application's OAuth2 client secret>
 WEB_BASE_URL=http://localhost:8081
 WEB_ADMIN_USER_IDS=<your Discord user ID>
@@ -761,9 +784,7 @@ WEB_ADMIN_USER_IDS=<your Discord user ID>
 
 `WEB_ADMIN_USER_IDS` is what lets you into the dashboard before a
 moderator role has been chosen (Discord: Settings -> Advanced -> turn on
-Developer Mode, then right-click your own name -> Copy User ID). The WCL
-credentials can be the live bot's; both bots then share one WarcraftLogs
-rate limit.
+Developer Mode, then right-click your own name -> Copy User ID).
 
 Optional, to test with real data: copy the live bot's `*.json` data files
 into `data/` (then run the `chown` above again). **Copy**, never link: the
@@ -811,33 +832,39 @@ ssh -L 8081:127.0.0.1:8081 root@<your-vps-address>
 Browse to http://localhost:8081 and log in with Discord. The orange
 **TEST** badge next to the logo confirms you're on the test bot.
 
-#### 8. First-time setup in the dashboard
+#### 8. Complete the installation in the setup guide
 
-The Overview shows a **Finish setup** list of what isn't configured yet.
+The first time you log in, the dashboard opens its **setup guide** (also
+under System -> Setup later):
 
-1. Open **Settings -> Discord server** and pick the test server's
-   moderator role, review channel, Fresh role, sandbox, attendance and
-   forum channels, and the realm (`SERVER_SLUG`, `SERVER_REGION`).
-2. Check the other sections for IDs that still point at the live server
-   (they show as "Unknown role" / "Unknown channel" in the dropdowns):
-   **Applications** (approver role, auto-assigned class/role roles,
-   archive channel), **Attendance** (Regular/Organizer roles) and **Raid
-   summaries** (forum tag IDs).
-3. Restart the bot so it picks everything up:
+1. **Welcome**: confirms the bot is connected and checks its permissions
+   in the server.
+2. **Roles**: moderator, approver, Fresh, Regular and Organizer roles.
+3. **Channels**: review, gear-check, archive, announcement drafts,
+   attendance, moderator chat, the raid-summary forum, and the raid log
+   channels.
+4. **WarcraftLogs**: your API keys (create a client at
+   https://www.warcraftlogs.com/api/clients/; **Test connection** checks
+   them before you save), region, realm and guild name. Blizzard API keys
+   are optional.
+5. **Features**: turn off anything you don't use.
+6. **Finish**: lists anything required that's still missing, then
+   **Finish and restart the bot** applies everything.
 
-```bash
-docker compose restart
-```
+Everything saves as you go. API keys are stored encrypted in the database
+(the key to decrypt them is `data/secret.key`; back it up together with
+`data/crusader.db`) and are never shown again after saving.
 
 #### Day-to-day commands (run in `/opt/crusader-test`)
 
 | What | Command |
 |---|---|
 | Follow the logs | `docker compose logs -f` |
-| Restart (e.g. after saving settings in the dashboard) | `docker compose restart` |
+| Restart (also possible from the dashboard) | `docker compose restart` |
 | Update now instead of waiting for cron | `./update.sh` |
 | Stop / start | `docker compose stop` / `docker compose start` |
 | Run a database tool | `docker compose exec bot python /app/db_tools.py info` |
+| Back up database + encryption key | `cp data/crusader.db data/secret.key /somewhere/safe/` (or `db_tools.py backup` for a copy while running) |
 | Go back to an earlier build | set `image:` to `...:sha-<commit>`, then `docker compose up -d` |
 
 ### Working on the frontend

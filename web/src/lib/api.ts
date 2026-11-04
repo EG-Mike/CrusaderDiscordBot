@@ -50,7 +50,9 @@ export interface Status {
   guild: { id: string; name: string; icon_url: string | null; member_count: number } | null;
   features: Record<string, boolean>;
   counts: { pending_applications: number };
-  missing_setup: { key: string; label: string }[];
+  missing_setup: MissingSetup[];
+  setup_completed: boolean;
+  restart_available: boolean;
   pending_restart: string[];
   warnings: string[];
 }
@@ -106,4 +108,37 @@ export interface Role {
   name: string;
   color: string | null;
   managed: boolean;
+}
+
+export interface MissingSetup {
+  key: string;
+  label: string;
+  group: string;
+}
+
+export interface SecretField {
+  key: string;
+  service: string;
+  label: string;
+  help: string;
+  set: boolean;
+  source: "dashboard" | "env" | null;
+  updated_at: string | null;
+  updated_by: string | null;
+}
+
+export interface Service {
+  id: string;
+  label: string;
+  required: boolean;
+  configured: boolean;
+  fields: SecretField[];
+}
+
+export interface SetupState {
+  completed: boolean;
+  missing: MissingSetup[];
+  checks: { label: string; ok: boolean }[];
+  guild: { name: string; icon_url: string | null } | null;
+  restart_available: boolean;
 }

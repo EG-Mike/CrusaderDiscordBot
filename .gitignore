@@ -30,3 +30,6 @@ config/deployment_local.py
 web/node_modules/
 web/dist/
 web/*.tsbuildinfo
+
+# Encryption key for API keys stored in the database (secret_store.py)
+secret.key

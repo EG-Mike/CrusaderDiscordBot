@@ -108,13 +108,33 @@ FEATURES = {
     "FEATURE_WEB_DASHBOARD_ENABLED": ("Web dashboard", "This dashboard."),
 }
 
+LABELS = {
+    "MOD_ROLE_ID": "Moderator role",
+    "FRESH_ROLE_ID": "Fresh role (given on approval)",
+    "GEAR_CHECK_CHANNEL_ID": "Gear-check (apply) channel",
+    "ANNOUNCEMENT_SANDBOX_CHANNEL_ID": "Announcement drafts channel",
+    "MODERATOR_CHANNEL_ID": "Moderator chat channel",
+    "RAID_SUMMARY_FORUM_CHANNEL_ID": "Raid summary forum",
+    "RAID_LOGS_CHANNEL_ID": "Raid logs channel (WCL webhook)",
+    "RAID_LOGS_REPOST_CHANNEL_ID": "Raid logs repost channel",
+    "SERVER_SLUG": "Realm (WarcraftLogs slug)",
+    "SERVER_REGION": "Region",
+    "GUILD_NAME": "Guild name on WarcraftLogs",
+}
+
 _WORD_CASE = {"id": "ID", "ids": "IDs", "oxm": "OXM", "url": "URL", "urls": "URLs", "wcl": "WCL"}
 
 
 def _label_for(key: str) -> str:
     if key in FEATURES:
         return FEATURES[key][0]
+    if key in LABELS:
+        return LABELS[key]
     words = [_WORD_CASE.get(w, w) for w in key.lower().split("_")]
+    # "Review channel ID" -> "Review channel": the dashboard shows a picker
+    # with names, not the raw ID.
+    if key.endswith(("_ROLE_ID", "_CHANNEL_ID")):
+        words = words[:-1]
     words[0] = words[0][:1].upper() + words[0][1:]
     return " ".join(words)
 
@@ -386,13 +406,18 @@ def pending_restart_keys() -> list:
 
 
 def missing_setup() -> list:
-    """Required settings that are still unset (in their SAVED value)."""
-    saved = {s["key"]: s["value"] for s in list_settings()["settings"]}
-    return [
-        {"key": key, "label": label}
+    """Required settings/API keys that are still unset (saved values)."""
+    import secret_store
+
+    saved = {s["key"]: s for s in list_settings()["settings"]}
+    missing = [
+        {"key": key, "label": label, "group": saved[key]["group"]}
         for key, feature, label in REQUIRED
-        if (feature is None or saved.get(feature)) and saved.get(key) in (0, "0", "", None)
+        if (feature is None or saved[feature]["value"]) and saved[key]["value"] in (0, "0", "", None)
     ]
+    if not secret_store.configured("warcraftlogs"):
+        missing.append({"key": "WCL_CLIENT_ID", "label": "WarcraftLogs API keys", "group": "integrations"})
+    return missing
 
 
 def dependency_warnings() -> list:

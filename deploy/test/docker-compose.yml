@@ -1,8 +1,10 @@
 # Test bot + dashboard. Lives in its own folder on the VPS (e.g.
 # /opt/crusader-test) next to:
-#   .env        the test bot's secrets (copy of the repo's .env.example;
-#               channels/roles are set in the dashboard, not here)
-#   data/       everything the bot saves, incl. dashboard settings
+#   .env        the bot's startup settings: Discord token, OAuth client
+#               secret, dashboard address, your user ID (see .env.example).
+#               Everything else is set in the dashboard's setup guide.
+#   data/       everything the bot saves: database, settings, encrypted
+#               API keys (+ secret.key, their encryption key - back up both)
 #   update.sh   pulls new builds (run by cron, see README)
 
 services:
@@ -18,6 +20,8 @@ services:
       WEB_PORT: "8081"
       WEB_ENVIRONMENT: test
       WEB_DASHBOARD_ENABLED: "true"
+      # Docker brings the bot back after the dashboard's Restart button.
+      WEB_RESTART_ENABLED: "true"
       STORAGE_BACKEND: sqlite
     volumes:
       - ./data:/data
