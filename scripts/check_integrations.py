@@ -10,8 +10,15 @@ environment or .env) and whether the service accepts them:
   - WarcraftLogs keys   -> client-credentials token request
   - Blizzard keys       -> client-credentials token request
 
-Exit code 0 when every configured service works, 1 otherwise. Blizzard is
-optional: missing keys are reported but don't fail the check.
+Then it checks that every host the bot talks to after logging in can be
+reached (the Discord gateway, the WarcraftLogs and Blizzard data APIs,
+Wowhead and its icon CDN). A working token proves little if the data host
+is blocked by a firewall or proxy. Any HTTP answer counts as reachable.
+
+Exit code 0 when every configured service works and every required host is
+reachable, 1 otherwise. Blizzard is optional: missing keys are reported but
+don't fail the check. HTTPS_PROXY is honoured, like the bot's own clients
+when DISCORD_PROXY is set.
 """
 
 import asyncio
@@ -29,6 +36,18 @@ WCL_TOKEN_URL = "https://www.warcraftlogs.com/oauth/token"
 BLIZZARD_TOKEN_URL = "https://oauth.battle.net/oauth/token"
 
 OK, FAIL, SKIP = "OK  ", "FAIL", "SKIP"
+
+# (host, what the bot needs it for, required). Kept in sync with
+# wcl_client.py, blizzard_client.py, wowhead.py, icons.py and webapi/auth.py.
+HOSTS = [
+    ("gateway.discord.gg", "Discord gateway: the bot can't come online without it", True),
+    ("cdn.discordapp.com", "Discord images: avatars and emoji in the dashboard", False),
+    ("fresh.warcraftlogs.com", "WarcraftLogs data API (reports, rankings)", True),
+    ("{region}.api.blizzard.com", "Blizzard data API (characters, items)", False),
+    ("render.worldofwarcraft.com", "Blizzard images (item and spell icons)", False),
+    ("www.wowhead.com", "Wowhead item/spell lookups (fallback)", False),
+    ("wow.zamimg.com", "Wowhead icon images (class, role and spec emoji)", False),
+]
 
 
 async def check_discord(http: aiohttp.ClientSession) -> tuple:
@@ -70,6 +89,16 @@ async def check_client_credentials(http: aiohttp.ClientSession, name: str, url: 
     return OK, f"access token received (valid {data.get('expires_in', '?')}s)"
 
 
+async def check_host(http: aiohttp.ClientSession, host: str, required: bool) -> tuple:
+    try:
+        async with http.get(f"https://{host}/", allow_redirects=False) as resp:
+            return OK, f"reachable (HTTP {resp.status})"
+    except aiohttp.ClientHttpProxyError as exc:
+        return (FAIL if required else SKIP), f"blocked by the proxy (HTTP {exc.status}): allow {host} in the network settings"
+    except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        return (FAIL if required else SKIP), f"unreachable ({exc.__class__.__name__}): blocked or down"
+
+
 async def run(check):
     try:
         return await check
@@ -82,7 +111,7 @@ async def run(check):
 async def main() -> int:
     load_dotenv()
     timeout = aiohttp.ClientTimeout(total=15)
-    async with aiohttp.ClientSession(timeout=timeout) as http:
+    async with aiohttp.ClientSession(timeout=timeout, trust_env=True) as http:
         results = [
             ("Discord bot", await run(check_discord(http))),
             ("WarcraftLogs", await run(check_client_credentials(
@@ -91,9 +120,18 @@ async def main() -> int:
                 http, "Blizzard", BLIZZARD_TOKEN_URL, "BLIZZARD_CLIENT_ID", "BLIZZARD_CLIENT_SECRET",
                 required=False))),
         ]
+        region = (os.environ.get("SERVER_REGION") or "us").strip().lower()
+        hosts = [(h.format(region=region), why, required) for h, why, required in HOSTS]
+        reach = await asyncio.gather(*(check_host(http, h, required) for h, _, required in hosts))
     for name, (state, detail) in results:
         print(f"[{state}] {name:<13} {detail}")
-    return 0 if all(state != FAIL for _, (state, _) in results) else 1
+    print("\nHosts the bot uses after logging in:")
+    for (host, why, required), (state, detail) in zip(hosts, reach):
+        print(f"[{state}] {host:<28} {detail}")
+        if state != OK:
+            print(f"       {'':<28} needed for: {why}{'' if required else ' (optional)'}")
+    states = [state for _, (state, _) in results] + [state for state, _ in reach]
+    return 0 if FAIL not in states else 1
 
 
 if __name__ == "__main__":

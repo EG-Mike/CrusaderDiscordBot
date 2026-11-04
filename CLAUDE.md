@@ -68,12 +68,16 @@ version or raid tier is a configuration change.
   is in the same test server, plus WarcraftLogs and Blizzard API keys, as
   environment variables (`DISCORD_TOKEN`, `WCL_CLIENT_ID`,
   `WCL_CLIENT_SECRET`, `BLIZZARD_CLIENT_ID`, `BLIZZARD_CLIENT_SECRET`), and
-  network access to Discord, WarcraftLogs, Blizzard and Wowhead. Verify
-  with `python scripts/check_integrations.py` (never prints secrets).
-  Discord's REST API works through the session's proxy; to run the bot
-  itself, set `DISCORD_PROXY=$HTTPS_PROXY`, and note the gateway host
-  (`gateway.discord.gg`) must be allowed in the environment's network
-  settings. Tests: `python -m unittest discover -s tests -t .`. Use
+  outbound access through the session's proxy. Verify with
+  `python scripts/check_integrations.py` (never prints secrets): it checks
+  the credentials and every host the bot uses after logging in. The
+  environment's network access must allow (Custom, defaults included):
+  `*.discord.gg`, `discord.com`, `*.discordapp.com`, `*.discordapp.net`,
+  `*.warcraftlogs.com`, `*.battle.net`, `*.api.blizzard.com`,
+  `render.worldofwarcraft.com`, `*.wowhead.com`, `*.zamimg.com`. To run
+  the bot itself, set `DISCORD_PROXY=$HTTPS_PROXY` (aiohttp ignores
+  HTTPS_PROXY otherwise). Tests: `python -m unittest discover -s tests -t .`.
+  Use
   it to run the bot for real and test against the live APIs. Keep
   WarcraftLogs usage modest: the client is shared with the test bot, so
   they share one hourly rate limit. Never print, log or commit these
