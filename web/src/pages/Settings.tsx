@@ -90,7 +90,7 @@ export default function SettingsPage() {
       <SectionHeader
         eyebrow="Configuration"
         title="Settings"
-        description="Everything from config/deployment.py. Changes are saved straight away and take effect the next time the bot restarts."
+        description="Everything from config/deployment.py. Changes are saved straight away; most take effect the next time the bot restarts, the ones marked Applies immediately are used at once."
       />
 
       {pendingCount > 0 && (

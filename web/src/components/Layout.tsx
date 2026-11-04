@@ -1,86 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
-import {
-  BarChart3,
-  CalendarCheck,
-  ChevronDown,
-  ClipboardList,
-  FileText,
-  LayoutDashboard,
-  LogOut,
-  Megaphone,
-  Menu,
-  MessageSquareText,
-  Rocket,
-  ScrollText,
-  Search,
-  Server,
-  Settings,
-  Smile,
-  Swords,
-  Trophy,
-  Vote,
-  Wrench,
-  X,
-  type LucideIcon,
-} from "lucide-react";
-import { api, type Me, type Status } from "../lib/api";
+import { Link, NavLink, useLocation } from "react-router-dom";
+import { ChevronDown, LogOut, Menu, X } from "lucide-react";
+import { api, type Me } from "../lib/api";
+import { NAV } from "../lib/nav";
 import { useMe } from "../lib/me";
 import { formatDuration, useLive } from "../lib/live";
+import { CommandPalette, PaletteTrigger, useCommandPalette } from "./CommandPalette";
 import { Badge, cx } from "./ui";
-
-interface NavItem {
-  to: string;
-  label: string;
-  icon: LucideIcon;
-  soon?: boolean;
-  /** Small count shown next to the label (e.g. errors waiting to be read). */
-  count?: (status: Status, me: Me) => number;
-}
-
-export const NAV: { group: string; items: NavItem[] }[] = [
-  { group: "", items: [{ to: "/", label: "Overview", icon: LayoutDashboard }] },
-  {
-    group: "Communication",
-    items: [
-      { to: "/announcements", label: "Announcements", icon: Megaphone },
-      { to: "/bot-messages", label: "Bot messages", icon: MessageSquareText },
-      { to: "/emoji", label: "Emoji", icon: Smile },
-      { to: "/polls", label: "Polls", icon: Vote, soon: true },
-    ],
-  },
-  {
-    group: "Members",
-    items: [
-      { to: "/applications", label: "Applications", icon: ClipboardList, soon: true },
-      { to: "/attendance", label: "Attendance", icon: CalendarCheck, soon: true },
-    ],
-  },
-  {
-    group: "Raids",
-    items: [
-      { to: "/raid-summaries", label: "Raid summaries", icon: Swords, soon: true },
-      { to: "/raid-logs", label: "Raid logs", icon: FileText, soon: true },
-      { to: "/records", label: "Records", icon: Trophy, soon: true },
-      { to: "/tier-recap", label: "Tier recap", icon: BarChart3, soon: true },
-    ],
-  },
-  {
-    group: "System",
-    items: [
-      { to: "/setup", label: "Setup", icon: Rocket },
-      { to: "/audit-log", label: "Audit log", icon: ScrollText },
-      {
-        to: "/system-log",
-        label: "System log",
-        icon: Server,
-        count: (status, me) => (me.levels.includes("admin") ? status.system.errors_24h : 0) + status.system.crashes_7d,
-      },
-      { to: "/settings", label: "Settings", icon: Settings },
-      { to: "/maintenance", label: "Maintenance", icon: Wrench, soon: true },
-    ],
-  },
-];
 
 function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const { status } = useLive();
@@ -223,43 +149,6 @@ function UserMenu({ me }: { me: Me }) {
   );
 }
 
-function SearchBox() {
-  const navigate = useNavigate();
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [q, setQ] = useState("");
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        inputRef.current?.focus();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-  return (
-    <form
-      className="relative hidden w-full max-w-md md:block"
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (q.trim()) navigate(`/settings?q=${encodeURIComponent(q.trim())}`);
-      }}
-    >
-      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-faint" />
-      <input
-        ref={inputRef}
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
-        placeholder="Search settings…"
-        className="h-9 w-full rounded-lg border border-line bg-surface pl-9 pr-14 text-[13px] outline-none transition placeholder:text-faint focus:border-gold/50"
-      />
-      <kbd className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded border border-line bg-raised px-1.5 py-px text-2xs text-faint">
-        Ctrl K
-      </kbd>
-    </form>
-  );
-}
-
 function Breadcrumb() {
   const { pathname } = useLocation();
   const { status } = useLive();
@@ -279,12 +168,14 @@ function Breadcrumb() {
 
 export function Layout({ me, children }: { me: Me; children: ReactNode }) {
   const { status } = useLive();
+  const palette = useCommandPalette();
   const [mobileNav, setMobileNav] = useState(false);
   const { pathname } = useLocation();
   useEffect(() => setMobileNav(false), [pathname]);
 
   return (
     <div className="app-glow flex h-full flex-col">
+      <CommandPalette open={palette.open} onClose={() => palette.setOpen(false)} />
       <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-3 border-b border-line bg-bg/85 px-3 backdrop-blur md:px-4">
         <button className="rounded-lg p-1.5 text-muted hover:bg-raised lg:hidden" onClick={() => setMobileNav(true)} aria-label="Open menu">
           <Menu className="h-5 w-5" />
@@ -298,8 +189,8 @@ export function Layout({ me, children }: { me: Me; children: ReactNode }) {
             <Badge tone="gold">Beta</Badge>
           )}
         </Link>
-        <div className="flex flex-1 justify-center">
-          <SearchBox />
+        <div className="flex flex-1 justify-end md:justify-center">
+          <PaletteTrigger onOpen={() => palette.setOpen(true)} />
         </div>
         <BotStatusPill />
         <UserMenu me={me} />

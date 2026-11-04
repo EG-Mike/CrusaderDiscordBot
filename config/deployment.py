@@ -197,8 +197,6 @@ ROLE_EMOJI_NAMES = {
 }
 
 # --- Notifications (cogs/notifications.py) ---
-# These apply immediately, no restart needed.
-#
 # Channel the bot posts its notifications in. Leave it empty to use the
 # moderator chat channel (Discord server settings).
 NOTIFICATIONS_CHANNEL_ID = 0

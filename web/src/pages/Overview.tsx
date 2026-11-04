@@ -105,17 +105,6 @@ function ActivityFeed({ className }: { className?: string }) {
   );
 }
 
-const FEATURE_LABELS: Record<string, string> = {
-  FEATURE_ANNOUNCEMENTS_ENABLED: "Announcements",
-  FEATURE_EMOJI_ADMIN_ENABLED: "Emoji admin",
-  FEATURE_ATTENDANCE_ENABLED: "Attendance",
-  FEATURE_RAID_SUMMARY_ENABLED: "Raid summaries",
-  FEATURE_RAID_LOGS_ENABLED: "Raid logs automation",
-  FEATURE_TIER_RETROSPECTIVE_ENABLED: "Tier recap",
-  FEATURE_POLLS_ENABLED: "Polls",
-  FEATURE_AUDIT_LOG_ENABLED: "Audit log",
-  FEATURE_WEB_DASHBOARD_ENABLED: "Web dashboard",
-};
 
 function greeting() {
   const h = new Date().getHours();
@@ -327,7 +316,7 @@ export default function Overview({ me }: { me: Me }) {
             {features.map(([key, on]) => (
               <li key={key} className="flex items-center gap-2.5 rounded-lg px-3 py-2">
                 <Power className={cx("h-3.5 w-3.5", on ? "text-ok" : "text-faint")} />
-                <span className={on ? "" : "text-faint"}>{FEATURE_LABELS[key] ?? key}</span>
+                <span className={on ? "" : "text-faint"}>{status.feature_labels[key] ?? key}</span>
               </li>
             ))}
           </ul>

@@ -57,6 +57,7 @@ export interface Status {
   bot: { name: string | null; avatar_url: string | null };
   guild: { id: string; name: string; icon_url: string | null; member_count: number } | null;
   features: Record<string, boolean>;
+  feature_labels: Record<string, string>;
   counts: { pending_applications: number };
   missing_setup: MissingSetup[];
   setup_completed: boolean;

@@ -260,6 +260,7 @@ def _status(app) -> dict:
         "features": {
             key: bool(getattr(config, key)) for key in settings_api.all_keys() if key.startswith("FEATURE_")
         },
+        "feature_labels": {key: label for key, (label, _help) in settings_api.FEATURES.items()},
         "counts": {"pending_applications": pending_applications},
         "missing_setup": settings_api.missing_setup(),
         "setup_completed": db.get_meta("setup_completed_at") is not None,
