@@ -213,7 +213,7 @@ def _install_signal_handlers():
 
     async def stop(reason):
         log.info("Shutting down: %s", reason)
-        system_log.set_shutdown_reason(reason)
+        system_log.stopping(reason)
         try:
             await asyncio.wait_for(bot.close(), SHUTDOWN_GRACE_SECONDS)
         except asyncio.TimeoutError:

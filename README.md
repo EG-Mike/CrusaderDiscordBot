@@ -832,6 +832,8 @@ How updates flow:
 3. On the VPS, `update.sh` runs every 5 minutes from cron. When there's a
    new image it restarts the container with it; otherwise it does nothing.
    Data lives in a folder outside the container, so it survives updates.
+   It leaves a small `data/update-pending` file first, so the System log
+   can say "New build detected" before the restart (the bot removes it).
 
 #### 1. Copy your live server with a server template
 

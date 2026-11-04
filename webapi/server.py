@@ -661,7 +661,7 @@ async def restart(request):
         return _error("Restarting from the dashboard isn't enabled on this server (WEB_RESTART_ENABLED)", 400)
     audit(request, "bot", "bot.restart", "Restarted the bot")
     log.warning("Restart requested from the dashboard by %s", request["user"]["username"])
-    system_log.set_shutdown_reason(f"restarted from the dashboard by {request['user']['username']}")
+    system_log.stopping(f"restarted from the dashboard by {request['user']['username']}")
     bot = request.app[BOT_KEY]
 
     async def _shutdown():
@@ -732,6 +732,7 @@ async def _close_live_connections(app):
     Docker/AMP wait before killing the bot. Tabs reconnect on their own
     once the bot is back."""
     hub = app[HUB_KEY]
+    hub.closed_on_shutdown = len(hub.sockets)
     for ws in list(hub.sockets):
         hub.discard(ws)
         try:

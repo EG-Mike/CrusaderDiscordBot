@@ -22,7 +22,9 @@ from aiohttp import web
 from discord.ext import commands
 
 import db
+import system_log
 from webapi import auth
+from webapi.common import HUB_KEY
 from webapi.server import create_app
 
 log = logging.getLogger("wow-apply-bot.web")
@@ -50,11 +52,14 @@ class WebDashboardCog(commands.Cog):
                 self.runner = None
             return
         log.info("Web dashboard listening on http://%s:%s (public address: %s)", host, port, auth.base_url())
+        system_log.web_started(auth.base_url())
 
     async def cog_unload(self):
         if self.runner is not None:
+            app = self.runner.app
             await self.runner.cleanup()
             self.runner = None
+            system_log.web_stopped(app[HUB_KEY].closed_on_shutdown)
 
 
 async def setup(bot: commands.Bot):

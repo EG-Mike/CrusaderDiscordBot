@@ -48,7 +48,11 @@ const LEVELS: Record<LogLevel, { label: string; tone: "neutral" | "info" | "warn
 };
 
 const BOT_EVENTS: Record<string, string> = {
-  "bot.started": "Started",
+  "update.detected": "Update",
+  "bot.stopping": "Stopping",
+  "web.stopped": "Dashboard",
+  "bot.started": "Starting",
+  "web.started": "Dashboard",
   "bot.stopped": "Stopped",
   "bot.updated": "Updated",
   "bot.crashed": "Unexpected stop",

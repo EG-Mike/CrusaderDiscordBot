@@ -1,8 +1,10 @@
 """system_log.py: lifecycle events, console capture, redaction and limits."""
 
+import asyncio
 import logging
 import os
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 from aiohttp.test_utils import TestClient, TestServer
@@ -21,7 +23,8 @@ class SystemLogTestCase(DatabaseTestCase):
         super().setUp()
         system_log._flood.update(minute=0, written=0, dropped=0)
         system_log._SECRET_CACHE.update(values=[], loaded=0.0)
-        system_log._run.update(shutdown_reason=None, heartbeat=None)
+        system_log._run.update(shutdown_reason=None, heartbeat=None, stopping_monotonic=None, down_seconds=None,
+                               update_announced=False, ready_once=False)
 
 
 class LifecycleTests(SystemLogTestCase):
@@ -57,9 +60,59 @@ class LifecycleTests(SystemLogTestCase):
                                                 "repository": "Owner/Repo", "source": "image"}), \
                 mock.patch.object(app_version, "VERSION", "def5678"):
             system_log.startup()
-        updated = system_log.search({"q": "Updated"})[0][0]
-        self.assertEqual(updated["message"], "Updated from abc1234 to def5678: Add things")
+        updated = system_log.search({"q": "updated"})[0][0]
+        self.assertEqual(updated["message"], "Bot updated to the latest version: def5678 (was abc1234): Add things")
         self.assertEqual(updated["details"]["compare_url"], "https://github.com/Owner/Repo/compare/abc1234...def5678")
+
+    def test_update_restart_tells_the_whole_story(self):
+        db.connection()
+        marker = system_log._marker_path()
+        with open(marker, "w") as f:
+            f.write("def5678abcdef0\tAdd the roster\n")
+        with mock.patch.object(app_version, "VERSION", "abc1234"):
+            system_log.startup()
+            self.assertFalse(os.path.exists(marker))  # a marker found at start is stale: removed
+            with open(marker, "w") as f:
+                f.write("def5678abcdef0\tAdd the roster\n")
+            system_log.stopping("the host asked it to stop")
+            system_log.stopping("the host asked it to stop")  # a second signal adds nothing
+            system_log.web_stopped(2)
+            system_log.shutdown()
+        self.assertEqual(self.events(), ["bot.started", "update.detected", "bot.stopping", "web.stopped", "bot.stopped"])
+        latest = system_log.search()[0]
+        self.assertIn("New build detected: version def5678abcde (Add the roster)", latest[3]["message"])
+        self.assertEqual(latest[2]["message"], "Shutting down: updating to version def5678abcde.")
+        self.assertEqual(latest[1]["message"], "Dashboard web server stopped, closed 2 open dashboard tabs.")
+        self.assertIn("Bot stopped: updating to version def5678abcde. Shutting down took", latest[0]["message"])
+        self.assertIsNotNone(db.get_meta("system_stopped_at"))
+
+    def test_no_update_announced_for_the_running_version(self):
+        db.connection()
+        with open(system_log._marker_path(), "w") as f:
+            f.write("abc1234\n")
+        with mock.patch.object(app_version, "VERSION", "abc1234"):
+            system_log.stopping("the host asked it to stop")
+        self.assertEqual(self.events(), ["bot.stopping"])
+
+    def test_back_up_and_running(self):
+        system_log.startup()
+        system_log.shutdown()
+        system_log.startup()
+        system_log.web_started("http://localhost:8081")
+        bot = SimpleNamespace(user="Crusader#0001", is_closed=lambda: False, listeners={},
+                              add_listener=lambda fn, name: bot.listeners.__setitem__(name, fn))
+
+        async def connect():
+            system_log.attach(bot)
+            await bot.listeners["on_ready"]()
+            system_log._run["heartbeat"].cancel()
+
+        asyncio.run(connect())
+        latest = system_log.search()[0]
+        self.assertEqual(latest[1]["message"], "Dashboard web server is up (http://localhost:8081)")
+        self.assertRegex(latest[0]["message"],
+                         r"^Bot is back up and running: connected to Discord as Crusader#0001 \(\d+s after starting, "
+                         r"offline for \d+s\)$")
 
     def test_shutdown_reason_not_overwritten_when_asked(self):
         system_log.set_shutdown_reason("first")

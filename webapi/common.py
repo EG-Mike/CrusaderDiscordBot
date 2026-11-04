@@ -56,6 +56,7 @@ class Hub:
 
     def __init__(self):
         self.sockets = {}  # ws -> {"user_id", "token", "levels"}
+        self.closed_on_shutdown = 0  # for the System log's "web server stopped" entry
 
     def add(self, ws, user_id: int, token: str, levels: set):
         self.sockets[ws] = {"user_id": user_id, "token": token, "levels": set(levels)}

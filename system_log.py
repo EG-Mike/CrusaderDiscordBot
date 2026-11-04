@@ -5,9 +5,11 @@ record of what people did with it.
 Two kinds of entries, both in the shared database (db.py, table
 `system_log`):
 
-  - lifecycle: the bot started, stopped (and why), was updated to a new
-    version, stopped unexpectedly (detected on the next start), or lost
-    its Discord connection for a while.
+  - lifecycle: each step of a stop and a start, so a restart or update
+    reads like a story: "New build detected", "Shutting down", "Dashboard
+    web server stopped", "Bot stopped", then "Bot updated", "Bot
+    starting", "Dashboard web server is up", "Back up and running". Also
+    unexpected stops (detected on the next start) and Discord outages.
   - console: warnings and errors from any logger (this bot's own, discord.py,
     aiohttp, asyncio), with their tracebacks, captured by ConsoleCapture -
     the same lines that appear in the console, without needing SSH.
@@ -280,7 +282,38 @@ def install(level: Optional[str] = None) -> Optional[ConsoleCapture]:
 # --- lifecycle -------------------------------------------------------------------------
 
 _run = {"shutdown_reason": None, "heartbeat": None, "disconnected_at": None, "ready_once": False,
-        "started_monotonic": None}
+        "started_monotonic": None, "stopping_monotonic": None, "down_seconds": None, "update_announced": False}
+
+# Written by deploy/test/update.sh (next to the database) when it has pulled
+# a new build and is about to restart the bot with it: the new version,
+# optionally followed by a tab and its commit title. Docker's stop signal
+# can't say why, so this is how the bot knows it's stopping for an update.
+UPDATE_MARKER = "update-pending"
+
+
+def _marker_path() -> str:
+    return os.path.join(os.path.dirname(os.path.abspath(db.db_path())), UPDATE_MARKER)
+
+
+def pending_update() -> Optional[dict]:
+    """{"version", "title"} of a build waiting to be started, else None."""
+    try:
+        with open(_marker_path(), encoding="utf-8") as f:
+            version, _, title = f.read().strip().partition("\t")
+    except OSError:
+        return None
+    return {"version": version.strip()[:12] or "unknown", "title": title.strip() or None}
+
+
+def _clear_update_marker():
+    try:
+        os.remove(_marker_path())
+    except OSError:
+        pass
+
+
+def _when(stamp: Optional[str]) -> str:
+    return stamp.replace("T", " ").replace("Z", " UTC") if stamp else ""
 
 
 def _version_details() -> dict:
@@ -300,26 +333,38 @@ def startup():
     previous_state = db.get_meta("system_run_state")
     previous_version = db.get_meta("system_version")
     last_heartbeat = db.get_meta("system_heartbeat")
+    stopped_at = db.get_meta("system_stopped_at")
 
     if previous_state == "running":
-        when = f" Last sign of life: {last_heartbeat.replace('T', ' ').replace('Z', ' UTC')}." if last_heartbeat else ""
+        when = f" Last sign of life: {_when(last_heartbeat)}." if last_heartbeat else ""
         record("ERROR", "lifecycle", "bot.crashed",
                "The bot stopped unexpectedly last time (crash, out of memory, or the process was killed)." + when,
                {"last_heartbeat": last_heartbeat, "version": previous_version})
+        stopped_at = last_heartbeat
+    _run["down_seconds"] = _seconds_since(stopped_at)
 
     if previous_version and previous_version != version:
         title = app_version.INFO["title"]
         record("INFO", "lifecycle", "bot.updated",
-               f"Updated from {previous_version} to {version}" + (f": {title}" if title else ""),
+               f"Bot updated to the latest version: {version} (was {previous_version})" + (f": {title}" if title else ""),
                {**_version_details(), "previous_version": previous_version,
                 "compare_url": app_version.compare_url(previous_version, version),
                 "commits": app_version.commits_between(previous_version, version)})
+    _clear_update_marker()  # this start is the update it announced (or it's stale)
 
-    record("INFO", "lifecycle", "bot.started", f"Bot started (version {version})", _version_details())
+    record("INFO", "lifecycle", "bot.started", f"Bot starting (version {version})", _version_details())
     db.set_meta("system_run_state", "running")
     db.set_meta("system_version", version)
     db.set_meta("system_heartbeat", now())
     _run["started_monotonic"] = time.monotonic()
+
+
+def _seconds_since(stamp: Optional[str]) -> Optional[float]:
+    try:
+        then = datetime.strptime(stamp, TIME_FORMAT).replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return None
+    return max(0.0, (datetime.now(timezone.utc) - then).total_seconds())
 
 
 def set_shutdown_reason(reason: str, *, overwrite: bool = True):
@@ -327,6 +372,34 @@ def set_shutdown_reason(reason: str, *, overwrite: bool = True):
     'stopped' entry explains it."""
     if overwrite or not _run["shutdown_reason"]:
         _run["shutdown_reason"] = reason
+
+
+def stopping(reason: str):
+    """Call when a stop begins: records why (and a pending update, if
+    deploy/test/update.sh announced one) before anything shuts down."""
+    if _run["stopping_monotonic"] is not None:
+        return  # a second signal while already stopping
+    set_shutdown_reason(reason)
+    _run["stopping_monotonic"] = time.monotonic()
+    update = pending_update()
+    if update and update["version"] != app_version.VERSION and not _run["update_announced"]:
+        _run["update_announced"] = True
+        _run["shutdown_reason"] = f"updating to version {update['version']}"
+        record("INFO", "lifecycle", "update.detected",
+               f"New build detected: version {update['version']}" + (f" ({update['title']})" if update["title"] else "")
+               + f". Restarting to update from {app_version.VERSION}.", {"version": update["version"],
+                                                                         "previous_version": app_version.VERSION})
+    record("INFO", "lifecycle", "bot.stopping", f"Shutting down: {_run['shutdown_reason']}.",
+           {"reason": _run["shutdown_reason"]})
+
+
+def web_started(address: str):
+    record("INFO", "lifecycle", "web.started", f"Dashboard web server is up ({address})", {"address": address})
+
+
+def web_stopped(closed_tabs: int = 0):
+    tabs = f", closed {closed_tabs} open dashboard tab{'s' if closed_tabs != 1 else ''}" if closed_tabs else ""
+    record("INFO", "lifecycle", "web.stopped", f"Dashboard web server stopped{tabs}.", {"closed_tabs": closed_tabs})
 
 
 def stop_requested() -> bool:
@@ -339,8 +412,12 @@ def shutdown(default_reason: str = "shut down normally"):
     if _run["heartbeat"] is not None:
         _run["heartbeat"].cancel()
     reason = _run["shutdown_reason"] or default_reason
-    record("INFO", "lifecycle", "bot.stopped", f"Bot stopped: {reason}.", {"reason": reason})
+    took = time.monotonic() - _run["stopping_monotonic"] if _run["stopping_monotonic"] is not None else None
+    record("INFO", "lifecycle", "bot.stopped",
+           f"Bot stopped: {reason}." + (f" Shutting down took {_short(took)}." if took is not None else ""),
+           {"reason": reason, **({"seconds": round(took, 1)} if took is not None else {})})
     try:
+        db.set_meta("system_stopped_at", now())
         db.set_meta("system_run_state", "stopped")
     except Exception:
         log.exception("Couldn't save the bot's stopped state")
@@ -365,8 +442,12 @@ def attach(bot):
         if not _run["ready_once"]:
             _run["ready_once"] = True
             took = time.monotonic() - (_run["started_monotonic"] or time.monotonic())
+            down = _run["down_seconds"]
             record("INFO", "lifecycle", "discord.connected",
-                   f"Connected to Discord as {bot.user} ({took:.0f}s after starting)")
+                   f"Bot is {'back ' if down is not None else ''}up and running: connected to Discord as {bot.user} "
+                   f"({took:.0f}s after starting" + (f", offline for {_duration(down)})" if down is not None else ")"),
+                   {"startup_seconds": round(took, 1),
+                    **({"offline_seconds": round(down)} if down is not None else {})})
         _reconnected()
 
     async def on_disconnect():
@@ -389,6 +470,10 @@ def attach(bot):
     bot.add_listener(on_ready, "on_ready")
     bot.add_listener(on_disconnect, "on_disconnect")
     bot.add_listener(on_resumed, "on_resumed")
+
+
+def _short(seconds: float) -> str:
+    return "under 0.1s" if seconds < 0.1 else f"{seconds:.1f}s"
 
 
 def _duration(seconds: float) -> str:
