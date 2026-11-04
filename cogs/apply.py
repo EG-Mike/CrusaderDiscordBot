@@ -26,6 +26,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+import bot_messages
 import config
 import icons
 
@@ -49,7 +50,6 @@ NOT_FOUND_TIMEOUT = 180    # waiting for the retry-name/continue-anyway choice
 AMSTERDAM_TZ = ZoneInfo("Europe/Amsterdam")
 
 ARCHIVE_CONFIRMATION_KEY = "archive_confirmation"  # sentinel store key, not a real message id
-REVIEW_EXPLAINER_MARKER = "review-channel-explainer"
 
 
 def _emoji_for(icon_str):
@@ -373,11 +373,11 @@ class ApplyCog(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.review_channel_id = int(os.environ["REVIEW_CHANNEL_ID"])
-        self.fresh_role_id = int(os.environ["FRESH_ROLE_ID"])
-        self.mod_role_id = int(os.environ["MOD_ROLE_ID"])
-        self.server_slug = os.environ["SERVER_SLUG"]
-        self.server_region = os.environ.get("SERVER_REGION", "us")
+        self.review_channel_id = config.REVIEW_CHANNEL_ID
+        self.fresh_role_id = config.FRESH_ROLE_ID
+        self.mod_role_id = config.MOD_ROLE_ID
+        self.server_slug = config.SERVER_SLUG
+        self.server_region = config.SERVER_REGION
         self.start_view = StartApplicationView(self)
 
     async def cog_load(self):
@@ -390,6 +390,8 @@ class ApplyCog(commands.Cog):
             "status": "pending",
         })
         self.bot.add_view(template)
+        bot_messages.register_updater("gear_check_explainer", self._sync_gear_check_explainer)
+        bot_messages.register_updater("review_explainer", self._sync_review_explainer)
 
     # --- embed/layout building -----------------------------------------
 
@@ -512,11 +514,6 @@ class ApplyCog(commands.Cog):
             lines.append("**Talent Build** *(live from Blizzard Armory)*\n" + "\n".join(spec_lines))
 
         if equipment:
-            try:
-                existing_by_name = {e.name: e for e in await self.bot.fetch_application_emojis()}
-            except Exception:
-                existing_by_name = {}
-
             gear_lines = []
             for it in equipment:
                 item_id = it.get("item_id")
@@ -527,9 +524,7 @@ class ApplyCog(commands.Cog):
                     try:
                         item_data = await self.bot.blizzard.get_item(item_id)
                         if item_data.get("icon_url"):
-                            icon = await icons.ensure_item_emoji(
-                                self.bot, existing_by_name, item_id, item_data["icon_url"]
-                            )
+                            icon = await icons.ensure_item_emoji(self.bot, item_id, item_data["icon_url"])
                     except Exception:
                         pass
                 icon_prefix = f"{icon} " if icon else ""
@@ -844,6 +839,15 @@ class ApplyCog(commands.Cog):
         }
 
         review_channel = self.bot.get_channel(self.review_channel_id)
+        if review_channel is None:
+            log.error("Can't post %s's application: REVIEW_CHANNEL_ID isn't set to a channel the bot can see",
+                      application["character_name"])
+            await interaction.followup.send(
+                "Sorry, applications can't be submitted right now (the review channel isn't set up). "
+                "Please let a moderator know.",
+                ephemeral=True,
+            )
+            return
         view = self._render_application_view(application)
         message = await review_channel.send(view=view)
 
@@ -941,12 +945,7 @@ class ApplyCog(commands.Cog):
 
         skip_view = SkipNoteScreenshotView(interaction.user.id)
         await dm_channel.send(
-            "**This step is optional:**\n\n"
-            "You can provide a note and/or screenshot(s) of your gear by simply replying to this chat.\n"
-            "This information will be added added to your application and can be seen by the reviewers\n\n"
-            "Your application will automatically post in 3 minutes. You may press the skip button to immediately continue\n\n"
-            ""
-            "**At any time during the review, you can reply with `/update-application` to be able to add/change your note/screenshots**",
+            bot_messages.text("note_prompt_dm"),
             view=skip_view,
         )
 
@@ -985,11 +984,7 @@ class ApplyCog(commands.Cog):
 
         if timed_out:
             try:
-                await dm_channel.send(
-                    "⏱️ Time's up - I didn't receive a note or screenshot in time, but no "
-                    "worries: your application has still been submitted to the reviewers. "
-                    "You can still add a note or screenshot(s) later with `/update-application`."
-                )
+                await dm_channel.send(bot_messages.text("note_timeout_dm"))
             except discord.Forbidden:
                 pass
 
@@ -1206,8 +1201,13 @@ class ApplyCog(commands.Cog):
 
         review_channel = self.bot.get_channel(self.review_channel_id)
         try:
-            review_message = await review_channel.fetch_message(message_id)
+            if review_channel is None:
+                review_message = None
+            else:
+                review_message = await review_channel.fetch_message(message_id)
         except (discord.NotFound, discord.Forbidden):
+            review_message = None
+        if review_message is None:
             await interaction.followup.send(
                 "Couldn't find your application's message to update - please "
                 "let a moderator know.",
@@ -1230,144 +1230,28 @@ class ApplyCog(commands.Cog):
             updated_parts.append(f"{len(screenshot_urls)} screenshot(s)")
         await interaction.followup.send(f"Updated: {', '.join(updated_parts)}.", ephemeral=True)
 
-    # --- gear-check channel explainer ------------------------------------
+    # --- pinned explainers (texts editable on the dashboard) ----------------
 
     @commands.Cog.listener()
     async def on_ready(self):
         log.info("Apply cog startup: checking gear-check and review-channel explainers...")
-        await self._ensure_gear_check_explainer()
-        await self._ensure_review_channel_explainer()
+        for key, updater in (("gear_check_explainer", self._sync_gear_check_explainer),
+                             ("review_explainer", self._sync_review_explainer)):
+            try:
+                log.info("Apply cog startup: %s - %s", key, await updater())
+            except bot_messages.BotMessageError as exc:
+                log.warning("Apply cog startup: %s not posted: %s", key, exc)
         log.info("Apply cog startup: complete")
 
-    async def _ensure_review_channel_explainer(self):
-        channel = self.bot.get_channel(self.review_channel_id)
-        if channel is None:
-            log.warning("REVIEW_CHANNEL_ID set but channel not found/visible")
-            return
+    async def _sync_review_explainer(self) -> str:
+        channel = self.bot.get_channel(self.review_channel_id) if self.review_channel_id else None
+        return await bot_messages.sync_pinned(channel, "review_explainer")
 
-        try:
-            pins = await channel.pins()
-        except discord.Forbidden:
-            log.warning("Missing permission to read pins in review channel")
-            return
-
-        if any(m.embeds and m.embeds[0].footer.text == REVIEW_EXPLAINER_MARKER for m in pins):
-            return  # already posted, nothing to do
-
-        embed = discord.Embed(
-            title="How the gear-check review process works",
-            description=(
-                "Here's the full flow, walked through with an example applicant, "
-                "**Skullcrusher**:\n\n"
-
-                "**1. Before a card ever shows up here**\n"
-                "Skullcrusher clicks the button in #gear-check, gives their character "
-                "name, and the bot looks them up on WarcraftLogs. Over DM, they confirm "
-                "their role/spec and can add an optional note or screenshot(s). Once "
-                "that's done (or skipped, or it times out), a summary card posts right "
-                "here - that's the point where it becomes your job.\n\n"
-
-                f"**2. Clicking {APPROVE_EMOJI} Approve**\n"
-                "- They're assigned the Fresh role - unless they already hold Fresh, "
-                "Regular, or Organizer, in which case that's skipped and the card says so "
-                "instead of pretending something changed.\n"
-                "- They're also auto-tagged with their class (e.g. Mage) and role "
-                "(Tank/Healer/DPS) roles.\n"
-                "- Their server nickname is changed to their character name - again "
-                "skipped for already-established members.\n"
-                "- The card's footer shows exactly what was newly assigned vs. what they "
-                "already had, plus the nickname change (or why it didn't happen).\n"
-                "- Skullcrusher gets a DM confirming they're in, with a note about "
-                "registering for raid sign-ups.\n\n"
-
-                f"**3. Clicking {DENY_EMOJI} Deny**\n"
-                "- A popup asks you for an optional reason. It's saved on the card for "
-                "other mods to see - it's **never** shown to the applicant.\n"
-                "- Skullcrusher gets a DM letting them know it didn't work out **only on "
-                "a first-time denial**. If you're instead correcting an earlier approval "
-                "into a denial, no DM is sent - their Fresh role is just quietly removed.\n\n"
-
-                "**4. 🔄 Reset**\n"
-                "Made the wrong call? Reset puts the card back to pending - Approve/Deny "
-                "become clickable again. Re-deciding still follows the rules above: "
-                "approving after a wrong denial sends the acceptance DM as normal; "
-                "denying after a wrong approval doesn't send a denial DM, since they were "
-                "never told they were out.\n\n"
-
-                "**5. `/gearcheck archive`**\n"
-                "Run this anytime to move every already-decided card (approved or denied) "
-                "out of this channel into the archive channel, keeping this one focused "
-                "on what's still pending. A single confirmation message here tracks who "
-                "last ran it and when - it gets updated in place, not reposted, each time."
-            ),
-            color=discord.Color.blurple(),
-        )
-        embed.set_footer(text=REVIEW_EXPLAINER_MARKER)
-
-        try:
-            message = await channel.send(embed=embed)
-        except Exception:
-            log.exception("Failed to POST the explainer in review channel")
-            return
-
-        try:
-            await message.pin()
-        except Exception:
-            log.exception(
-                "Posted the explainer but failed to PIN it in review channel "
-                "(the message itself is up - only pinning failed)"
-            )
-
-    async def _ensure_gear_check_explainer(self):
-        gear_check_channel_id = os.environ.get("GEAR_CHECK_CHANNEL_ID")
-        if not gear_check_channel_id:
-            return
-        channel = self.bot.get_channel(int(gear_check_channel_id))
-        if channel is None:
-            log.warning("GEAR_CHECK_CHANNEL_ID set but channel not found/visible")
-            return
-
-        marker = "gear-check-explainer"
-        try:
-            pins = await channel.pins()
-        except discord.Forbidden:
-            log.warning("Missing permission to read pins in gear-check channel")
-            return
-
-        if any(m.embeds and m.embeds[0].footer.text == marker for m in pins):
-            return  # already posted, nothing to do
-
-        embed = discord.Embed(
-            title="How to Gear-check and get the permissions to sign up for raids",
-            description=(
-                "Click the blue button below this message to start your gear-check process.\n\n"
-                ":one:. You'll be asked for your character's exact in-game name,\n"
-                ":two:. The bot will ask for your exact in-game name and fetch some data \n"
-                ":three:. You will receive a DM, the bot makes a suggestion on what your main spec is (this can be changed)\n"
-                ":four:. You are (optionally) given the ability to provide a note and/or screenshots - or skip this step\n"
-                ":five:. When you do not provide a note/screenshot and you do not press the 'skip' button - your application will be posted automatically after 3 minutes.\n"
-                ":six:. You have the option to provide more information at any time by typing `/update-application` to the bot's DM. \n"
-                ":seven:Your character will be reviewed by our recruitment-team and will be notified of the outcome\n\n"
-
-                "When approved, you will be granted the correct roles and further instructions on how to sign for the raid(s)"
-            ),
-            color=discord.Color.blurple(),
-        )
-        embed.set_footer(text=marker)
-
-        try:
-            message = await channel.send(embed=embed, view=self.start_view)
-        except Exception:
-            log.exception("Failed to POST the explainer in gear-check channel")
-            return
-
-        try:
-            await message.pin()
-        except Exception:
-            log.exception(
-                "Posted the explainer but failed to PIN it in gear-check channel "
-                "(the message itself is up - only pinning failed)"
-            )
+    async def _sync_gear_check_explainer(self) -> str:
+        """The gear-check explainer carries the Start button (self.start_view)."""
+        channel_id = config.GEAR_CHECK_CHANNEL_ID or None
+        channel = self.bot.get_channel(int(channel_id)) if channel_id else None
+        return await bot_messages.sync_pinned(channel, "gear_check_explainer", view=self.start_view)
 
     # --- moderator approve/deny/reset --------------------------------------
 
@@ -1564,18 +1448,7 @@ class ApplyCog(commands.Cog):
             should_dm = previous_decision is None or previous_decision == "denied"
             if should_dm:
                 try:
-                    await applicant.send(
-                    f"🎉 Your character **{application['character_name']}** "
-                    "has been approved! Welcome to Crusader's PUG.\n\n" 
-
-                    "You have been granted access to the raid-signup channel(s).\n" 
-                    "Make sure to sign-up and confirm your spot when you are placed on the roster!\n\n"
-
-                    "One more step: When you sign up for a raid, you will need to register your character for raid sign-ups"
-                    " - this is a one time process!"
-
-                    "Please note: your (server-specific) Discord nickname has been changed to your characters name."
-                    )
+                    await applicant.send(bot_messages.text("approval_dm", character=application['character_name']))
                 except discord.Forbidden:
                     await channel.send(
                         f"(Couldn't DM {applicant.mention} - their DMs may be closed. "
@@ -1630,12 +1503,7 @@ class ApplyCog(commands.Cog):
             should_dm = previous_decision is None
             if should_dm:
                 try:
-                    await applicant.send(
-                        f"Thanks for applying, **{character_name}**. "
-                        "Unfortunately we won't be moving forward with your application "
-                        "at this time. Feel free to reach out to an officer if you have "
-                        "questions or come back later."
-                    )
+                    await applicant.send(bot_messages.text("denial_dm", character=character_name))
                 except discord.Forbidden:
                     await channel.send(
                         f"(Couldn't DM {applicant.mention} - their DMs may be closed. "
@@ -1658,6 +1526,8 @@ class ApplyCog(commands.Cog):
 
         updated = self.bot.store.get(message_id)
         review_channel = self.bot.get_channel(self.review_channel_id)
+        if review_channel is None:
+            return
         try:
             message = await review_channel.fetch_message(message_id)
         except (discord.NotFound, discord.Forbidden):
@@ -1756,54 +1626,6 @@ class ApplyCog(commands.Cog):
         await interaction.followup.send(summary, ephemeral=True)
 
     # --- Blizzard armory diagnostic -------------------------------------
-
-    @app_commands.command(
-        name="apply-test-blizzard",
-        description="Step-by-step test of a character's Blizzard Armory data (gear+talents) (moderator only)",
-    )
-    @app_commands.describe(character="Character name to test (must exist on this guild's realm)")
-    async def apply_test_blizzard(self, interaction: discord.Interaction, character: str):
-        """
-        Diagnostic-only command for blizzard_client.py's character-profile
-        methods (get_character_equipment/get_character_specializations) -
-        same purpose as cogs/raid_summary.py's raidsummary_test_blizzard:
-        this sandbox could never reach api.blizzard.com to confirm the
-        equipment/specializations JSON shape live (see
-        blizzard_client.py's module docstring, and
-        get_character_specializations()'s docstring specifically - the
-        specializations/talent-split shape is a real unconfirmed guess,
-        unlike equipment). Dumps raw response bodies plus each endpoint's
-        parsed result so a namespace/field-name/realm-slug mismatch is
-        immediately visible instead of just silently showing no armory
-        block the way a normal /apply run would (by design - see
-        _compute_armory_block's docstring).
-        """
-        if not await self._is_mod(interaction.guild, interaction.user.id):
-            await interaction.response.send_message("Only moderators can run this.", ephemeral=True)
-            return
-        if not config.DEBUG_COMMANDS_ENABLED:
-            await interaction.response.send_message(
-                "This is a diagnostic tool, disabled by default - set DEBUG_COMMANDS_ENABLED = True in "
-                "config/deployment.py to use it.",
-                ephemeral=True,
-            )
-            return
-        if self.bot.blizzard is None:
-            await interaction.response.send_message(
-                "BLIZZARD_CLIENT_ID/BLIZZARD_CLIENT_SECRET aren't set - the Armory block is "
-                "skipped entirely until those are configured. Register a free client at "
-                "https://develop.battle.net/access/clients, set both env vars, and restart "
-                "the bot to enable this.",
-                ephemeral=True,
-            )
-            return
-
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        report = await self.bot.blizzard.diagnose_character(self.server_slug, character.strip())
-        # Discord's 2000-char message limit - a long raw-body dump can
-        # exceed it, so this chunks rather than truncating silently.
-        for i in range(0, len(report), 1900):
-            await interaction.followup.send(report[i:i + 1900], ephemeral=True)
 
 
 async def setup(bot: commands.Bot):

@@ -70,16 +70,44 @@ moderator-driven announcement system.
 4. The published message itself has no Edit button - only the sandbox
    draft does, so editing an announcement always happens from the
    mod-only sandbox channel, never a button visible to the whole audience
-   of the published message. `/announce-edit-published <message_id>` is a
-   fallback for editing one with no working button at all (e.g. one
-   published before this existed); `/announce-fix-legacy-buttons` is a
+   of the published message. Any published announcement can also be
+   edited from the dashboard's Announcements page, and Maintenance has a
    one-time cleanup that strips the old public Edit button from
-   already-published announcements from before this changed - safe to run
-   more than once, never touches reactions or the message's history.
+   announcements published before this changed.
 5. Formatting: `## Header text 🎉` and any emoji work directly (standard
    Discord message markdown - no special handling needed). A line
    containing just `---` splits the message into separate sections, each
    with a real divider between them.
+
+**On the dashboard (Communication, Announcements)** the same announcements
+can be written with a live Discord-style preview: a formatting toolbar,
+mentions picked by name, an accent colour, and an optional ping (@here,
+@everyone or a role; only that ping notifies anyone). Drafts save
+automatically and are shared with `/announce` (a draft started in Discord
+can be finished on the dashboard and the other way round). Publishing
+asks for a channel; published announcements can still be edited (Discord
+is updated in place, and edits never ping again), and every published
+version is kept in a history you can load back. **Templates** save a
+title, text, colour and ping for reuse, e.g. a weekly raid schedule. Two
+moderators editing the same draft get a clear warning instead of
+overwriting each other.
+
+The first start with this version imports existing announcements into the
+database once (the `announcements.json` store is left as a backup), so
+the Edit buttons on everything already posted keep working.
+
+### Bot messages
+
+The texts the bot posts on its own are editable on the dashboard
+(**Communication, Bot messages**): the pinned gear-check, review-channel
+and attendance explainers, and the DMs applicants get (note request,
+note timeout, approved, denied). Each has a live preview and its own
+placeholders, e.g. `{character}` for the applicant's character name or
+`{min_attended}` for the attendance setting, filled in when the message is
+sent. Edited texts keep a history and can be reset to the built-in
+default. For pinned explainers, **Save and update in Discord** edits the
+pinned message in place (or posts and pins it if it's missing); otherwise
+they're brought in line at the next start.
 
 ### Polls
 
@@ -225,9 +253,9 @@ Every poll carries the footer from `config.POLL_FOOTER`.
    permanently, since Gargul's export only gives an item ID) - see the
    setup step below and `wowhead.py`. Each loot line's icon is a real
    Discord emoji, auto-provisioned the first time that item shows up in a
-   summary (reusing `/add-emoji`'s own "Wowhead icon -> bot-owned
-   application emoji" mechanism - see `icons.ensure_item_emoji`) - never
-   consumes the server's own emoji slots.
+   summary through the emoji library (one emoji per icon, shared with every
+   item/spell using that icon - see "Emoji") - never consumes the server's
+   own emoji slots.
 
 ## Commands
 
@@ -244,9 +272,6 @@ Every poll carries the footer from `config.POLL_FOOTER`.
 | Command | Description |
 |---|---|
 | `/announce` | Draft an announcement in the sandbox channel, with Edit/Publish buttons. |
-| `/announce-edit-published <message_id>` | Edit a published announcement by message ID - fallback for one with no working Edit button. |
-| `/announce-fix-legacy-buttons` | One-time cleanup: strip the old public Edit button from announcements published before it moved to the sandbox. |
-| `/add-emoji <wowhead_links>` | Add custom emoji from one or more Wowhead item/spell links. |
 | `/gearcheck archive` | Move all approved/denied applications to the archive channel. |
 | `/checkattendance run` | Generate/refresh the attendance overview (no cooldown). |
 | `/checkattendance addlog <date> <tier> <link>` | Add a main-raid log to the tracked list. |
@@ -263,20 +288,18 @@ Every poll carries the footer from `config.POLL_FOOTER`.
 | `/raidsummary-refresh-report <report>` | Force-refetch ONE report from WCL before posting/regenerating its summary, without waiting for the next full cache refresh. |
 | `/raidsummary-regenerate [report]` | Rebuild an already-posted summary's entire content from fresh WCL/Wowhead data, in place. |
 | `/raidsummary-merge-weeks <tier> <reports>` | Fold two or more already-imported reports into one raid week for `/tier-recap`'s stats, optionally consolidating their separate summary posts into one thread. |
-| `/auditlog [lines] [user]` | Show the most recent bot actions (who ran which command / clicked which button), optionally filtered to one member - see "Audit log" below. |
 | `/tier-recap <tier>` | Draft an end-of-tier stats recap (medals, records, most-improved, etc.) in the sandbox channel, same draft/Edit/Publish flow as `/announce` - built entirely from data already cached by past `/raidsummary` posts, no new WCL calls. |
 
-Five more commands exist purely for diagnosing API/lookup issues or doing a
-one-time data migration/import, and are disabled by default
-(`config.DEBUG_COMMANDS_ENABLED = False`) so they don't clutter the command
-list day-to-day. Set that flag to `True` to use one, then set it back off:
+Managing the bot (emoji, the audit log, editing published announcements,
+raw Blizzard API answers, emptying caches) happens on the web dashboard;
+those used to be slash commands too.
+
+One more command is a one-time import, disabled by default
+(`config.DEBUG_COMMANDS_ENABLED = False`, Settings, System, Logging, with
+Advanced on) so it doesn't clutter the command list:
 
 | Command | Description |
 |---|---|
-| `/apply-test-blizzard <character>` | Step-by-step test of a character's Blizzard Armory data (gear/talents) - dumps raw responses to spot a namespace/field mismatch. |
-| `/raidsummary-test-blizzard [item]` | Same, for a single item against Blizzard's Game Data API. |
-| `/raidsummary-test-spell [spell]` | Same, for a single spell's icon. |
-| `/raidsummary-refresh-wowhead` | One-time cache wipe for Wowhead item/spell lookups (was for the retail→`/tbc/` endpoint migration; safe to run anytime, just costs a fresh fetch of everything). |
 | `/raidsummary-bulk <tier> <raid_type> <reports>` | One-time bulk import: posts one raid summary per WCL report, oldest first - for backfilling history when first setting up. |
 
 ## Enabling/disabling features
@@ -289,13 +312,14 @@ extension list, just flip the flag and restart:
 | Flag | Cog | Disables |
 |---|---|---|
 | `FEATURE_ANNOUNCEMENTS_ENABLED` | `cogs/announcements.py` | `/announce` and its edit/publish flow |
-| `FEATURE_EMOJI_ADMIN_ENABLED` | `cogs/emoji_admin.py` | `/add-emoji` |
+| `FEATURE_EMOJI_ADMIN_ENABLED` | (dashboard) | adding/deleting emoji on the dashboard |
 | `FEATURE_ATTENDANCE_ENABLED` | `cogs/attendance.py` | `/checkattendance` and all its subcommands |
 | `FEATURE_RAID_SUMMARY_ENABLED` | `cogs/raid_summary.py` | `/raidsummary` and every `raidsummary-*` command |
 | `FEATURE_RAID_LOGS_ENABLED` | `cogs/raid_logs.py` | the #logs tagging/auto-Summarize automation (section 11 below) |
 | `FEATURE_TIER_RETROSPECTIVE_ENABLED` | `cogs/tier_retrospective.py` | `/tier-recap` |
 | `FEATURE_POLLS_ENABLED` | `cogs/polls.py` | `/poll create` and every poll's buttons |
-| `FEATURE_AUDIT_LOG_ENABLED` | `cogs/audit_log.py` | the audit log file and `/auditlog` |
+| `FEATURE_AUDIT_LOG_ENABLED` | `cogs/audit_log.py` | recording Discord actions in the audit log |
+| `FEATURE_WEB_DASHBOARD_ENABLED` | `cogs/web_dashboard.py` | the web dashboard (**off** by default, see "Web dashboard" below) |
 
 Two of these lean on another cog to actually do anything:
 `FEATURE_RAID_LOGS_ENABLED` needs both `FEATURE_RAID_SUMMARY_ENABLED` and
@@ -332,27 +356,126 @@ warning for `LOG_LEVEL`) rather than crashing the bot.
 
 ## Audit log
 
-`cogs/audit_log.py` writes one line to `audit.log` (next to
-`applications.json`) for every action a user takes with the bot - slash
-commands (with their options), context menus, button clicks (with the
-button's label), dropdown picks (with the chosen values) and modal
-submits. It hooks discord.py's global `on_interaction` event, so every
-cog's commands and buttons are covered automatically, including future
-ones. Example line (tab-separated):
+Every action members take with the bot is recorded: slash commands (with
+their options), context menus, button clicks (with the button's label),
+dropdown picks (with the chosen values) and form (modal) submits.
+`cogs/audit_log.py` hooks discord.py's global `on_interaction` event, so
+every cog's commands and buttons are covered automatically, including
+future ones. Dashboard actions (logins, setting and API key changes,
+setup, restarts, audit exports) are recorded too whenever the dashboard
+runs.
+
+Entries are stored in the database (`crusader.db`, see `audit.py`) and
+kept for `AUDIT_LOG_RETENTION_DAYS` (365 by default, editable in the
+dashboard). The first start with this version imports an existing
+`audit.log` once, so older history isn't lost. Each entry is also still
+written as one tab-separated line to `audit.log` for reading on the
+server:
 
 ```
 2026-11-03 19:42:10Z	Mike [mike_eg] (123456789)	#gear-check(987654321)	BUTTON wow_apply_approve "Approve" msg=1122334455
 ```
 
-Modal field *contents* (applicant notes, announcement text, etc.) are
-intentionally not logged - only which fields were filled in and their
-length. Autocomplete keystrokes are skipped.
+Form *contents* (applicant notes, announcement text, etc.) are never
+recorded, only which fields were filled in and their length. API keys are
+never recorded. Setting changes keep their old and new value.
+Autocomplete keystrokes are skipped.
 
-Moderators can run `/auditlog` to see the last 25 entries (or
-`lines:` up to 500, optionally `user:` to filter to one member) as an
-ephemeral reply; longer output is attached as a `.txt` file instead. The
-file rotates at 5 MB keeping 5 backups - tune via `AUDIT_LOG_*` in
-`config/deployment.py`.
+Where to read it:
+
+- **Dashboard, Audit log page**: search, filter by member, channel,
+  action type, Discord/dashboard and time range, live updates, details
+  per entry (with a link to the Discord message), and CSV export.
+- **Dashboard, Overview**: the latest activity, live.
+
+The text file rotates at 5 MB keeping 5 backups (`AUDIT_LOG_MAX_BYTES`,
+`AUDIT_LOG_BACKUP_COUNT`).
+
+## Notifications
+
+The bot posts alerts in a moderator channel (**Settings, Notifications**;
+when no notifications channel is set it uses the moderator chat channel):
+
+- **Restarts, updates and outages**: one "back online" message after every
+  start, saying which version is running (with a link to the changes after
+  an update), why the bot stopped and for how long, or that the previous
+  run ended unexpectedly; plus Discord connection outages.
+- **Error reports**: how many errors the console logged and where, at most
+  every `NOTIFY_ERRORS_EVERY_MINUTES`. Never the error text itself: that
+  stays in the System log, which only admins can read.
+- **Dashboard changes** (settings, API keys, setup, restarts, maintenance)
+  and **announcements**, grouped so a burst of changes is one message.
+
+Each kind can be switched off. These settings apply immediately (no
+restart), and the settings page has a "Send a test" button.
+
+## Polls on the dashboard
+
+**Communication, Polls** lists every poll (also the ones made with
+`/poll create`), with live vote counts. Start a poll with the same options
+as the command, then open or close voting, add or remove options, remove
+the deadline, change settings or delete it. Votes stay as private as the
+poll promised: moderators see the counts, but who voted for what only when
+the poll's votes are public, and privacy settings can only be switched off.
+
+## Maintenance
+
+**System, Maintenance** shows what's stored and lets admins download a
+database backup (made while the bot runs; API keys stay encrypted and need
+`secret.key` to restore), apply log retention now, compact the database,
+log out every other dashboard session, empty the Blizzard and Wowhead
+caches, re-sync slash commands, and remove old Edit buttons from published
+announcements. Everything is recorded in the audit log.
+
+Press **Ctrl+K** (or Cmd+K) anywhere on the dashboard to jump to a page,
+setting, announcement or bot message, or to run a common action.
+
+## Emoji
+
+The bot can turn WoW item and spell icons into its own emoji ("application
+emoji", owned by the bot and usable by it in any message; Discord allows
+2000 per bot). On the dashboard (**Communication, Emoji**) search an item or
+spell by name, or paste Wowhead links (only their ID is used), and add it.
+
+- **One emoji per icon.** Many items and spells share an icon (Flash Heal,
+  Flash of Light and Amplify Magic all use `spell_holy_flashheal`), so the
+  icon gets one emoji and every item/spell using it is listed with it.
+  Raid summaries' loot and ability icons use the same library.
+- **Blizzard first.** Names and icons come from Blizzard's API, trying the
+  namespaces in `EMOJI_BLIZZARD_NAMESPACES` (classic first while on TBC).
+  Wowhead's tooltip service is only used for things Blizzard doesn't have,
+  and to learn an icon's name; `EMOJI_WOWHEAD_FALLBACK` switches that off.
+- **Emoji picker.** The announcement and bot-message editors have an emoji
+  button with the bot's emoji (searchable by item/spell name), the
+  server's custom emoji and the standard set. The previews also show
+  `:shortcodes:` like `:tada:` the way Discord does.
+
+## System log
+
+The dashboard's **System log** page shows what happened to the bot itself,
+so you don't need SSH access to find out:
+
+- **Bot events**: every start and stop, with the reason ("the host asked
+  it to stop" for a Docker/AMP stop, restart or update; "restarted from
+  the dashboard by ..."; an error), every **update to a new version** (with
+  the commit title, a link to the changes on GitHub and, for git
+  installs, the list of commits), unexpected stops (a crash, out of
+  memory, or the process being killed, noticed on the next start), and
+  Discord connection outages longer than a minute.
+- **Console output**: warnings and errors from the bot and the libraries
+  it uses, with full tracebacks. The same message repeating is shown once
+  with a count, and an error loop can't flood the database.
+
+Known secrets (bot token, OAuth client secret, API keys) and anything that
+looks like a token are replaced with `[redacted]` before anything is
+stored. Console output is only shown to dashboard **admins**, since it can
+contain technical details; moderators see the bot events.
+
+The Overview shows the running version and when it was last updated, and
+lists errors from the last 24 hours and unexpected stops under "Needs
+attention". Settings (dashboard, "System log" section):
+`SYSTEM_LOG_LEVEL` (`WARNING` by default; `ERROR`, `INFO` or `OFF`) and
+`SYSTEM_LOG_RETENTION_DAYS` (90).
 
 ## Restricting who can approve applications
 
@@ -451,9 +574,18 @@ from the URL:
 https://fresh.warcraftlogs.com/character/<region>/<THIS PART>/CharacterName
 ```
 
-### 6. Fill in `.env`
+### 6. Fill in `.env` (or use the dashboard)
 
-Copy `.env.example` to `.env` and fill in every value:
+**With the web dashboard (recommended):** `.env` only needs
+`DISCORD_TOKEN`, `DISCORD_CLIENT_SECRET`, `WEB_BASE_URL` and
+`WEB_ADMIN_USER_IDS` (see `.env.example`). Start the bot, log in, and the
+dashboard's setup guide asks for everything below, plus the WarcraftLogs
+keys from step 4 (stored encrypted). Wherever the steps in this section
+say "set X in `.env`", use the dashboard's Settings instead. See "Web
+dashboard" below for the full walkthrough.
+
+**Without the dashboard:** copy `.env.example` to `.env` and fill in every
+value:
 
 | Variable | What it's for |
 |---|---|
@@ -597,6 +729,325 @@ python bot.py
 Check the console for `Synced N command(s): [...]` and
 `Logged in as ... (id=...)` to confirm startup succeeded.
 
+## Web dashboard (beta)
+
+A browser dashboard for managing the bot, running **inside the bot
+process** (so it uses the same live data and Discord connection as the
+slash commands). Log in with Discord; only members with the moderator role
+(`MOD_ROLE_ID` or Manage Roles), the server owner, and `WEB_ADMIN_USER_IDS`
+get in, checked against their current roles on every request.
+
+Built so far (phases 0 and 1):
+
+- **Overview**: bot status (online, latency, uptime, version), pending
+  applications, enabled features, and anything that needs attention.
+- **Settings**: grouped into General (guild name and logo, the bot's name,
+  picture and nickname, moderation), Features, Integrations and System,
+  with role/channel/list pickers, validation, per-setting change history
+  with revert, and "reset to default". Rarely needed settings appear with
+  "Advanced" switched on. Saved values take effect on the **next bot
+  restart** (the dashboard lists what's waiting for one), except those
+  marked "Applies immediately".
+- **Setup guide**: a step-by-step first-time setup (roles, channels,
+  WarcraftLogs keys with a connection test, realm, features) that finishes
+  with a restart.
+- **Integrations**: API keys entered in the browser, stored encrypted.
+- **Restart** button for admins, when the hosting restarts the bot after
+  it stops (`WEB_RESTART_ENABLED`, on in the Docker setup).
+- **System log**: bot starts, stops, updates, unexpected stops and
+  console errors, without SSH. See "System log" above.
+- **Announcements, Bot messages, Emoji, Polls, Maintenance** and
+  **notifications** (phases 2 and 3), and a **Ctrl+K command palette**.
+  See their sections above.
+- **Audit log** (phase 1): the full, searchable history of who did what,
+  in Discord and on the dashboard, updating live, with CSV export. The
+  Overview shows the latest activity. See "Audit log" above.
+- The other pages are placeholders for the next phases.
+
+**Nothing changes for an existing deployment** until you opt in: the
+dashboard is off (`FEATURE_WEB_DASHBOARD_ENABLED = False`) and storage
+stays on JSON files (`STORAGE_BACKEND=json`) by default.
+
+### How settings are layered
+
+1. `config/deployment.py`: the defaults, committed to git.
+2. `config/deployment_local.py`: optional, **not** committed. Values for
+   this machine only (copy `config/deployment_local.example.py`).
+3. Values saved in the dashboard (stored in `crusader.db`).
+
+Later layers win.
+
+**What goes where:**
+
+| Where | What |
+|---|---|
+| `.env` | Only what the bot needs to start and let you log in: `DISCORD_TOKEN`, `DISCORD_CLIENT_SECRET`, `WEB_BASE_URL`, `WEB_ADMIN_USER_IDS`, plus hosting options. See `.env.example`. |
+| Dashboard settings | Channels, roles, realm, features and every tuning value. Stored in the database. |
+| Dashboard integrations | External API keys (WarcraftLogs, Blizzard). Stored **encrypted** in the database (key file `secret.key` next to it) and never shown again after saving. |
+
+Setups from before the dashboard keep working: channel/role IDs, the realm
+and API keys still in `.env` are used as fallbacks and show as "From .env"
+in the dashboard.
+
+### Storage: JSON or SQLite
+
+`STORAGE_BACKEND=sqlite` in `.env` moves every store (applications,
+announcements, polls, raid summary data, API caches) into one
+`crusader.db`. The first start imports each JSON file automatically and
+leaves the JSON files untouched as a backup. To go back:
+
+```bash
+python db_tools.py export
+```
+
+That writes the database back out as JSON files in `json_export/` (copy
+them over the originals, remove `STORAGE_BACKEND=sqlite`, restart).
+`python db_tools.py backup` makes a safe copy of the database while the bot
+runs; `python db_tools.py info` shows what's in it.
+
+### Setting up a test environment (recommended before going live)
+
+The test setup is a **second bot** (its own Discord application) in a
+**private test server**, running as a Docker container on the same VPS. It
+never touches the live bot, the live server or the live data, and its
+dashboard is never exposed to the internet: you open it through an SSH
+tunnel.
+
+How updates flow:
+
+1. Code is pushed to GitHub.
+2. GitHub Actions (`.github/workflows/docker-image.yml`) builds a Docker
+   image (bot and dashboard together) and publishes it to GitHub's
+   container registry: tag `test` for the dashboard branch, `latest` for
+   `main`.
+3. On the VPS, `update.sh` runs every 5 minutes from cron. When there's a
+   new image it restarts the container with it; otherwise it does nothing.
+   Data lives in a folder outside the container, so it survives updates.
+   It leaves a small `data/update-pending` file first, so the System log
+   can say "New build detected" before the restart (the bot removes it).
+
+#### 1. Copy your live server with a server template
+
+A server template copies a server's **channels, categories, channel
+settings, roles and permissions** into a brand-new server. It does **not**
+copy messages, members, bots, emoji, stickers, the server icon or boosts.
+You need the *Manage Server* permission on the live server.
+
+1. In the live server, open **Server Settings**, then **Server Template**
+   in the left-hand menu.
+2. Give it a title (e.g. "Crusader test copy") and click **Generate
+   Template**.
+3. Click **Copy** next to the template link (`https://discord.new/...`).
+4. Open that link in your browser (or paste it in any Discord chat and
+   click it). Discord shows a preview: click **Create** to make the new
+   server.
+5. Back on the template page in the live server, you can **Delete
+   Template** so the link stops working. The test server you made stays.
+
+In the new server, check that the raid-summary forum still has its tags
+(Tier, Main/Alt, clear status) and add any that are missing. Everything in
+the copy has **new IDs**, which you'll pick in the test bot's dashboard
+(step 8).
+
+#### 2. Create the test bot application
+
+At https://discord.com/developers/applications create a new application
+(e.g. "Crusader Test"):
+
+- **Bot** tab: enable the **Server Members** and **Message Content**
+  intents, then reset and copy the token.
+- Invite it to the **test** server the same way as the live bot (see
+  "Setting up on a new server" above), and drag its role to the same
+  position.
+- **OAuth2** tab: copy the **Client Secret**, and under **Redirects** add
+  `http://localhost:8081/auth/callback`.
+
+#### 3. Let GitHub build the image
+
+The workflow runs automatically on every push to the dashboard branch. To
+check it: on GitHub, open the repository's **Actions** tab, then **Docker
+image**. A green run means the image is published; the repository page's
+**Packages** section then lists it.
+
+If the repository is **private**, the VPS needs a login to pull it:
+
+1. GitHub, then your profile picture, then **Settings > Developer settings
+   > Personal access tokens > Tokens (classic) > Generate new token**.
+2. Tick only **read:packages**, set an expiry, generate, copy the token.
+3. On the VPS:
+
+```bash
+docker login ghcr.io -u <your-github-username>
+```
+
+Paste the token as the password. Docker remembers it.
+
+#### 4. Set up the folder on the VPS
+
+```bash
+mkdir -p /opt/crusader-test/data && cd /opt/crusader-test
+```
+
+Put these two files from the repository in that folder (on GitHub, open
+each file, click **Raw**, and copy-paste it into e.g. `nano update.sh`):
+
+| Repository file | Save on the VPS as |
+|---|---|
+| `deploy/test/docker-compose.yml` | `docker-compose.yml` |
+| `deploy/test/update.sh` | `update.sh` |
+
+Then:
+
+```bash
+chmod +x update.sh && chown 1000:1000 data
+```
+
+(The container runs as user 1000, which needs to be able to write to
+`data/`.)
+
+Create `.env` (`nano .env`) with just the bot's startup settings.
+Everything else (channels, roles, realm, WarcraftLogs/Blizzard API keys,
+features) is filled in later in the dashboard's setup guide.
+
+```
+DISCORD_TOKEN=<test bot's token>
+DISCORD_CLIENT_SECRET=<test application's OAuth2 client secret>
+WEB_BASE_URL=http://localhost:8081
+WEB_ADMIN_USER_IDS=<your Discord user ID>
+```
+
+`WEB_ADMIN_USER_IDS` is what lets you into the dashboard before a
+moderator role has been chosen (Discord: Settings -> Advanced -> turn on
+Developer Mode, then right-click your own name -> Copy User ID).
+
+Optional, to test with real data: copy the live bot's `*.json` data files
+into `data/` (then run the `chown` above again). **Copy**, never link: the
+test bot imports them into its own database.
+
+#### 5. Start it
+
+```bash
+./update.sh
+```
+
+```bash
+docker compose logs -f
+```
+
+Look for `Web dashboard listening on http://0.0.0.0:8081` and the bot
+logging in. `Ctrl+C` stops following the logs; the bot keeps running.
+
+#### 6. Turn on automatic updates
+
+```bash
+crontab -e
+```
+
+Add this line, save and close:
+
+```
+*/5 * * * * /opt/crusader-test/update.sh >> /opt/crusader-test/update.log 2>&1
+```
+
+From now on, a push to the branch reaches the test bot within about 5
+minutes after GitHub finishes building (usually 1 to 3 minutes).
+`update.log` lists every update with its build number, which also shows
+in the dashboard's sidebar.
+
+#### 7. Open the dashboard
+
+On **your own computer**, open an SSH tunnel to the VPS and leave the
+window open while you use the dashboard:
+
+```bash
+ssh -L 8081:127.0.0.1:8081 root@<your-vps-address>
+```
+
+Browse to http://localhost:8081 and log in with Discord. The orange
+**TEST** badge next to the logo confirms you're on the test bot.
+
+#### 8. Complete the installation in the setup guide
+
+The first time you log in, the dashboard opens its **setup guide** (also
+under System -> Setup later):
+
+1. **Welcome**: confirms the bot is connected and checks its permissions
+   in the server.
+2. **Roles**: moderator, approver, Fresh, Regular and Organizer roles.
+3. **Channels**: review, gear-check, archive, announcement drafts,
+   attendance, moderator chat, the raid-summary forum, and the raid log
+   channels.
+4. **WarcraftLogs**: your API keys (create a client at
+   https://www.warcraftlogs.com/api/clients/; **Test connection** checks
+   them before you save), region, realm and guild name. Blizzard API keys
+   are optional.
+5. **Features**: turn off anything you don't use.
+6. **Finish**: lists anything required that's still missing, then
+   **Finish and restart the bot** applies everything.
+
+Everything saves as you go. API keys are stored encrypted in the database
+(the key to decrypt them is `data/secret.key`; back it up together with
+`data/crusader.db`) and are never shown again after saving.
+
+#### Day-to-day commands (run in `/opt/crusader-test`)
+
+| What | Command |
+|---|---|
+| Follow the logs | `docker compose logs -f` |
+| Restart (also possible from the dashboard) | `docker compose restart` |
+| Update now instead of waiting for cron | `./update.sh` |
+| Stop / start | `docker compose stop` / `docker compose start` |
+| Run a database tool | `docker compose exec bot python /app/db_tools.py info` |
+| Back up database + encryption key | `cp data/crusader.db data/secret.key /somewhere/safe/` (or `db_tools.py backup` for a copy while running) |
+| Go back to an earlier build | set `image:` to `...:sha-<commit>`, then `docker compose up -d` |
+
+### Moving the live bot to Docker
+
+The live bot can move from AMP to Docker exactly like the test bot, in its
+own folder (`/opt/crusader-live`) next to the test bot's. It uses the image
+built from `main` (tag `latest`) and the dashboard on port 8082, so both
+bots and both dashboards run side by side.
+
+1. **Stop the bot in AMP first**, and turn off its auto-start/update there,
+   so AMP doesn't start the new code itself, and two copies never run on
+   the same token.
+2. **Merge into `main`** and wait for the **Docker image** run on `main`
+   (GitHub, Actions) to turn green.
+3. **Discord Developer Portal, the live application**: OAuth2, copy the
+   **Client Secret**, and under **Redirects** add
+   `http://localhost:8082/auth/callback`.
+4. **Folder on the VPS**: `mkdir -p /opt/crusader-live/data`, then save
+   `deploy/live/docker-compose.yml` and `deploy/live/update.sh` there as
+   `docker-compose.yml` and `update.sh` (`chmod +x update.sh`).
+5. **Copy the live data** from the AMP folder (the one with `bot.py` and
+   `.env`) into `data/`: every `*.json` file, `audit.log*`, the `images/`
+   folder (raid summary banners), and `crusader.db*`/`secret.key` if they
+   exist. Copy, don't move: AMP's folder stays as the way back. Then
+   `chown -R 1000:1000 data`. On the first start the JSON files are
+   imported into the database and left in place as a backup.
+6. **`.env`**: copy AMP's `.env` to `/opt/crusader-live/.env` and add
+   `DISCORD_CLIENT_SECRET`, `WEB_BASE_URL=http://localhost:8082` and
+   `WEB_ADMIN_USER_IDS`. The channel/role IDs and API keys already in it
+   keep working (the dashboard shows them as "From .env"). If AMP had a
+   `config/deployment_local.py`, copy it next to `docker-compose.yml` and
+   uncomment its line in that file.
+7. **Start**: `./update.sh`, then `docker compose logs -f` until the bot
+   logs in. Add the cron line with `/opt/crusader-live/` paths.
+8. **Dashboard**: tunnel port 8082 (`ssh -L 8082:127.0.0.1:8082 ...`) and
+   open http://localhost:8082. Go through the setup guide to check
+   everything and finish it.
+
+**Going back**: `docker compose down` in `/opt/crusader-live`, then start
+the bot in AMP again (its own files were never changed; anything done on
+the Docker bot in between is not in them).
+
+### Working on the frontend
+
+`npm run dev` in `web/` serves the UI with hot reload on
+http://localhost:5173 and forwards API calls to a running bot on port 8081
+(`BOT_URL` to change that). Log in through the bot's own address first
+(the session cookie is shared on localhost).
+
 ## Architecture
 
 ```
@@ -607,23 +1058,33 @@ config/              - all tunable config, split into:
   deployment.py        - everything actually tuned per-deployment: logging, feature
                         flags, Discord role/channel/tag IDs, icon sourcing, tuning
                         knobs, tier definitions
+  overrides.py         - applies deployment_local.py (per-machine, gitignored) and
+                        web-dashboard settings on top of deployment.py's defaults
 wcl_client.py        - WarcraftLogs API client (fights/rankings/deaths/roster, cached per-report)
 wowhead.py           - Wowhead item name/icon/link lookup (cached permanently by item ID)
 blizzard_client.py   - optional Blizzard Game Data API client (item/spell icons, character
                         armory) - preferred over wowhead.py when BLIZZARD_CLIENT_ID/SECRET
                         are set, otherwise unused
 gargul_loot.py       - parser for Gargul's loot-export CSV format
-storage.py           - tiny JSON-backed persistence (generic - any cog can use it)
+storage.py           - tiny key/record persistence (generic - any cog can use it),
+                        JSON files or SQLite (STORAGE_BACKEND)
+db.py                - shared SQLite database (records, dashboard settings, sessions)
+db_tools.py          - database info / export back to JSON / backup
+webapi/              - the web dashboard's HTTP API (runs inside the bot process)
+web/                 - the web dashboard's frontend (React + Vite + Tailwind)
+Dockerfile           - one image with the bot and the built dashboard
+.github/workflows/   - builds and publishes that image to ghcr.io on every push
+deploy/test/         - docker-compose.yml + auto-update script for the test bot
 icons.py             - shared icon resolution (guild emoji + auto-provisioned application emoji)
 cogs/
   apply.py           - the whole guild-application feature (self-contained)
   announcements.py   - the whole announcement feature (self-contained)
-  emoji_admin.py     - /add-emoji (Wowhead link -> bot-owned application emoji)
   attendance.py      - the whole attendance-tracking feature (self-contained)
   raid_summary.py    - the whole raid-summary feature (self-contained)
   tier_retrospective.py - /tier-recap, an end-of-tier stats recap built entirely from
                         data raid_summary.py already cached (see its own module docstring)
-  audit_log.py       - who-did-what audit log file (on_interaction) + /auditlog
+  audit_log.py       - who-did-what audit log file (on_interaction)
+  web_dashboard.py   - starts the web dashboard server (off by default)
   raid_logs.py       - raid log tagging + attendance/raidsummary automation
                         (self-contained; reuses raid_summary.py's
                         RaidSummaryOptionsView and attendance.py's
@@ -692,8 +1153,8 @@ when adding a new persistent component elsewhere.
   fights - handled, but a reminder these WCL shapes vary more than the
   docs suggest. Post one real summary and check each section actually
   populated before trusting it. Item lookups (`wowhead.py`)
-  reuse the same `&xml` endpoint `/add-emoji` already relies on, so that
-  part carries the same (lighter) caveat as that existing command. The
+  use Wowhead's long-standing `&xml` endpoint, so that part carries a
+  lighter caveat. The
   ✏️ Edit button's `message.edit(view=...)` call on an already-posted forum
   thread message follows the same pattern already used for announcements'
   Edit button, but specifically for a `LayoutView`-based forum *thread*

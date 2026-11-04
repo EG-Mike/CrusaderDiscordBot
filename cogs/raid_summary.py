@@ -70,8 +70,7 @@ Design, per discussion:
     **Winner**"), not one Discord component per item - the icon is a real
     bot-owned emoji for that item (provisioned on demand via
     icons.ensure_item_emoji(), the same "download the icon, upload it as an
-    application emoji" mechanism /add-emoji in cogs/emoji_admin.py already
-    uses), falling back to a colored quality-square emoji if that couldn't
+    application emoji" mechanism the Emoji page uses), falling back to a colored quality-square emoji if that couldn't
     be created. Loot always starts on its own fresh page (see
     _render_pages()) rather than sharing space with whatever's left on the
     last header page - normally the summary's 2nd message.
@@ -635,12 +634,12 @@ class RaidSummaryRegenerateView(discord.ui.View):
 class RaidSummaryCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.forum_channel_id = int(os.environ["RAID_SUMMARY_FORUM_CHANNEL_ID"])
-        self.mod_role_id = int(os.environ["MOD_ROLE_ID"])
-        self.server_slug = os.environ["SERVER_SLUG"]
-        self.server_region = os.environ.get("SERVER_REGION", "us")
-        self.guild_name = os.environ.get("GUILD_NAME")  # optional - enables the guild-rank section
-        logs_channel_id = os.environ.get("RAID_LOGS_CHANNEL_ID")
+        self.forum_channel_id = config.RAID_SUMMARY_FORUM_CHANNEL_ID
+        self.mod_role_id = config.MOD_ROLE_ID
+        self.server_slug = config.SERVER_SLUG
+        self.server_region = config.SERVER_REGION
+        self.guild_name = (config.GUILD_NAME or None)  # optional - enables the guild-rank section
+        logs_channel_id = (config.RAID_LOGS_CHANNEL_ID or None)
         self.logs_channel_id = int(logs_channel_id) if logs_channel_id else None  # optional - enables the report picker
         self._bulk_tasks = []  # keeps /raidsummary-bulk's background task(s) alive - see raidsummary_bulk
 
@@ -1016,25 +1015,13 @@ class RaidSummaryCog(commands.Cog):
             resolved.append({**row, "item": item_cache[item_id]})
         return resolved
 
-    async def _fetch_existing_app_emojis(self) -> dict:
-        """Fetched ONCE per command run and passed to every icon-provisioning
-        call in that run (loot, potions, buff/debuff uptime) - see
-        icons.ensure_item_emoji/ensure_spell_emoji's own docstring for why
-        this needs to be shared rather than re-fetched per icon."""
-        try:
-            return {e.name: e for e in await self.bot.fetch_application_emojis()}
-        except Exception:
-            log.warning("Couldn't fetch application emojis for icon provisioning", exc_info=True)
-            return {}
-
-    async def _build_loot_lines(self, resolved_loot: list, guild: discord.Guild, classes_map: dict,
-                                 existing_by_name: dict) -> list:
+    async def _build_loot_lines(self, resolved_loot: list, guild: discord.Guild, classes_map: dict) -> list:
         """
         One compact line per loot row: "<item icon> [Item](wowhead) →
         <class icon> **Winner** *(OS)*". The item icon is a real bot-owned
         emoji for that item, provisioned on demand and cached forever (see
         icons.ensure_item_emoji) - reuses the exact same "download the icon,
-        upload as an application emoji" mechanism /add-emoji already uses,
+        upload as an application emoji" mechanism the Emoji page uses,
         just triggered automatically per unique item in this loot list
         instead of by a moderator pasting links. Falls back to a colored
         quality-square emoji if an item's icon couldn't be provisioned. The
@@ -1053,7 +1040,7 @@ class RaidSummaryCog(commands.Cog):
             if item_id not in icon_cache:
                 icon = ""
                 if item.get("icon_url"):
-                    icon = await icons.ensure_item_emoji(self.bot, existing_by_name, item_id, item["icon_url"])
+                    icon = await icons.ensure_item_emoji(self.bot, item_id, item["icon_url"])
                     await asyncio.sleep(0.3)  # pacing - a big loot night can provision many new emoji in a row
                 icon_cache[item_id] = icon or QUALITY_EMOJI.get(item.get("quality"), DEFAULT_QUALITY_EMOJI)
 
@@ -1362,7 +1349,7 @@ class RaidSummaryCog(commands.Cog):
             delta_fmt=lambda v: f"{v:.1f}%",
         )
 
-    async def _resolve_spell_icon(self, spell_id: int, existing_by_name: dict) -> str:
+    async def _resolve_spell_icon(self, spell_id: int) -> str:
         """One-off spell-icon resolution for a leaderboard header that
         isn't tied to per-line WCL matching (Top Interrupters/Dispellers) -
         same provisioning mechanism _build_uptime_lines uses per tracked
@@ -1372,10 +1359,10 @@ class RaidSummaryCog(commands.Cog):
         icon_url = await self._get_spell_icon_url(spell_id)
         if not icon_url:
             return ""
-        return await icons.ensure_spell_emoji(self.bot, existing_by_name, spell_id, icon_url)
+        return await icons.ensure_spell_emoji(self.bot, spell_id, icon_url)
 
     async def _build_potions_block(self, potion_casts: dict, guild: discord.Guild, classes_map: dict,
-                                    existing_by_name: dict, records: dict, tier_name: str) -> tuple:
+                                    records: dict, tier_name: str) -> tuple:
         """Top-3 "Destruction + Haste potions used" leaderboard (config.
         TRACKED_POTION_BUFF_SPELL_IDS, combined into one count per player by
         wcl_client._fetch_buff_usage_by_player - tracked via the temporary
@@ -1390,7 +1377,7 @@ class RaidSummaryCog(commands.Cog):
         for item_id in config.TRACKED_POTION_ITEM_IDS.values():
             item = await self._get_item_data(item_id)
             if item.get("icon_url"):
-                icon_prefix += await icons.ensure_item_emoji(self.bot, existing_by_name, item_id, item["icon_url"])
+                icon_prefix += await icons.ensure_item_emoji(self.bot, item_id, item["icon_url"])
         return self._build_ranked_block(
             "Top Potion Users (Destruction + Haste)", icon_prefix or "🧪", potion_casts, guild, classes_map,
             lambda v: f"{int(v)} used",
@@ -1399,7 +1386,7 @@ class RaidSummaryCog(commands.Cog):
         )
 
     async def _build_uptime_lines(self, aura_uptime: dict, records: dict, tier_name: str, guild: discord.Guild,
-                                   classes_map: dict, existing_by_name: dict) -> tuple:
+                                   classes_map: dict) -> tuple:
         """
         Returns (lines, updates) for the "Buff/Debuff Uptime" section -
         config.TRACKED_DEBUFFS (kept on the boss) and config.TRACKED_BUFFS
@@ -1438,7 +1425,7 @@ class RaidSummaryCog(commands.Cog):
             if not icon and spell_id:
                 icon_url = await self._get_spell_icon_url(spell_id)
                 if icon_url:
-                    icon = await icons.ensure_spell_emoji(self.bot, existing_by_name, spell_id, icon_url)
+                    icon = await icons.ensure_spell_emoji(self.bot, spell_id, icon_url)
                     await asyncio.sleep(0.3)  # same pacing _build_loot_lines uses for item-icon provisioning
 
             badge = ""
@@ -2117,10 +2104,6 @@ class RaidSummaryCog(commands.Cog):
         except Exception:
             log.warning("Boss-only totals lookup failed for %s", report_code, exc_info=True)
 
-        # Fetched once and reused for every icon this post provisions (loot,
-        # potions, buff/debuff uptime) - see _fetch_existing_app_emojis.
-        existing_by_name = await self._fetch_existing_app_emojis()
-
         header_ctx = {
             "clear_label": clear_label, "tier_name": tier_data["name"], "report_date": report_date,
             "killed_count": killed_count, "attempted_count": attempted_count, "total_pulls": total_pulls,
@@ -2190,12 +2173,12 @@ class RaidSummaryCog(commands.Cog):
         if activity_block:
             pre_loot_blocks.append(self._text_block(activity_block))
         potions_block, potions_record_update = await self._build_potions_block(
-            summary.get("potion_casts", {}), guild, classes_map, existing_by_name, records, tier_name
+            summary.get("potion_casts", {}), guild, classes_map, records, tier_name
         )
         if potions_block:
             pre_loot_blocks.append(self._text_block(potions_block))
 
-        interrupts_icon = config.TOP_INTERRUPTERS_ICON_EMOJI or await self._resolve_spell_icon(config.TOP_INTERRUPTERS_ICON_SPELL_ID, existing_by_name) or "⛔"
+        interrupts_icon = config.TOP_INTERRUPTERS_ICON_EMOJI or await self._resolve_spell_icon(config.TOP_INTERRUPTERS_ICON_SPELL_ID) or "⛔"
         interrupts_block, interrupts_record_update = self._build_ranked_block(
             "Top Interrupters", interrupts_icon, summary.get("interrupts", {}), guild, classes_map,
             lambda v: f"{int(v)} interrupt{'s' if int(v) != 1 else ''}",
@@ -2205,7 +2188,7 @@ class RaidSummaryCog(commands.Cog):
         if interrupts_block:
             pre_loot_blocks.append(self._text_block(interrupts_block))
 
-        dispels_icon = config.TOP_DISPELLERS_ICON_EMOJI or await self._resolve_spell_icon(config.TOP_DISPELLERS_ICON_SPELL_ID, existing_by_name) or "🧹"
+        dispels_icon = config.TOP_DISPELLERS_ICON_EMOJI or await self._resolve_spell_icon(config.TOP_DISPELLERS_ICON_SPELL_ID) or "🧹"
         dispels_block, dispels_record_update = self._build_ranked_block(
             "Top Dispellers", dispels_icon, summary.get("dispels", {}), guild, classes_map,
             lambda v: f"{int(v)} dispel{'s' if int(v) != 1 else ''}",
@@ -2216,7 +2199,7 @@ class RaidSummaryCog(commands.Cog):
             pre_loot_blocks.append(self._text_block(dispels_block))
 
         uptime_lines, uptime_updates = await self._build_uptime_lines(
-            aura_uptime, records, tier_name, guild, classes_map, existing_by_name
+            aura_uptime, records, tier_name, guild, classes_map
         )
         if uptime_lines:
             pre_loot_blocks.append(self._text_block("**Buff/Debuff Uptime**\n" + "\n".join(uptime_lines)))
@@ -2230,7 +2213,7 @@ class RaidSummaryCog(commands.Cog):
             }.items() if v is not None
         }
 
-        loot_lines = await self._build_loot_lines(resolved_loot, guild, classes_map, existing_by_name)
+        loot_lines = await self._build_loot_lines(resolved_loot, guild, classes_map)
         loot_blocks = self._build_loot_blocks(loot_lines)
 
         banner_source, banner_file = self._load_banner(tier_data["name"])
@@ -2594,177 +2577,6 @@ class RaidSummaryCog(commands.Cog):
             f"already-posted summary) will now see this data.\n\n{breakdown}",
             ephemeral=True,
         )
-
-    @app_commands.command(
-        name="raidsummary-refresh-wowhead",
-        description="Wipe the cached Wowhead item/spell lookups, forcing a fresh fetch for all of them (moderator only)",
-    )
-    async def raidsummary_refresh_wowhead_cache(self, interaction: discord.Interaction):
-        """
-        One-time migration command for wowhead.py's ITEM_XML_URL/
-        SPELL_XML_URL switching from Wowhead's retail database to /tbc/ -
-        every item successfully resolved BEFORE that switch is cached
-        under item_wowhead_url's old (also now-fixed) retail link, quietly
-        pointing at Wowhead's UNRELATED retail item that happened to share
-        the same numeric ID (Classic content has its own separate ID space
-        - see ITEM_XML_URL's comment). That cache entry looks exactly like
-        a normal successful lookup (a real icon_slug), so nothing else
-        here would ever retry it on its own - the icon_slug=None retry
-        added earlier only catches FAILED lookups, not wrong-but-
-        "successful" ones. Safe to run any time - just costs every item/
-        spell a fresh fetch (paced, see wowhead.py's PACE_SECONDS) next
-        time each one is needed, same as a cold cache.
-        """
-        if not await self._is_mod(interaction.guild, interaction.user.id):
-            await interaction.response.send_message("Only moderators can refresh the Wowhead cache.", ephemeral=True)
-            return
-        if not config.DEBUG_COMMANDS_ENABLED:
-            await interaction.response.send_message(
-                "This is a one-time-migration tool, disabled by default - set DEBUG_COMMANDS_ENABLED = True in "
-                "config/deployment.py to use it.",
-                ephemeral=True,
-            )
-            return
-
-        self.bot.wowhead.invalidate_all()
-        await interaction.response.send_message(
-            "Wowhead item/spell cache cleared - every item name/icon and tracked-ability icon will be "
-            "re-fetched fresh (paced, so a big loot night's /raidsummary or regenerate may take a little "
-            "longer than usual) the next time each one is needed.",
-            ephemeral=True,
-        )
-
-    @app_commands.command(
-        name="raidsummary-test-blizzard",
-        description="Step-by-step test of a single item against the Blizzard Game Data API (moderator only)",
-    )
-    @app_commands.describe(item="Item ID to test (defaults to a real BT item already seen in this guild's logs)")
-    async def raidsummary_test_blizzard(self, interaction: discord.Interaction, item: int = 30864):
-        """
-        Diagnostic-only command for blizzard_client.py, which was written
-        without ever being able to reach api.blizzard.com/oauth.battle.net
-        from the environment that built it (see that file's module
-        docstring) - the OAuth flow, namespace, and JSON field names are
-        all built from Blizzard's documented shapes plus a real working
-        third-party client's source, not independently confirmed live.
-        This runs the full lookup step by step (token, item endpoint,
-        media endpoint, parsed result) and reports each one, including raw
-        response bodies, so a namespace/field-name mismatch is immediately
-        visible and fixable instead of just silently falling back to a
-        placeholder the way a normal /raidsummary run would (by design -
-        see get_item()'s docstring).
-        """
-        if not await self._is_mod(interaction.guild, interaction.user.id):
-            await interaction.response.send_message("Only moderators can run this.", ephemeral=True)
-            return
-        if not config.DEBUG_COMMANDS_ENABLED:
-            await interaction.response.send_message(
-                "This is a diagnostic tool, disabled by default - set DEBUG_COMMANDS_ENABLED = True in "
-                "config/deployment.py to use it.",
-                ephemeral=True,
-            )
-            return
-        if self.bot.blizzard is None:
-            await interaction.response.send_message(
-                "BLIZZARD_CLIENT_ID/BLIZZARD_CLIENT_SECRET aren't set - the bot falls back to Wowhead entirely "
-                "until those are configured. Register a free client at https://develop.battle.net/access/clients, "
-                "set both env vars, and restart the bot to enable this.",
-                ephemeral=True,
-            )
-            return
-
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        report = await self.bot.blizzard.diagnose_item(item)
-        # Discord's 2000-char message limit - a long raw-body dump can
-        # exceed it, so this chunks rather than truncating silently.
-        for i in range(0, len(report), 1900):
-            await interaction.followup.send(report[i:i + 1900], ephemeral=True)
-
-    @app_commands.command(
-        name="raidsummary-test-spell",
-        description="Step-by-step test of a single spell's icon against the Blizzard Game Data API (moderator only)",
-    )
-    @app_commands.describe(spell="Spell ID to test (defaults to Judgement of Wisdom's tracked ID)")
-    async def raidsummary_test_spell(self, interaction: discord.Interaction, spell: int = 27164):
-        """
-        Diagnostic-only command for blizzard_client.py's get_spell_icon() -
-        same purpose as raidsummary_test_blizzard above, but for spells.
-        Added after a moderator confirmed live that Blizzard's
-        spell-media endpoint was returning its own generic "?" placeholder
-        icon (HTTP 200, not a 404) for at least a couple of config.
-        TRACKED_ABILITY_ICON_SPELL_IDS entries - get_spell_icon() now
-        rejects that specific placeholder (see its docstring and
-        blizzard_client._PLACEHOLDER_SPELL_ICON_SLUGS), but this command
-        is what to run first on any OTHER ability that still looks wrong,
-        to see the raw spell/media response (including the spell's own
-        "name" field, the fastest way to tell whether a configured spell
-        ID is even the right ability under this namespace) rather than
-        guessing blind.
-        """
-        if not await self._is_mod(interaction.guild, interaction.user.id):
-            await interaction.response.send_message("Only moderators can run this.", ephemeral=True)
-            return
-        if not config.DEBUG_COMMANDS_ENABLED:
-            await interaction.response.send_message(
-                "This is a diagnostic tool, disabled by default - set DEBUG_COMMANDS_ENABLED = True in "
-                "config/deployment.py to use it.",
-                ephemeral=True,
-            )
-            return
-        if self.bot.blizzard is None:
-            await interaction.response.send_message(
-                "BLIZZARD_CLIENT_ID/BLIZZARD_CLIENT_SECRET aren't set - the bot falls back to Wowhead entirely "
-                "until those are configured. Register a free client at https://develop.battle.net/access/clients, "
-                "set both env vars, and restart the bot to enable this.",
-                ephemeral=True,
-            )
-            return
-
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        report = await self.bot.blizzard.diagnose_spell(spell)
-        for i in range(0, len(report), 1900):
-            await interaction.followup.send(report[i:i + 1900], ephemeral=True)
-
-    def _diagnose_encounter_ids(self, fights: list) -> str:
-        """
-        Per-encounter_id breakdown of a report's fights (kills/wipes,
-        whichever tier's `bosses` dict that ID matches, if any) - the
-        overall kill_count /raidsummary-refresh-report reports is unscoped
-        (every kill in the report, any encounter), while /raidsummary's own
-        "Boss-by-boss" section only ever shows bosses whose encounter_id is
-        in the CHOSEN tier's config/deployment.py `bosses` dict (see
-        _build_boss_lines/_tier_stats) - so "refresh-report says N kills,
-        /raidsummary shows 0" with no live-report warning almost always
-        means the IDs in config/deployment.py don't actually match what WCL is
-        returning for these fights (stale/wrong ID, or the wrong tier was
-        picked in /raidsummary's dropdown), not a caching problem. This
-        prints the real IDs WCL sent back next to their fight/name so that
-        mismatch is visible directly, instead of guessed at.
-        """
-        id_to_tier_boss = {}
-        for tier in (config.CURRENT_TIER, config.PREVIOUS_TIER):
-            for boss_name, encounter_id in tier["bosses"].items():
-                id_to_tier_boss[encounter_id] = f"{tier['name']} → {boss_name}"
-
-        groups = {}
-        for f in fights:
-            eid = f.get("encounter_id")
-            if eid is None:
-                continue
-            g = groups.setdefault(eid, {"name": f.get("name") or "?", "kills": 0, "wipes": 0})
-            if f["kill"]:
-                g["kills"] += 1
-            else:
-                g["wipes"] += 1
-
-        if not groups:
-            return "No boss-encounter fights (only trash/no encounter_id) found in this report."
-
-        lines = ["**Encounter IDs WCL returned for this report:**"]
-        for eid, g in sorted(groups.items()):
-            match = id_to_tier_boss.get(eid, "⚠️ not in either tier's `bosses` dict in config/deployment.py")
-            lines.append(f"`{eid}` — {g['name']} ({g['kills']} kill(s), {g['wipes']} wipe(s)) — {match}")
-        return "\n".join(lines)
 
     @app_commands.command(
         name="raidsummary-regenerate",
@@ -3407,8 +3219,7 @@ class RaidSummaryCog(commands.Cog):
             except Exception:
                 log.warning("Role composition lookup failed while adding loot for %s", report_code, exc_info=True)
 
-        existing_by_name = await self._fetch_existing_app_emojis()
-        loot_lines = await self._build_loot_lines(resolved_loot, interaction.guild, classes_map, existing_by_name)
+        loot_lines = await self._build_loot_lines(resolved_loot, interaction.guild, classes_map)
 
         record["loot_blocks"] = self._build_loot_blocks(loot_lines)
         record["loot_rows"] = loot_rows

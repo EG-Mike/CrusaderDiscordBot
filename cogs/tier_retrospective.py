@@ -183,8 +183,8 @@ class TierRetrospectiveModal(discord.ui.Modal, title="Retrospective Note"):
 class TierRetrospectiveCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.mod_role_id = int(os.environ["MOD_ROLE_ID"])
-        self.sandbox_channel_id = os.environ.get("ANNOUNCEMENT_SANDBOX_CHANNEL_ID")
+        self.mod_role_id = config.MOD_ROLE_ID
+        self.sandbox_channel_id = (config.ANNOUNCEMENT_SANDBOX_CHANNEL_ID or None)
         # Own dedicated store, same "one small file per subsystem" reasoning
         # raid_summary.py's own split from applications.json used.
         self.store = ApplicationStore(path="tier_retrospective_store.json")

@@ -9,6 +9,8 @@ shouldn't need much else touched.
 import os
 import asyncio
 import logging
+import signal
+import sys
 import time
 
 import discord
@@ -21,6 +23,8 @@ from wowhead import WowheadClient
 from blizzard_client import BlizzardClient
 from storage import ApplicationStore
 import icons
+import secret_store
+import system_log
 
 load_dotenv()
 
@@ -47,6 +51,10 @@ if _bot_log_level != (config.LOG_LEVEL or "").upper():
 
 logging.getLogger("discord").setLevel(_resolve_log_level(config.LOG_DISCORD_LIBRARY_LEVEL, "WARNING"))
 
+# Keep console warnings/errors in the dashboard's System log too
+# (config.SYSTEM_LOG_LEVEL), so they can be read without SSH access.
+system_log.install()
+
 DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
 
 # Feature cogs to load. cogs.apply (guild applications) is the bot's core
@@ -56,13 +64,14 @@ DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
 # touching any code - see config/deployment.py's comment above those flags.
 OPTIONAL_EXTENSIONS = [
     ("cogs.announcements", config.FEATURE_ANNOUNCEMENTS_ENABLED),
-    ("cogs.emoji_admin", config.FEATURE_EMOJI_ADMIN_ENABLED),
     ("cogs.attendance", config.FEATURE_ATTENDANCE_ENABLED),
     ("cogs.raid_summary", config.FEATURE_RAID_SUMMARY_ENABLED),
     ("cogs.raid_logs", config.FEATURE_RAID_LOGS_ENABLED),
     ("cogs.tier_retrospective", config.FEATURE_TIER_RETROSPECTIVE_ENABLED),
     ("cogs.polls", config.FEATURE_POLLS_ENABLED),
     ("cogs.audit_log", config.FEATURE_AUDIT_LOG_ENABLED),
+    ("cogs.notifications", config.FEATURE_NOTIFICATIONS_ENABLED),
+    ("cogs.web_dashboard", config.FEATURE_WEB_DASHBOARD_ENABLED),
 ]
 EXTENSIONS = ["cogs.apply"] + [name for name, enabled in OPTIONAL_EXTENSIONS if enabled]
 
@@ -95,11 +104,18 @@ intents.message_content = True  # needed so message.attachments is populated
                                  # for the screenshot-reply step (this is a
                                  # privileged intent - see README step below)
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+# Optional hosting option: route Discord traffic (REST and gateway) through
+# an HTTP proxy, for hosts without direct internet access (e.g. the cloud
+# dev environment: DISCORD_PROXY=$HTTPS_PROXY). Unset = direct, as before.
+bot = commands.Bot(command_prefix="!", intents=intents, proxy=os.environ.get("DISCORD_PROXY") or None)
 
 # Shared singletons every cog can reach via self.bot.<name> - avoids each
 # feature file re-instantiating its own WCL client / storage.
-bot.wcl = WarcraftLogsClient(os.environ["WCL_CLIENT_ID"], os.environ["WCL_CLIENT_SECRET"])
+# API keys come from the dashboard (encrypted in the database) or, for a
+# setup from before the dashboard, .env - see secret_store.py. Missing keys
+# don't stop the bot: WarcraftLogs-based features explain what's missing
+# when used, and the dashboard's setup asks for them.
+bot.wcl = WarcraftLogsClient(secret_store.get("WCL_CLIENT_ID"), secret_store.get("WCL_CLIENT_SECRET"))
 bot.wowhead = WowheadClient()
 # Optional - item lookups (loot names/icons, potion icons) prefer this over
 # wowhead.py's scraped XML feed when configured (see
@@ -108,10 +124,10 @@ bot.wowhead = WowheadClient()
 # it: unset BLIZZARD_CLIENT_ID/SECRET just means those lookups keep going
 # through bot.wowhead exactly as before this existed. Same
 # SERVER_REGION env var wcl_client.py already reads (defaults "us").
-blizzard_client_id = os.environ.get("BLIZZARD_CLIENT_ID")
-blizzard_client_secret = os.environ.get("BLIZZARD_CLIENT_SECRET")
+blizzard_client_id = secret_store.get("BLIZZARD_CLIENT_ID")
+blizzard_client_secret = secret_store.get("BLIZZARD_CLIENT_SECRET")
 bot.blizzard = (
-    BlizzardClient(blizzard_client_id, blizzard_client_secret, region=os.environ.get("SERVER_REGION", "us"))
+    BlizzardClient(blizzard_client_id, blizzard_client_secret, region=config.SERVER_REGION)
     if blizzard_client_id and blizzard_client_secret else None
 )
 bot.store = ApplicationStore()
@@ -130,6 +146,11 @@ async def on_ready():
     log.info("Startup: syncing slash commands...")
     step_start = time.monotonic()
     guild_id = os.environ.get("DISCORD_GUILD_ID")
+    if not guild_id and len(bot.guilds) == 1:
+        # The bot only ever runs in one server: use it, so commands sync
+        # instantly even when DISCORD_GUILD_ID isn't set in .env.
+        guild_id = str(bot.guilds[0].id)
+        log.info("DISCORD_GUILD_ID not set - using the only server the bot is in (%s)", guild_id)
     if guild_id:
         # Guild-scoped sync propagates in seconds instead of global sync's
         # up-to-an-hour delay. copy_global_to() first copies every
@@ -169,19 +190,94 @@ async def on_ready():
     )
 
 
-async def main():
-    async with bot:
-        disabled = [name for name, enabled in OPTIONAL_EXTENSIONS if not enabled]
-        log.info("Loading extensions: %s", EXTENSIONS)
-        if disabled:
-            log.info("Disabled by config/deployment.py FEATURE_*_ENABLED flags: %s", disabled)
-        for extension in EXTENSIONS:
-            await bot.load_extension(extension)
+# Why the process is stopping, by signal: Docker, AMP and systemd send
+# SIGTERM to stop, restart or update the bot; Ctrl+C sends SIGINT.
+SHUTDOWN_SIGNALS = {
+    signal.SIGTERM: "the host asked it to stop (a stop, restart or update from Docker/AMP)",
+    signal.SIGINT: "Ctrl+C in the console",
+}
+
+
+# Docker and AMP kill the process if it hasn't exited within ~10 s of a stop:
+# close() gets this long, then whatever is still running is cancelled, so
+# the whole shutdown (and its "stopped" record) fits well inside that.
+SHUTDOWN_GRACE_SECONDS = 3
+
+
+def _install_signal_handlers():
+    """Turn stop signals into a clean shutdown, so the System log records why
+    the bot stopped instead of reporting an unexpected stop next time."""
+    loop = asyncio.get_running_loop()
+    main_task = asyncio.current_task()
+
+    async def stop(reason):
+        log.info("Shutting down: %s", reason)
+        system_log.stopping(reason)
         try:
-            await bot.start(DISCORD_TOKEN)
-        except (KeyboardInterrupt, asyncio.CancelledError):
-            print("Shutting down gracefully...")
-            await bot.close()
+            await asyncio.wait_for(bot.close(), SHUTDOWN_GRACE_SECONDS)
+        except asyncio.TimeoutError:
+            pass
+        # Something (e.g. a login request still in flight) can keep
+        # bot.start() waiting after close(): stop it rather than be killed.
+        await asyncio.sleep(SHUTDOWN_GRACE_SECONDS)
+        if main_task is not None and not main_task.done():
+            log.warning("Still busy %ss after closing (e.g. a request to Discord hanging) - cancelling it",
+                        2 * SHUTDOWN_GRACE_SECONDS)
+            main_task.cancel()
+
+    for sig, reason in SHUTDOWN_SIGNALS.items():
+        try:
+            loop.add_signal_handler(sig, lambda reason=reason: loop.create_task(stop(reason)))
+        except (NotImplementedError, RuntimeError):
+            pass  # Windows: Ctrl+C still raises KeyboardInterrupt below
+
+
+def _startup_error_explanation(exc) -> str:
+    """What to do about the errors a misconfigured bot application hits
+    when connecting; empty for anything else (logged with a traceback)."""
+    if isinstance(exc, discord.PrivilegedIntentsRequired):
+        return ("Discord refused the bot's privileged intents. In the Discord Developer Portal "
+                "(https://discord.com/developers/applications), open this bot's application, go to Bot, "
+                "turn on Server Members Intent and Message Content Intent, save, and restart the bot.")
+    if isinstance(exc, discord.LoginFailure):
+        return ("Discord rejected the bot token. Copy a new token from the Developer Portal (Bot, Reset Token) "
+                "into DISCORD_TOKEN in .env and restart the bot.")
+    return ""
+
+
+async def main():
+    system_log.startup()
+    _install_signal_handlers()
+    try:
+        async with bot:
+            system_log.attach(bot)
+            disabled = [name for name, enabled in OPTIONAL_EXTENSIONS if not enabled]
+            log.info("Loading extensions: %s", EXTENSIONS)
+            if disabled:
+                log.info("Disabled by config/deployment.py FEATURE_*_ENABLED flags: %s", disabled)
+            for extension in EXTENSIONS:
+                await bot.load_extension(extension)
+            try:
+                await bot.start(DISCORD_TOKEN)
+            except (KeyboardInterrupt, asyncio.CancelledError):
+                system_log.set_shutdown_reason(SHUTDOWN_SIGNALS[signal.SIGINT], overwrite=False)
+                print("Shutting down gracefully...")
+                await bot.close()
+    except Exception:
+        if system_log.stop_requested():
+            # Stopping while still logging in can make discord.py's closed
+            # HTTP session raise; that's part of the requested stop, not a crash.
+            log.info("Stopped while connecting to Discord", exc_info=True)
+            return
+        explanation = _startup_error_explanation(sys.exc_info()[1])
+        if explanation:
+            log.critical("The bot couldn't connect to Discord: %s", explanation)
+        else:
+            log.critical("The bot stopped because of an error: %s", sys.exc_info()[1], exc_info=True)
+        system_log.set_shutdown_reason("an error (see the critical entry before this one)")
+        raise
+    finally:
+        system_log.shutdown()
 
 
 if __name__ == "__main__":

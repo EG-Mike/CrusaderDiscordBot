@@ -59,6 +59,7 @@ OPTION_MAX_LENGTH = 55
 QUESTION_MAX_LENGTH = 200
 DESCRIPTION_MAX_LENGTH = 400
 MAX_DURATION_SECONDS = 30 * 24 * 3600
+DEADLINE_MESSAGE_MAX_LENGTH = 500
 # Message text budget - Discord caps a Components V2 message's total text at
 # 4000 chars; the option list gets whatever the header/footer leave over.
 TEXT_BUDGET = 3800
@@ -106,6 +107,14 @@ def _bar(fraction: float, width: int = 10) -> str:
     return "█" * filled + "░" * (width - filled)
 
 
+def _clean_message(text) -> str:
+    """An optional deadline message: trimmed, length-checked. Raises PollError."""
+    text = (text or "").strip()
+    if len(text) > DEADLINE_MESSAGE_MAX_LENGTH:
+        raise PollError(f"Keep the message under {DEADLINE_MESSAGE_MAX_LENGTH} characters.")
+    return text
+
+
 def _parse_duration(text: str):
     """'2d', '12h', '1d6h', '90m', '1.5h' -> seconds, or None if invalid."""
     text = text.strip().lower().replace(" ", "")
@@ -146,6 +155,106 @@ def _normalize_record(record: dict) -> dict:
     return record
 
 
+class PollError(Exception):
+    """A poll action that can't be done; the message says why."""
+
+
+def build_record(question: str, description, option_texts: list, settings: dict, author_id: int,
+                 author_name: str, channel_id: int) -> dict:
+    """A new poll record from what its creator entered. `settings` holds the
+    optional POLL_* overrides (None = the default). Raises PollError."""
+    question = _clean(question or "")
+    if not question:
+        raise PollError("Write the poll's question.")
+    if len(question) > QUESTION_MAX_LENGTH:
+        raise PollError(f"Keep the question under {QUESTION_MAX_LENGTH} characters.")
+    description = (description or "").strip() or None
+    if description and len(description) > DESCRIPTION_MAX_LENGTH:
+        raise PollError(f"Keep the description under {DESCRIPTION_MAX_LENGTH} characters.")
+    initial, seen = [], set()
+    for raw in option_texts:
+        text = _clean(raw or "")
+        if not text or _normalize(text) in seen:
+            continue
+        if len(text) > OPTION_MAX_LENGTH:
+            raise PollError(f"Option “{text[:60]}…” is too long - keep each under {OPTION_MAX_LENGTH} characters.")
+        seen.add(_normalize(text))
+        initial.append({"id": len(initial) + 1, "text": text, "author_id": author_id, "author_name": author_name})
+    if len(initial) > MAX_OPTIONS:
+        raise PollError(f"At most {MAX_OPTIONS} options per poll.")
+
+    def pick(key, default):
+        value = settings.get(key)
+        return default if value is None else value
+
+    members_can_add = pick("members_can_add", not initial)
+    if not members_can_add and len(initial) < 2:
+        raise PollError("Give at least 2 options, or let members add their own.")
+    duration_seconds = None
+    closes_at = None
+    if settings.get("closes_at"):
+        closes_at = check_deadline(settings["closes_at"])
+    elif settings.get("duration"):
+        duration_seconds = _parse_duration(str(settings["duration"]))
+        if duration_seconds is None:
+            raise PollError("Couldn't read that duration - use something like 2d, 12h, 1d6h or 90m.")
+        if duration_seconds > MAX_DURATION_SECONDS:
+            raise PollError("Polls can run for at most 30 days.")
+    for key in ("max_adds", "max_votes"):
+        if settings.get(key) is not None and not 1 <= int(settings[key]) <= MAX_OPTIONS:
+            raise PollError(f"{key.replace('_', ' ').capitalize()} must be between 1 and {MAX_OPTIONS}.")
+
+    record = _normalize_record({
+        "question": question,
+        "description": description,
+        "created_by": author_id,
+        "channel_id": channel_id,
+        "options": initial,
+        "next_id": len(initial) + 1,
+        "members_can_add": members_can_add,
+        "max_adds": int(pick("max_adds", config.POLL_DEFAULT_MAX_ADDS_PER_MEMBER)),
+        "collect_first": pick("collect_first", config.POLL_DEFAULT_COLLECT_FIRST),
+        "max_votes": int(pick("max_votes", config.POLL_DEFAULT_MAX_VOTES_PER_MEMBER)),
+        "live_results": pick("live_results", config.POLL_DEFAULT_LIVE_RESULTS),
+        "show_authors": pick("show_authors", config.POLL_DEFAULT_SHOW_AUTHORS),
+        "show_voters": pick("show_voters", config.POLL_DEFAULT_SHOW_VOTERS),
+        "allow_vote_change": pick("allow_vote_change", config.POLL_DEFAULT_ALLOW_VOTE_CHANGE),
+        "duration": duration_seconds,
+    })
+    record["closes_at"] = closes_at  # a fixed time also applies to a poll that starts by collecting options
+    if members_can_add and record["collect_first"]:
+        record["phase"] = PHASE_ADDING
+    else:
+        record["phase"] = PHASE_VOTING
+        if duration_seconds:
+            record["closes_at"] = int(time.time()) + duration_seconds
+    return record
+
+
+def check_deadline(closes_at) -> int:
+    """A closing time (unix seconds) that's in the future and within the
+    30-day limit. Raises PollError."""
+    try:
+        value = int(closes_at)
+    except (TypeError, ValueError):
+        raise PollError("That closing time isn't valid.") from None
+    now = int(time.time())
+    if value <= now + 60:
+        raise PollError("Pick a closing time at least a minute from now.")
+    if value > now + MAX_DURATION_SECONDS:
+        raise PollError("Polls can run for at most 30 days.")
+    return value
+
+
+def deadline_announcement(record: dict, message=None) -> str:
+    """What the bot posts in the poll's channel when a deadline is set."""
+    ts = record["closes_at"]
+    text = f"⏰ Voting on **{record['question']}** ends <t:{ts}:R> (<t:{ts}:f>)."
+    if message:
+        text += f"\n{message}"
+    return text
+
+
 class AddOptionModal(discord.ui.Modal, title="Add an option"):
     option = discord.ui.TextInput(label="Option", required=True, min_length=1, max_length=OPTION_MAX_LENGTH)
 
@@ -161,12 +270,26 @@ class AddOptionModal(discord.ui.Modal, title="Add an option"):
         await self.cog._add_option(interaction, self.poll_message, str(self.option), as_manager=self.as_manager)
 
 
+class DeadlineModal(discord.ui.Modal, title="Set when voting closes"):
+    closes_in = discord.ui.TextInput(label="Close in", placeholder="e.g. 2d, 12h, 1d6h or 90m", max_length=20)
+    message = discord.ui.TextInput(label="Message to post with it (optional)", style=discord.TextStyle.paragraph,
+                                   required=False, max_length=DEADLINE_MESSAGE_MAX_LENGTH)
+
+    def __init__(self, cog: "PollsCog", poll_message):
+        super().__init__()
+        self.cog = cog
+        self.poll_message = poll_message
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await self.cog.apply_deadline_from_modal(interaction, self.poll_message, str(self.closes_in), str(self.message))
+
+
 class PollsCog(commands.Cog):
     poll = app_commands.Group(name="poll", description="Create and run polls")
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.mod_role_id = int(os.environ["MOD_ROLE_ID"])
+        self.mod_role_id = config.MOD_ROLE_ID
         self.store = ApplicationStore(path="polls.json")
         # One lock per poll message: serializes "mutate record + re-render
         # message" so two near-simultaneous votes can't have their message
@@ -352,6 +475,8 @@ class PollsCog(commands.Cog):
         chips.append("📢 votes are public" if record["show_voters"] else "🕶️ votes are anonymous")
         if phase == PHASE_VOTING and record["closes_at"]:
             chips.append(f"⏰ closes <t:{record['closes_at']}:R>")
+        elif phase == PHASE_ADDING and record["closes_at"]:
+            chips.append(f"⏰ voting closes <t:{record['closes_at']}:f>")
         elif phase == PHASE_ADDING and record["duration"]:
             chips.append(f"⏰ voting will run for {self._fmt_duration(record['duration'])}")
         return head + "\n-# " + " · ".join(chips)
@@ -499,56 +624,16 @@ class PollsCog(commands.Cog):
         async def fail(msg):
             await interaction.response.send_message(msg, ephemeral=True)
 
-        initial = []
-        seen = set()
-        for raw in (options or "").split(";"):
-            text = _clean(raw)
-            if not text or _normalize(text) in seen:
-                continue
-            if len(text) > OPTION_MAX_LENGTH:
-                return await fail(f"Option `{text[:60]}…` is too long - keep each under {OPTION_MAX_LENGTH} characters.")
-            seen.add(_normalize(text))
-            initial.append({
-                "id": len(initial) + 1, "text": text,
-                "author_id": interaction.user.id, "author_name": interaction.user.display_name,
-            })
-        if len(initial) > MAX_OPTIONS:
-            return await fail(f"At most {MAX_OPTIONS} options per poll.")
-
-        if members_can_add is None:
-            members_can_add = not initial
-        if not members_can_add and len(initial) < 2:
-            return await fail("Give at least 2 options, or turn on `members_can_add` so members can add their own.")
-
-        duration_seconds = None
-        if duration:
-            duration_seconds = _parse_duration(duration)
-            if duration_seconds is None:
-                return await fail("Couldn't read that duration - use something like `2d`, `12h`, `1d6h` or `90m`.")
-            if duration_seconds > MAX_DURATION_SECONDS:
-                return await fail("Polls can run for at most 30 days.")
-
-        record = _normalize_record({
-            "question": _clean(question),
-            "description": description.strip() if description else None,
-            "created_by": interaction.user.id,
-            "channel_id": interaction.channel.id,
-            "options": initial,
-            "next_id": len(initial) + 1,
-            "members_can_add": members_can_add,
-            "max_adds": max_adds or config.POLL_DEFAULT_MAX_ADDS_PER_MEMBER,
-            "collect_first": config.POLL_DEFAULT_COLLECT_FIRST if collect_first is None else collect_first,
-            "max_votes": max_votes or config.POLL_DEFAULT_MAX_VOTES_PER_MEMBER,
-            "live_results": config.POLL_DEFAULT_LIVE_RESULTS if live_results is None else live_results,
-            "show_authors": config.POLL_DEFAULT_SHOW_AUTHORS if show_authors is None else show_authors,
-            "show_voters": config.POLL_DEFAULT_SHOW_VOTERS if show_voters is None else show_voters,
-            "allow_vote_change": config.POLL_DEFAULT_ALLOW_VOTE_CHANGE if allow_vote_change is None else allow_vote_change,
-            "duration": duration_seconds,
-        })
-        if members_can_add and record["collect_first"]:
-            record["phase"] = PHASE_ADDING
-        else:
-            self._start_voting(record)
+        settings = {
+            "members_can_add": members_can_add, "max_adds": max_adds, "collect_first": collect_first,
+            "max_votes": max_votes, "live_results": live_results, "show_authors": show_authors,
+            "show_voters": show_voters, "allow_vote_change": allow_vote_change, "duration": duration,
+        }
+        try:
+            record = build_record(question, description, (options or "").split(";"), settings,
+                                  interaction.user.id, interaction.user.display_name, interaction.channel.id)
+        except PollError as exc:
+            return await fail(str(exc))
 
         try:
             message = await interaction.channel.send(view=self._render(record), allowed_mentions=NO_PINGS)
@@ -586,32 +671,14 @@ class PollsCog(commands.Cog):
         async with self._lock(message.id):
             record = self._get(message.id)
             # Re-check everything: the poll may have changed while the modal was open.
-            error = None
             if record is None:
-                error = "This poll no longer exists."
-            elif record["phase"] == PHASE_CLOSED:
-                error = "This poll is closed."
-            elif not as_manager and not self._adding_open(record):
-                error = "Adding options closed while you were typing - sorry!"
-            elif not text:
-                error = "The option was empty."
-            elif not as_manager and len(self._own_options(record, interaction.user.id)) >= record["max_adds"]:
-                error = f"You've already added your {_plural(record['max_adds'], 'option')}."
-            elif len(record["options"]) >= MAX_OPTIONS:
-                error = f"This poll already has the maximum of {MAX_OPTIONS} options."
-            elif any(_normalize(o["text"]) == _normalize(text) for o in record["options"]):
-                error = f"**{text}** is already an option."
+                await interaction.response.send_message("This poll no longer exists.", ephemeral=True)
+                return
+            error = self._insert_option(record, text, interaction.user.id, interaction.user.display_name,
+                                        as_manager=as_manager)
             if error:
                 await interaction.response.send_message(error, ephemeral=True)
                 return
-
-            record["options"].append({
-                "id": record["next_id"],
-                "text": text,
-                "author_id": interaction.user.id,
-                "author_name": interaction.user.display_name,
-            })
-            record["next_id"] += 1
             self._save(message.id, record)
             reply = f"Added **{text}**!"
             if not as_manager:
@@ -619,6 +686,43 @@ class PollsCog(commands.Cog):
                 reply += f" You can add {_plural(left, 'more')}."
             await interaction.response.send_message(reply, ephemeral=True)
             await self._refresh(message)
+
+    def _insert_option(self, record: dict, text: str, author_id: int, author_name: str, *, as_manager: bool):
+        """Adds an option to `record` in place; returns an error text instead
+        when it isn't allowed."""
+        if record["phase"] == PHASE_CLOSED:
+            return "This poll is closed."
+        if not as_manager and not self._adding_open(record):
+            return "Adding options closed while you were typing - sorry!"
+        if not text:
+            return "The option was empty."
+        if len(text) > OPTION_MAX_LENGTH:
+            return f"Keep options under {OPTION_MAX_LENGTH} characters."
+        if not as_manager and len(self._own_options(record, author_id)) >= record["max_adds"]:
+            return f"You've already added your {_plural(record['max_adds'], 'option')}."
+        if len(record["options"]) >= MAX_OPTIONS:
+            return f"This poll already has the maximum of {MAX_OPTIONS} options."
+        if any(_normalize(o["text"]) == _normalize(text) for o in record["options"]):
+            return f"**{text}** is already an option."
+        record["options"].append({"id": record["next_id"], "text": text, "author_id": author_id,
+                                  "author_name": author_name})
+        record["next_id"] += 1
+        return None
+
+    @staticmethod
+    def _drop_options(record: dict, ids: set, only_author=None) -> list:
+        """Removes options (and votes for them) in place; returns what went."""
+        removed = [o for o in record["options"]
+                   if o["id"] in ids and (only_author is None or o.get("author_id") == only_author)]
+        removed_ids = {o["id"] for o in removed}
+        record["options"] = [o for o in record["options"] if o["id"] not in removed_ids]
+        for voter in list(record["votes"]):
+            ballot = [oid for oid in record["votes"][voter] if oid not in removed_ids]
+            if ballot:
+                record["votes"][voter] = ballot
+            else:
+                del record["votes"][voter]
+        return removed
 
     async def _on_withdraw(self, interaction: discord.Interaction):
         record = await self._get_or_complain(interaction)
@@ -658,18 +762,7 @@ class PollsCog(commands.Cog):
                 if only_author is not None and rec["phase"] != PHASE_ADDING:
                     await interaction.response.edit_message(content="Options are locked now.", view=None)
                     return
-                removed = [
-                    o for o in rec["options"]
-                    if o["id"] in ids and (only_author is None or o.get("author_id") == only_author)
-                ]
-                removed_ids = {o["id"] for o in removed}
-                rec["options"] = [o for o in rec["options"] if o["id"] not in removed_ids]
-                for voter in list(rec["votes"]):
-                    ballot = [oid for oid in rec["votes"][voter] if oid not in removed_ids]
-                    if ballot:
-                        rec["votes"][voter] = ballot
-                    else:
-                        del rec["votes"][voter]
+                removed = self._drop_options(rec, ids, only_author)
                 self._save(poll_message.id, rec)
                 names = ", ".join(f"**{o['text']}**" for o in removed) or "nothing (already gone)"
                 await interaction.response.edit_message(content=f"Removed {names}.", view=None)
@@ -790,12 +883,16 @@ class PollsCog(commands.Cog):
         tied = ", ".join(f"**{w}**" for w in winners[:-1]) + f" and **{winners[-1]}**"
         return f"🔒 **{record['question']}** has closed - it's a tie between {tied} ({votes} each)."
 
-    async def _close(self, message, record: dict):
-        """Caller holds the lock. Closes, saves, re-renders and announces."""
+    async def _close(self, message, record: dict, post_result: bool = True):
+        """Caller holds the lock. Closes, saves, re-renders and (unless
+        `post_result` is off) replies with the result. The poll message
+        itself always shows the final tally once closed."""
         record["phase"] = PHASE_CLOSED
         record["closes_at"] = None
         self._save(message.id, record)
         await self._refresh(message)
+        if not post_result:
+            return
         try:
             await message.reply(self._result_announcement(record), allowed_mentions=NO_PINGS)
         except discord.HTTPException:
@@ -873,11 +970,15 @@ class PollsCog(commands.Cog):
         if phase == PHASE_ADDING:
             add("🗳️ Open voting", discord.ButtonStyle.success, self._manage_open_voting, 0)
         if phase == PHASE_VOTING:
-            add("🔒 Close poll", discord.ButtonStyle.danger, self._manage_close, 0)
+            add("🔒 Close & post result", discord.ButtonStyle.danger, self._manage_close, 0)
+            add("🔒 Close quietly", discord.ButtonStyle.secondary, self._manage_close_quietly, 0)
             if record["members_can_add"] and record["collect_first"]:
                 add("➕ Reopen adding", discord.ButtonStyle.secondary, self._manage_reopen_adding, 0)
         if phase == PHASE_CLOSED:
             add("🗳️ Reopen voting", discord.ButtonStyle.secondary, self._manage_reopen_voting, 0)
+        if phase != PHASE_CLOSED:
+            add("⏰ Change deadline" if record["closes_at"] else "⏰ Set deadline", discord.ButtonStyle.secondary,
+                self._manage_set_deadline, 0)
         if phase == PHASE_VOTING and record["closes_at"]:
             add("⏰ Remove deadline", discord.ButtonStyle.secondary, self._manage_clear_deadline, 0)
 
@@ -906,20 +1007,11 @@ class PollsCog(commands.Cog):
                 if record is None:
                     await interaction.response.edit_message(content="This poll no longer exists.", view=None)
                     return
-                label, one_way = TOGGLES[key]
-                if one_way and not record[key]:
-                    await interaction.response.send_message("That privacy setting can't be turned back on.", ephemeral=True)
+                label, _one_way = TOGGLES[key]
+                error = self._set_toggle(record, key, not record[key])
+                if error:
+                    await interaction.response.send_message(error, ephemeral=True)
                     return
-                record[key] = not record[key]
-                if key == "members_can_add" and not record[key] and record["phase"] == PHASE_ADDING:
-                    if len(record["options"]) >= 2:
-                        self._start_voting(record)
-                    else:
-                        record[key] = True
-                        await interaction.response.send_message(
-                            "Add at least 2 options before turning member adding off.", ephemeral=True
-                        )
-                        return
                 self._save(poll_message.id, record)
                 note = f"✅ {label}: **{'on' if record[key] else 'off'}**"
                 await interaction.response.edit_message(
@@ -929,7 +1021,66 @@ class PollsCog(commands.Cog):
                 await self._refresh(poll_message)
         return handler
 
-    async def _update_phase(self, interaction, poll_message, mutate, ok_text, close=False):
+    def _set_toggle(self, record: dict, key: str, value: bool):
+        """Changes one manage-panel setting in place; returns an error text
+        when it isn't allowed (privacy settings are one-way)."""
+        _label, one_way = TOGGLES[key]
+        if one_way and value and not record[key]:
+            return "That privacy setting can't be turned back on: people took part under the promise of privacy."
+        if key == "members_can_add" and not value and record["phase"] == PHASE_ADDING:
+            if len(record["options"]) < 2:
+                return "Add at least 2 options before turning member adding off."
+            record[key] = False
+            self._start_voting(record)
+            return None
+        record[key] = value
+        return None
+
+    def _set_deadline(self, record: dict, closes_at) -> None:
+        """Sets when voting closes, in place. Raises PollError."""
+        if record["phase"] == PHASE_CLOSED:
+            raise PollError("This poll is closed. Reopen voting first.")
+        record["closes_at"] = check_deadline(closes_at)
+
+    async def _announce_deadline(self, message, record: dict, text=None):
+        try:
+            await message.reply(deadline_announcement(record, text), allowed_mentions=NO_PINGS)
+        except discord.HTTPException:
+            log.exception("Failed to announce the deadline of poll %s", message.id)
+
+    def _phase_change(self, record: dict, action: str):
+        """Open/close/reopen in place; returns an error text when not allowed."""
+        phase = record["phase"]
+        if action == "open_voting":
+            if phase != PHASE_ADDING:
+                return "Voting is already open." if phase == PHASE_VOTING else "Reopen voting instead."
+            if len(record["options"]) < 2:
+                return "Need at least 2 options before voting can open."
+            self._start_voting(record)
+        elif action == "close":
+            if phase == PHASE_CLOSED:
+                return "This poll is already closed."
+            record["phase"] = PHASE_CLOSED
+            record["closes_at"] = None
+        elif action == "reopen_adding":
+            if not (record["members_can_add"] and record["collect_first"]) or phase == PHASE_ADDING:
+                return "Adding can't be reopened on this poll."
+            record["phase"] = PHASE_ADDING
+            record["closes_at"] = None
+        elif action == "reopen_voting":
+            if phase != PHASE_CLOSED:
+                return "Voting is already open." if phase == PHASE_VOTING else "Open voting instead."
+            record["phase"] = PHASE_VOTING
+            record["closes_at"] = None
+        elif action == "clear_deadline":
+            if not record["closes_at"]:
+                return "This poll has no deadline."
+            record["closes_at"] = None
+        else:
+            return "Unknown action."
+        return None
+
+    async def _update_phase(self, interaction, poll_message, mutate, ok_text, close=False, post_result=True):
         async with self._lock(poll_message.id):
             record = self._get(poll_message.id)
             if record is None:
@@ -944,43 +1095,60 @@ class PollsCog(commands.Cog):
                 allowed_mentions=NO_PINGS,
             )
             if close:
-                await self._close(poll_message, record)
+                await self._close(poll_message, record, post_result)
             else:
                 self._save(poll_message.id, record)
                 await self._refresh(poll_message)
 
     async def _manage_open_voting(self, interaction, poll_message):
-        def mutate(record):
-            if len(record["options"]) < 2:
-                return "Need at least 2 options before voting can open."
-            self._start_voting(record)
-        await self._update_phase(interaction, poll_message, mutate, "✅ Voting is open - options are now locked.")
+        await self._update_phase(interaction, poll_message, lambda r: self._phase_change(r, "open_voting"),
+                                 "✅ Voting is open - options are now locked.")
 
     async def _manage_close(self, interaction, poll_message):
-        def mutate(record):
-            record["phase"] = PHASE_CLOSED
-            record["closes_at"] = None
-        await self._update_phase(interaction, poll_message, mutate, "🔒 Poll closed - results posted.", close=True)
+        await self._update_phase(interaction, poll_message, lambda r: self._phase_change(r, "close"),
+                                 "🔒 Poll closed - results posted.", close=True)
+
+    async def _manage_close_quietly(self, interaction, poll_message):
+        await self._update_phase(interaction, poll_message, lambda r: self._phase_change(r, "close"),
+                                 "🔒 Poll closed. No result was posted; the poll shows the final tally.",
+                                 close=True, post_result=False)
 
     async def _manage_reopen_adding(self, interaction, poll_message):
-        def mutate(record):
-            record["phase"] = PHASE_ADDING
-            record["closes_at"] = None
-        await self._update_phase(
-            interaction, poll_message, mutate,
-            "➕ Adding reopened. Existing votes are kept; reopen voting when ready.",
-        )
+        await self._update_phase(interaction, poll_message, lambda r: self._phase_change(r, "reopen_adding"),
+                                 "➕ Adding reopened. Existing votes are kept; reopen voting when ready.")
 
     async def _manage_reopen_voting(self, interaction, poll_message):
-        def mutate(record):
-            record["phase"] = PHASE_VOTING
-            record["closes_at"] = None
-        await self._update_phase(interaction, poll_message, mutate, "🗳️ Voting reopened (no deadline).")
+        await self._update_phase(interaction, poll_message, lambda r: self._phase_change(r, "reopen_voting"),
+                                 "🗳️ Voting reopened (no deadline).")
 
     async def _manage_clear_deadline(self, interaction, poll_message):
-        def mutate(record):
-            record["closes_at"] = None
-        await self._update_phase(interaction, poll_message, mutate, "⏰ Deadline removed - close the poll manually.")
+        await self._update_phase(interaction, poll_message, lambda r: self._phase_change(r, "clear_deadline"),
+                                 "⏰ Deadline removed - close the poll manually.")
+
+    async def _manage_set_deadline(self, interaction, poll_message):
+        await interaction.response.send_modal(DeadlineModal(self, poll_message))
+
+    async def apply_deadline_from_modal(self, interaction, poll_message, raw_in: str, raw_message: str):
+        seconds = _parse_duration(raw_in or "")
+        if seconds is None:
+            await interaction.response.send_message(
+                "Couldn't read that - use something like 2d, 12h, 1d6h or 90m.", ephemeral=True)
+            return
+        async with self._lock(poll_message.id):
+            record = self._get(poll_message.id)
+            try:
+                if record is None:
+                    raise PollError("This poll no longer exists.")
+                text = _clean_message(raw_message)
+                self._set_deadline(record, int(time.time()) + seconds)
+            except PollError as exc:
+                await interaction.response.send_message(str(exc), ephemeral=True)
+                return
+            self._save(poll_message.id, record)
+            await interaction.response.send_message(
+                f"⏰ Voting closes <t:{record['closes_at']}:R> - announced in the channel.", ephemeral=True)
+            await self._refresh(poll_message)
+            await self._announce_deadline(poll_message, record, text)
 
     async def _manage_add_option(self, interaction, poll_message):
         record = self._get(poll_message.id)
@@ -1007,6 +1175,139 @@ class PollsCog(commands.Cog):
         # Counts only - who voted for what stays private unless votes are public.
         text = self._full_breakdown(record, with_voters=record["show_voters"])
         await interaction.response.send_message(f"📊 Current standings (only you can see this):\n{text}", ephemeral=True, allowed_mentions=NO_PINGS)
+
+    # --- dashboard (webapi/polls_api.py) -----------------------------------
+    # The same rules as the Discord buttons, without an interaction: each
+    # method takes the poll's lock, changes the record, saves it and
+    # re-renders the message. Raise PollError with what's wrong.
+
+    PHASE_ACTIONS = ("open_voting", "close", "reopen_adding", "reopen_voting", "clear_deadline")
+
+    def _member_name(self, user_id) -> str:
+        for guild in self.bot.guilds:
+            member = guild.get_member(int(user_id))
+            if member is not None:
+                return member.display_name
+        return "Unknown member"
+
+    def describe(self, message_id, record: dict) -> dict:
+        """A poll as the dashboard shows it. Vote counts are always shown to
+        moderators (like Discord's Peek); who voted for what only when the
+        poll's votes are public."""
+        counts = self._tally(record)
+        voter_map = self._voters_by_option(record) if record["show_voters"] else {}
+        channel = self.bot.get_channel(record.get("channel_id") or 0)
+        return {
+            "message_id": str(message_id),
+            "channel_id": str(record.get("channel_id") or ""),
+            "channel_name": getattr(channel, "name", None),
+            "question": record["question"],
+            "description": record["description"],
+            "phase": record["phase"],
+            "created_by": str(record.get("created_by") or ""),
+            "created_by_name": self._member_name(record["created_by"]) if record.get("created_by") else None,
+            "closes_at": record["closes_at"],
+            "duration": record["duration"],
+            "voter_count": len(record["votes"]),
+            "results_public": self._results_visible(record),
+            "settings": {key: record[key] for key in ("members_can_add", "max_adds", "collect_first", "max_votes",
+                                                     "live_results", "show_authors", "show_voters",
+                                                     "allow_vote_change")},
+            "options": [
+                {
+                    "id": o["id"], "text": o["text"], "votes": counts[o["id"]],
+                    "author_name": o.get("author_name"),
+                    "voters": [self._member_name(uid) for uid in voter_map.get(o["id"], [])],
+                }
+                for o in record["options"]
+            ],
+        }
+
+    def dashboard_list(self) -> list:
+        polls = []
+        for key, raw in self.store.items():
+            try:
+                polls.append(self.describe(int(key), _normalize_record(dict(raw))))
+            except (KeyError, ValueError, TypeError):
+                log.warning("Skipping unreadable poll record %s", key)
+        return sorted(polls, key=lambda p: int(p["message_id"]), reverse=True)
+
+    def dashboard_get(self, message_id: int) -> dict:
+        record = self._get(message_id)
+        if record is None:
+            raise PollError("This poll doesn't exist (any more).")
+        return self.describe(message_id, record)
+
+    def _poll_message(self, message_id: int, record: dict):
+        channel = self.bot.get_channel(record.get("channel_id") or 0)
+        if channel is None:
+            raise PollError("The bot can't see the channel this poll is in any more.")
+        return channel.get_partial_message(message_id)
+
+    async def dashboard_create(self, channel_id: int, question: str, description, options: list, settings: dict,
+                               author_id: int, author_name: str) -> dict:
+        channel = self.bot.get_channel(int(channel_id)) if str(channel_id or "").isdigit() else None
+        if not isinstance(channel, discord.TextChannel):
+            raise PollError("Pick a text channel the bot can see.")
+        perms = channel.permissions_for(channel.guild.me)
+        if not (perms.view_channel and perms.send_messages):
+            raise PollError(f"The bot can't post in #{channel.name}: give it View Channel and Send Messages there.")
+        record = build_record(question, description, options, settings, author_id, author_name, channel.id)
+        try:
+            message = await channel.send(view=self._render(record), allowed_mentions=NO_PINGS)
+        except discord.HTTPException as exc:
+            raise PollError(f"Discord refused the poll: {exc.text or exc.status}") from None
+        self._save(message.id, record)
+        return self.describe(message.id, record)
+
+    async def dashboard_action(self, message_id: int, action: str, payload: dict, by_id: int, by_name: str) -> dict:
+        async with self._lock(message_id):
+            record = self._get(message_id)
+            if record is None:
+                raise PollError("This poll doesn't exist (any more).")
+            message = self._poll_message(message_id, record)
+            if action in self.PHASE_ACTIONS:
+                error = self._phase_change(record, action)
+            elif action == "add_option":
+                error = self._insert_option(record, _clean(str(payload.get("text") or "")), by_id, by_name,
+                                            as_manager=True)
+            elif action == "remove_options":
+                ids = {int(i) for i in payload.get("ids") or [] if str(i).isdigit()}
+                error = None if self._drop_options(record, ids) else "Choose options to remove."
+            elif action == "set_deadline":
+                text = _clean_message(payload.get("message"))
+                self._set_deadline(record, payload.get("closes_at"))
+                self._save(message_id, record)
+                await self._refresh(message)
+                if payload.get("announce", True):
+                    await self._announce_deadline(message, record, text)
+                return self.describe(message_id, record)
+            elif action == "toggle":
+                key = payload.get("key")
+                error = self._set_toggle(record, key, bool(payload.get("value"))) if key in TOGGLES else "Unknown setting."
+            else:
+                error = "Unknown action."
+            if error:
+                raise PollError(error.replace("**", ""))
+            if action == "close":
+                await self._close(message, record, post_result=bool(payload.get("post_result", True)))
+            else:
+                self._save(message_id, record)
+                await self._refresh(message)
+            return self.describe(message_id, record)
+
+    async def dashboard_delete(self, message_id: int):
+        record = self._get(message_id)
+        if record is None:
+            raise PollError("This poll doesn't exist (any more).")
+        try:
+            await self._poll_message(message_id, record).delete()
+        except (PollError, discord.NotFound):
+            pass
+        except discord.HTTPException as exc:
+            raise PollError(f"Discord refused to delete the message: {exc.text or exc.status}") from None
+        self.store.delete(message_id)
+        self._locks.pop(message_id, None)
 
     # --- cleanup ------------------------------------------------------------
 

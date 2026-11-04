@@ -188,12 +188,12 @@ def _parse_source_embed(embed: discord.Embed) -> dict:
 class RaidLogsCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.mod_role_id = int(os.environ["MOD_ROLE_ID"])
+        self.mod_role_id = config.MOD_ROLE_ID
         self.organizer_role_id = config.ORGANIZER_ROLE_ID
 
-        source_channel_id = os.environ.get("RAID_LOGS_CHANNEL_ID")
+        source_channel_id = (config.RAID_LOGS_CHANNEL_ID or None)
         self.source_channel_id = int(source_channel_id) if source_channel_id else None
-        repost_channel_id = os.environ.get("RAID_LOGS_REPOST_CHANNEL_ID")
+        repost_channel_id = (config.RAID_LOGS_REPOST_CHANNEL_ID or None)
         self.repost_channel_id = int(repost_channel_id) if repost_channel_id else None
 
     async def cog_load(self):

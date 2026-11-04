@@ -22,6 +22,79 @@ has the same suspicious shape and is flagged unverified for exactly this
 reason.
 """
 
+import os as _os
+
+
+def _env_int(name: str) -> int:
+    value = (_os.environ.get(name) or "").strip()
+    return int(value) if value.isdigit() else 0
+
+
+# --- Guild identity (webapi/branding.py) ---
+# The guild's name as the dashboard shows it (header, login page). Empty:
+# the Discord server's name. The logo is uploaded in the dashboard and kept
+# next to the database, not here.
+GUILD_DISPLAY_NAME = ""
+
+
+# --- Discord server: channels, roles and realm ---
+# Set these in the web dashboard (Settings, or the setup guide). The values
+# below are only the fallback: whatever .env has for the same name (how
+# they were configured before the dashboard existed), else 0 / empty =
+# "not set". A feature whose channel isn't set yet just stays inactive
+# instead of stopping the bot from starting.
+
+# Role allowed to use moderator commands, buttons and the web dashboard
+# (anyone with the Manage Roles permission counts as a moderator too).
+MOD_ROLE_ID = _env_int("MOD_ROLE_ID")
+
+# Role given to an approved applicant (your "Fresh" role).
+FRESH_ROLE_ID = _env_int("FRESH_ROLE_ID")
+
+# Channel where applications are posted for review (Approve/Deny buttons).
+REVIEW_CHANNEL_ID = _env_int("REVIEW_CHANNEL_ID")
+
+# Channel where new members apply. The bot posts and pins a short "how to
+# apply" explainer with the Start button here. Optional.
+GEAR_CHECK_CHANNEL_ID = _env_int("GEAR_CHECK_CHANNEL_ID")
+
+# Moderator-only channel where announcement and tier-recap drafts are
+# posted for editing before they're published. Needed for /announce.
+ANNOUNCEMENT_SANDBOX_CHANNEL_ID = _env_int("ANNOUNCEMENT_SANDBOX_CHANNEL_ID")
+
+# Channel for the pinned attendance messages (log list, roster, overview).
+ATTENDANCE_CHANNEL_ID = _env_int("ATTENDANCE_CHANNEL_ID")
+
+# General moderator chat. Optional: when set, attendance overview
+# refreshes are mirrored here too, since the attendance channel is easy to
+# miss.
+MODERATOR_CHANNEL_ID = _env_int("MODERATOR_CHANNEL_ID")
+
+# FORUM channel where /raidsummary posts each raid's recap as a new thread.
+# Create the tier and clear-status tags in the forum's settings first.
+RAID_SUMMARY_FORUM_CHANNEL_ID = _env_int("RAID_SUMMARY_FORUM_CHANNEL_ID")
+
+# Channel where your WCL report webhook (e.g. "Crusader's Logs") posts new
+# reports. Optional: enables /raidsummary's report picker and the raid log
+# automation. Usually hidden from members.
+RAID_LOGS_CHANNEL_ID = _env_int("RAID_LOGS_CHANNEL_ID")
+
+# Channel the bot posts its cleaned-up, taggable copy of each new report
+# to. Optional: leave unset to turn the raid log tagging automation off.
+RAID_LOGS_REPOST_CHANNEL_ID = _env_int("RAID_LOGS_REPOST_CHANNEL_ID")
+
+# Your realm as WarcraftLogs writes it in character URLs, e.g. "spineshatter"
+# for fresh.warcraftlogs.com/character/eu/spineshatter/Name.
+SERVER_SLUG = _os.environ.get("SERVER_SLUG", "")
+
+# Region code: us, eu, kr, tw or cn.
+SERVER_REGION = _os.environ.get("SERVER_REGION", "us")
+
+# Your guild's exact name on WarcraftLogs. Optional: enables the guild-rank
+# section of raid summaries.
+GUILD_NAME = _os.environ.get("GUILD_NAME", "")
+
+
 # --- Logging ---
 # Controls how chatty the bot's OWN console logging is (every logger named
 # "wow-apply-bot" or "wow-apply-bot.<cog>" - see each file's `log =
@@ -64,19 +137,54 @@ FEATURE_RAID_LOGS_ENABLED = True
 FEATURE_TIER_RETROSPECTIVE_ENABLED = True
 FEATURE_POLLS_ENABLED = True
 # cogs/audit_log.py: records who ran which command / clicked which button
-# to AUDIT_LOG_PATH below, plus the mod-only /auditlog command to view it.
+# in Discord, for the dashboard's Audit log page. (Dashboard actions are always recorded while the dashboard runs.)
 FEATURE_AUDIT_LOG_ENABLED = True
+# cogs/notifications.py: posts alerts (bot restarts and updates, unexpected
+# stops, errors, dashboard changes) to a moderator channel - see the
+# "Notifications" settings below.
+FEATURE_NOTIFICATIONS_ENABLED = True
+# cogs/roster.py: the guild roster - in-game characters linked to Discord
+# members (/character), including "verify with Battle.net".
+FEATURE_ROSTER_ENABLED = True
+# cogs/leveling.py: leveling leaderboard and level milestone announcements.
+# Needs the roster.
+FEATURE_LEVELING_ENABLED = True
 
-# --- Audit log (cogs/audit_log.py) ---
-# Plain-text file, one line per user action (relative paths are relative to
-# wherever the bot is started from, same as applications.json etc.). It
-# rotates once it reaches AUDIT_LOG_MAX_BYTES, keeping AUDIT_LOG_BACKUP_COUNT
-# older files (audit.log.1, audit.log.2, ...) - defaults keep ~5 x 5 MB,
-# which is many months of history for a guild-sized bot. /auditlog reads
-# across the backups too when asked for more lines than the current file has.
+# cogs/web_dashboard.py: the browser-based management dashboard (see the
+# README's "Web dashboard" section). Off by default - turn it on in
+# config/deployment_local.py on the machine that should serve it, along
+# with the WEB_* / DISCORD_CLIENT_SECRET values in .env. Can't be switched
+# off from the dashboard itself (that would lock everyone out of it).
+#
+# Can also be switched on with WEB_DASHBOARD_ENABLED=true in the
+# environment (that's how the Docker setup in deploy/ does it).
+FEATURE_WEB_DASHBOARD_ENABLED = _os.environ.get("WEB_DASHBOARD_ENABLED", "").strip().lower() in ("1", "true", "yes")
+
+# --- Audit log (audit.py, cogs/audit_log.py) ---
+# Every action is stored in the database (crusader.db) for the dashboard's
+# Audit log page, and also written as one line to a
+# plain-text file for reading on the server. The file path is relative to
+# wherever the bot is started from, same as applications.json etc.
 AUDIT_LOG_PATH = "audit.log"
+
+# How many days of audit history the database keeps. Older entries are
+# deleted automatically. 0 keeps everything forever.
+AUDIT_LOG_RETENTION_DAYS = 365
+
+# The plain-text file rotates once it reaches this many bytes, keeping
+# AUDIT_LOG_BACKUP_COUNT older files (audit.log.1, audit.log.2, ...).
 AUDIT_LOG_MAX_BYTES = 5 * 1024 * 1024
 AUDIT_LOG_BACKUP_COUNT = 5
+
+# --- System log (system_log.py) ---
+# Which console output is also kept in the dashboard's System log, so it
+# can be read without SSH access: "ERROR" (errors only), "WARNING" (default:
+# warnings and errors), "INFO" (everything the console shows, noisy) or
+# "OFF". Bot starts, stops, updates and unexpected stops are always kept.
+SYSTEM_LOG_LEVEL = "WARNING"
+
+# How many days of system log the database keeps. 0 keeps everything.
+SYSTEM_LOG_RETENTION_DAYS = 90
 
 # Fallback guild emoji names, used only if a class/role isn't in
 # CLASS_ICON_URLS / ROLE_ICON_URLS below (e.g. you already manually
@@ -99,6 +207,96 @@ ROLE_EMOJI_NAMES = {
     "Healer": "Roleicon_healer",
     "DPS": "Roleicon_dps",
 }
+
+# --- Game version and Blizzard API (wow_api.py) ---
+# Which game the roster and Blizzard lookups are for. Characters are stored
+# per game, so switching keeps the old characters apart.
+GAME_VERSION = "forever"
+
+# Blizzard API namespaces for that game (the region is added automatically,
+# e.g. "static-forever" becomes "static-forever-eu"). Static = game data
+# (classes, items), dynamic = realms, profile = characters and accounts.
+BLIZZARD_STATIC_NAMESPACE = "static-forever"
+BLIZZARD_DYNAMIC_NAMESPACE = "dynamic-forever"
+BLIZZARD_PROFILE_NAMESPACE = "profile-forever"
+
+# Language of names returned by Blizzard's API.
+BLIZZARD_LOCALE = "en_GB"
+
+# How to look a character up by name, tried in order until one answers.
+# {name}, {surname} and {realm} (the realm's slug) are filled in. Public
+# character lookups for WoW Forever weren't open yet at launch; the System
+# log and the API explorer (Maintenance) show what Blizzard answers.
+CHARACTER_LOOKUP_PATHS = ["/profile/wow/character/{name}-{surname}", "/profile/wow/character/{realm}/{name}"]
+
+# --- Guild roster (roster.py, cogs/roster.py) ---
+# Members may add and edit their own characters with /character. Off: only
+# moderators (and "verify with Battle.net") add characters.
+GUILD_ROSTER_SELF_SERVICE = True
+
+# Keep a member's Battle.net login (encrypted, read-only access to their
+# character list, valid for about a day) after they verify, so their
+# characters' levels keep updating until it expires. Off: characters are
+# only updated when they verify again.
+GUILD_ROSTER_KEEP_BATTLENET_LOGIN = True
+
+# --- Leveling (cogs/leveling.py) ---
+# Channel where level milestones are announced. Empty: no announcements
+# (the leaderboard still works).
+LEVELING_CHANNEL_ID = 0
+
+# Levels that get an announcement when a character reaches them.
+LEVELING_MILESTONES = [10, 20, 30, 40, 50, 60]
+
+# Also announce milestones for alts (off: mains only).
+LEVELING_ANNOUNCE_ALTS = False
+
+# How often (minutes) the bot checks Blizzard for new levels.
+LEVELING_REFRESH_MINUTES = 10
+
+# --- Notifications (cogs/notifications.py) ---
+# Channel the bot posts its notifications in. Leave it empty to use the
+# moderator chat channel (Discord server settings).
+NOTIFICATIONS_CHANNEL_ID = 0
+
+# Say when the bot is back online after a restart or update (which version,
+# why it stopped, how long it was down), when it stopped unexpectedly, and
+# when its Discord connection was down for a while.
+NOTIFY_BOT_STATUS = True
+
+# Report errors from the bot's console: how many and where they came from
+# (the details stay in the dashboard's System log, which only admins see).
+NOTIFY_ERRORS = True
+
+# At most one error report per this many minutes; errors in between are
+# counted into the next report.
+NOTIFY_ERRORS_EVERY_MINUTES = 15
+
+# Report changes made on the dashboard: settings, API keys, setup, restarts
+# and bot message edits. Several changes in a row become one message.
+NOTIFY_DASHBOARD_CHANGES = True
+
+# Report announcements published, edited or deleted from the dashboard.
+NOTIFY_ANNOUNCEMENTS = True
+
+# --- Emoji library (emoji_library.py) ---
+# Where item and spell icons for the bot's emoji are looked up: Blizzard's
+# Game Data API namespaces, tried in this order (the region is added
+# automatically). "static-classic" = progression Classic (TBC Anniversary),
+# "static" = the modern game, "static-classic1x" = Classic Era. Put the
+# namespace of the game version the guild plays first.
+EMOJI_BLIZZARD_NAMESPACES = ["static-classic", "static"]
+
+# Ask Wowhead's tooltip service when Blizzard can't help: for items/spells
+# Blizzard has no record of (e.g. spells removed from the modern game), and
+# for the icon's name when Blizzard only gives a file number (used to name
+# emoji and to spot icons shared with Wowhead-only spells). Blizzard is
+# always tried first and its images are used whenever it has them.
+EMOJI_WOWHEAD_FALLBACK = True
+
+# The game version Wowhead lookups use (Wowhead's "dataEnv"): 5 = TBC
+# Classic, 4 = Classic Era, 1 = the modern game. Only used by the fallback.
+EMOJI_WOWHEAD_DATA_ENV = 5
 
 # --- Icon sourcing ---
 # All class/role/spec icons use the same mechanism: bot-owned "application
@@ -254,13 +452,9 @@ ARCHIVE_CHANNEL_ID = 1337906439066488914
 # approve/deny/reset either, by design.
 APPROVER_ROLE_ID = 1482653670855413822
 
-# Gates the handful of diagnostic/one-time-migration commands accumulated
-# during development: /apply-test-blizzard, /raidsummary-test-blizzard,
-# /raidsummary-test-spell, /raidsummary-refresh-wowhead, /raidsummary-bulk.
-# These dump raw API responses or do a one-shot data migration/import -
-# useful when standing up a new deployment or chasing a Blizzard/Wowhead
-# lookup bug, but noise in the command list day-to-day. Off by default;
-# flip to True when you actually need one of them.
+# Gates one-time tools that are noise in the command list day-to-day:
+# /raidsummary-bulk (a one-shot import of old reports). Off by default.
+# Raw Blizzard answers are in the dashboard's Blizzard API explorer.
 DEBUG_COMMANDS_ENABLED = False
 
 # Armory block (equipped gear + talent build) shown on the /apply review
@@ -275,16 +469,15 @@ DEBUG_COMMANDS_ENABLED = False
 # than good until it's resolved on their end. Item/spell lookups
 # (get_item/get_spell_icon, used throughout raid summaries) are NOT
 # affected by this flag or this bug - those hit a different, unaffected
-# static-classic-{region} endpoint family (confirmed: a real TBC item
-# resolves correctly via /raidsummary-test-blizzard) - only the
+# static-classic-{region} endpoint family (a real TBC item resolves
+# correctly) - only the
 # profile-classic-{region} CHARACTER endpoints (equipment/specializations)
 # have the staleness problem. Flip back to True once Blizzard's forum
 # threads on this (see get_character_specializations()'s docstring in
 # blizzard_client.py) report it fixed, or to spot-check whether a specific
 # character's data happens to be fresh - _compute_armory_block still
 # returns None immediately while this is False, with no API calls made at
-# all. /apply-test-blizzard (moderator diagnostic) ignores this flag on
-# purpose, so it can still be used to check whether the bug's been fixed
+# all. The Blizzard API explorer (Maintenance) shows whether it's fixed
 # without re-enabling the block for every applicant first.
 ARMORY_BLOCK_ENABLED = False
 
@@ -440,7 +633,7 @@ TOP_DISPELLERS_ICON_SPELL_ID = 17201
 # Hardcoded emoji overrides for a handful of the icons above - format
 # "<:emoji_name:emoji_id>" (Discord's own inline-emoji syntax), for an
 # application emoji the moderator has ALREADY manually created (via
-# /add-emoji or Discord's own app-emoji settings), bypassing
+# the Emoji page or Discord's own app-emoji settings), bypassing
 # wowhead.get_spell()/icons.ensure_spell_emoji() entirely for these keys.
 # The first five exist because Wowhead's spell-icon lookup started 403ing
 # under load (see wowhead.py's module docstring) and these are the ones
@@ -450,7 +643,7 @@ TOP_DISPELLERS_ICON_SPELL_ID = 17201
 # three Judgements are overridden for a different reason: Blizzard's
 # spell-media endpoint (via bot.blizzard, tried before falling back to
 # Wowhead) returns a wrong/generic icon for them - see blizzard_client.py's
-# get_spell_icon()/diagnose_spell() docstrings. Keyed by the exact same
+# get_spell_icon() docstring. Keyed by the exact same
 # TRACKED_DEBUFFS/TRACKED_BUFFS name for the tracked-ability entries;
 # TOP_INTERRUPTERS_ICON_EMOJI/TOP_DISPELLERS_ICON_EMOJI are separate plain
 # constants since those two aren't part of this name-keyed dict. See
