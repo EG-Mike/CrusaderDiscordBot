@@ -1001,6 +1001,46 @@ Everything saves as you go. API keys are stored encrypted in the database
 | Back up database + encryption key | `cp data/crusader.db data/secret.key /somewhere/safe/` (or `db_tools.py backup` for a copy while running) |
 | Go back to an earlier build | set `image:` to `...:sha-<commit>`, then `docker compose up -d` |
 
+### Moving the live bot to Docker
+
+The live bot can move from AMP to Docker exactly like the test bot, in its
+own folder (`/opt/crusader-live`) next to the test bot's. It uses the image
+built from `main` (tag `latest`) and the dashboard on port 8082, so both
+bots and both dashboards run side by side.
+
+1. **Stop the bot in AMP first**, and turn off its auto-start/update there,
+   so AMP doesn't start the new code itself, and two copies never run on
+   the same token.
+2. **Merge into `main`** and wait for the **Docker image** run on `main`
+   (GitHub, Actions) to turn green.
+3. **Discord Developer Portal, the live application**: OAuth2, copy the
+   **Client Secret**, and under **Redirects** add
+   `http://localhost:8082/auth/callback`.
+4. **Folder on the VPS**: `mkdir -p /opt/crusader-live/data`, then save
+   `deploy/live/docker-compose.yml` and `deploy/live/update.sh` there as
+   `docker-compose.yml` and `update.sh` (`chmod +x update.sh`).
+5. **Copy the live data** from the AMP folder (the one with `bot.py` and
+   `.env`) into `data/`: every `*.json` file, `audit.log*`, the `images/`
+   folder (raid summary banners), and `crusader.db*`/`secret.key` if they
+   exist. Copy, don't move: AMP's folder stays as the way back. Then
+   `chown -R 1000:1000 data`. On the first start the JSON files are
+   imported into the database and left in place as a backup.
+6. **`.env`**: copy AMP's `.env` to `/opt/crusader-live/.env` and add
+   `DISCORD_CLIENT_SECRET`, `WEB_BASE_URL=http://localhost:8082` and
+   `WEB_ADMIN_USER_IDS`. The channel/role IDs and API keys already in it
+   keep working (the dashboard shows them as "From .env"). If AMP had a
+   `config/deployment_local.py`, copy it next to `docker-compose.yml` and
+   uncomment its line in that file.
+7. **Start**: `./update.sh`, then `docker compose logs -f` until the bot
+   logs in. Add the cron line with `/opt/crusader-live/` paths.
+8. **Dashboard**: tunnel port 8082 (`ssh -L 8082:127.0.0.1:8082 ...`) and
+   open http://localhost:8082. Go through the setup guide to check
+   everything and finish it.
+
+**Going back**: `docker compose down` in `/opt/crusader-live`, then start
+the bot in AMP again (its own files were never changed; anything done on
+the Docker bot in between is not in them).
+
 ### Working on the frontend
 
 `npm run dev` in `web/` serves the UI with hot reload on

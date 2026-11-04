@@ -28,8 +28,13 @@ import db
 from http_utils import basic_auth_header
 
 DISCORD_API = "https://discord.com/api/v10"
-SESSION_COOKIE = "crusader_session"
-STATE_COOKIE = "crusader_oauth_state"
+# Browsers share cookies between ports on the same host, so the test and
+# live dashboards (localhost:8081 and :8082 over a tunnel) would log each
+# other out. The environment's name (WEB_ENVIRONMENT, e.g. "test") keeps
+# their cookies apart; live has none and keeps the plain names.
+_COOKIE_SUFFIX = "".join(c for c in os.environ.get("WEB_ENVIRONMENT", "").lower() if c.isalnum())[:20]
+SESSION_COOKIE = "crusader_session" + (f"_{_COOKIE_SUFFIX}" if _COOKIE_SUFFIX else "")
+STATE_COOKIE = "crusader_oauth_state" + (f"_{_COOKIE_SUFFIX}" if _COOKIE_SUFFIX else "")
 SESSION_DAYS = 7
 PERMISSION_CACHE_SECONDS = 60
 

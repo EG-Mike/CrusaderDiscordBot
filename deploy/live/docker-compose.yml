@@ -1,0 +1,45 @@
+# Live bot + dashboard. Lives in its own folder on the VPS (e.g.
+# /opt/crusader-live), next to the test bot's folder, with:
+#   .env        the live bot's startup settings (start from the .env the
+#               bot used under AMP, plus the dashboard lines - see README,
+#               "Moving the live bot to Docker")
+#   data/       everything the bot saves: database, JSON files, audit.log,
+#               banner images, encrypted API keys (+ secret.key - back up both)
+#   update.sh   pulls new builds of main (run by cron, see README)
+#
+# Differs from deploy/test only in its names, the image tag (latest = main)
+# and the dashboard's port on the VPS (8082; the test bot has 8081).
+
+services:
+  bot:
+    image: ghcr.io/eg-mike/crusaderdiscordbot:latest
+    container_name: crusader-live
+    restart: unless-stopped
+    # Time to shut down cleanly on a stop/update before Docker kills the
+    # bot (it needs a few seconds; Docker's default is 10).
+    stop_grace_period: 30s
+    env_file: .env
+    environment:
+      # Inside the container the dashboard listens on all interfaces; the
+      # port mapping below still only exposes it on the VPS itself.
+      WEB_HOST: 0.0.0.0
+      WEB_PORT: "8081"
+      WEB_DASHBOARD_ENABLED: "true"
+      # Docker brings the bot back after the dashboard's Restart button.
+      WEB_RESTART_ENABLED: "true"
+      # One database file; the JSON files from AMP are imported into it on
+      # the first start and left in data/ as a backup.
+      STORAGE_BACKEND: sqlite
+    volumes:
+      - ./data:/data
+      # Only if the AMP install had a config/deployment_local.py:
+      # - ./deployment_local.py:/app/config/deployment_local.py:ro
+    ports:
+      # 127.0.0.1 = NOT reachable from the internet. Open it from your own
+      # computer through an SSH tunnel to port 8082 (see README).
+      - "127.0.0.1:8082:8081"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
