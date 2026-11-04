@@ -35,6 +35,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+import bot_messages
 import config
 import icons
 from wcl_client import extract_report_code as _extract_report_code
@@ -60,7 +61,6 @@ EXPLAINER_MESSAGE_KEY = "attendance_explainer_message"
 
 LOG_LIST_MARKER = "attendance-log-list"
 ROSTER_MARKER = "attendance-roster"
-EXPLAINER_MARKER = "attendance-explainer"
 
 REFRESH_COOLDOWN_SECONDS = 300  # 5 minutes - button only, /checkattendance run is never limited
 
@@ -419,6 +419,7 @@ class AttendanceCog(commands.Cog):
         self.bot.add_view(self.log_list_view)
         self.bot.add_view(self.roster_view)
         self.bot.add_view(self.overview_view)
+        bot_messages.register_updater("attendance_explainer", self._sync_explainer_message)
 
     # --- permission check (self-contained, same as other cogs) -----------
 
@@ -743,70 +744,14 @@ class AttendanceCog(commands.Cog):
         except Exception:
             log.exception("Failed to post/pin the attendance roster message")
 
-    # --- explainer -------------------------------------------------------
+    # --- explainer (text editable on the dashboard) ------------------------
 
-    async def _ensure_explainer_message(self):
-        channel = self.bot.get_channel(self.attendance_channel_id)
-        if channel is None:
-            log.warning("ATTENDANCE_CHANNEL_ID set but channel not found/visible")
-            return
-
-        try:
-            pins = await channel.pins()
-        except discord.Forbidden:
-            log.warning("Missing permission to read pins in attendance channel")
-            return
-
-        if any(m.embeds and m.embeds[0].footer.text == EXPLAINER_MARKER for m in pins):
-            return
-
-        embed = discord.Embed(
-            title="How attendance tracking works",
-            description=(
-                "**The short version:** \n"
-                "After each main-raid manually add the log to the log list (no efficient way to do this automatically, too many variables)\n"
-                "This will then be used to calculate attendance. \n"
-                f"to be Regular-eligible, someone needs to have "
-                f"attended (killed at least `{config.ATTENDANCE_MIN_KILLS_PER_LOG}` boss) in "
-                f"at least `{config.ATTENDANCE_MIN_ATTENDED}` of the last "
-                f"`{config.ATTENDANCE_WINDOW}` tagged main raids.\n\n"
-                "When people join a raid with their alts (and we want that to count towards attendance, you should add their character as an alt by using '/checkattendance link')"
-
-                "**📋 Main Raid Log List** - the list of raids that actually count. "
-                "Only logs added here are used - nothing is auto-detected from "
-                "WarcraftLogs, so a random alt run or an off-night log never sneaks in. "
-                "Use the ➕ Add Log / ➖ Remove Log buttons (Remove asks for the #ID shown "
-                "next to each entry), or `/checkattendance addlog` / `removelog id:`.\n\n"
-
-                "**🧾 Raider Roster** - shows every Regular member, plus Fresh members who've "
-                f"actually shown up in at least one of the last `{config.ROSTER_FRESH_ACTIVITY_WINDOW}` "
-                "logs (keeps this readable even with a large Fresh population). Main character "
-                "and any alts shown with class icons. If someone's Discord nickname doesn't "
-                "match their character name, fix it with `/checkattendance setmain`. Alts are "
-                "added with `/checkattendance link`\n\n. The 🚫 Excused section at the bottom lists "
-                "anyone sitting out attendance tracking (vacation, break, etc.) - **+ Add player** "
-                "asks for a name and reason; **- Remove player** "
-                "asks for the #ID next to their entry. `/checkattendance exclude name: reason:` "
-                "offers real live name suggestions as you type, if you'd rather use the command; "
-                "removal by command is `/checkattendance removeexcluded id:`.\n\n"
-
-                "**📊 Attendance Overview** - the actual promotion/demotion discussion "
-                "aid. Click Refresh (or run `/checkattendance run`, which has no cooldown(DON'T ABUSE)) "
-                "to recompute it against the current log list.\n\n"
-
-                "Every button here has a matching slash command too, if you'd rather type "
-                "than click - `/checkattendance` to see them all."
-            ),
-            color=discord.Color.blurple(),
+    async def _sync_explainer_message(self) -> str:
+        channel = self.bot.get_channel(self.attendance_channel_id) if self.attendance_channel_id else None
+        return await bot_messages.sync_pinned(
+            channel, "attendance_explainer",
+            on_posted=lambda message: self.bot.store.set(EXPLAINER_MESSAGE_KEY, message_id=message.id),
         )
-        embed.set_footer(text=EXPLAINER_MARKER)
-
-        try:
-            message = await channel.send(embed=embed)
-            await message.pin()
-            self.bot.store.set(EXPLAINER_MESSAGE_KEY, message_id=message.id)
-        except Exception:
-            log.exception("Failed to post/pin the attendance explainer")
 
     # --- startup: ensure all four functional messages + explainer -------
 
@@ -840,7 +785,10 @@ class AttendanceCog(commands.Cog):
                   "overview each make many sequential WCL API calls) ...")
 
         log.info("Attendance startup: checking explainer message...")
-        await self._ensure_explainer_message()
+        try:
+            log.info("Attendance startup: explainer - %s", await self._sync_explainer_message())
+        except bot_messages.BotMessageError as exc:
+            log.warning("Attendance startup: explainer not posted: %s", exc)
 
         log.info("Attendance startup: checking log-list message...")
         await self._sync_log_list_message(None)

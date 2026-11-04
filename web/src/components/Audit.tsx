@@ -10,6 +10,8 @@ import {
   KeyRound,
   ListChecks,
   LogIn,
+  Megaphone,
+  MessageSquareText,
   MousePointerClick,
   MonitorCog,
   Rocket,
@@ -37,6 +39,8 @@ export const KINDS: Record<AuditKind, { label: string; tone: Tone; icon: LucideI
   integration: { label: "API key", tone: "crimson", icon: KeyRound },
   setup: { label: "Setup", tone: "ok", icon: Rocket },
   bot: { label: "Bot", tone: "crimson", icon: Bot },
+  announcement: { label: "Announcement", tone: "gold", icon: Megaphone },
+  bot_message: { label: "Bot message", tone: "info", icon: MessageSquareText },
   audit: { label: "Audit log", tone: "neutral", icon: ScrollText },
   other: { label: "Other", tone: "neutral", icon: Sparkles },
 };

@@ -58,6 +58,8 @@ KINDS = {
     "integration": "API key",
     "setup": "Setup",
     "bot": "Bot",
+    "announcement": "Announcement",
+    "bot_message": "Bot message",
     "audit": "Audit log",
     "other": "Other",
 }

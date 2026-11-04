@@ -39,6 +39,10 @@ def info():
     print(f"  audit log entries:           {audit_count}")
     system_count = db.query("SELECT COUNT(*) AS n FROM system_log")[0]["n"]
     print(f"  system log entries:          {system_count}")
+    for label, table in (("announcements", "announcements"), ("announcement templates", "announcement_templates"),
+                         ("edited bot messages", "bot_messages")):
+        count = db.query(f"SELECT COUNT(*) AS n FROM {table}")[0]["n"]
+        print(f"  {label + ':':<29}{count}")
 
 
 def export(folder="json_export"):

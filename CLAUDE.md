@@ -98,11 +98,18 @@ version or raid tier is a configuration change.
   update, unexpected stop, Discord outages) and console warnings/errors
   captured from logging, secrets redacted; `app_version.py`: which build
   is running. Console output is admin-only in the dashboard.
+- `announcements.py`: announcements (drafts, publishing, edits, versions,
+  templates), shared by `cogs/announcements.py` and the dashboard.
+- `bot_messages.py`: the bot's standard texts (pinned explainers, DMs)
+  with their defaults and `{placeholders}`; cogs call `bot_messages.embed()`
+  / `.text()` instead of hardcoding text.
 - `secret_store.py`: external API keys, Fernet-encrypted in the database
   (key file `secret.key` next to it). Write-only towards the browser.
 - `webapi/`: aiohttp dashboard API inside the bot process: Discord OAuth
   login, DB-backed sessions, role-based access (moderator/approver/admin),
   CSRF header check, settings, integrations, setup wizard, restart.
+  `server.py` wires the app; feature APIs live in their own module
+  (`announcements_api.py`, `bot_messages_api.py`) using `common.py`.
 - `web/`: dashboard frontend (React + TypeScript + Vite + Tailwind). The
   dark theme is inspired by (not copied from) oxm.gg, with a "crusader
   gold" accent.
@@ -125,6 +132,8 @@ set in the dashboard.
   automatically, with help text from the comment above each constant).
   Missing configuration must make the feature inactive with a clear
   message, never crash the bot.
+- **Texts the bot posts on its own** belong in `bot_messages.py` (editable
+  on the dashboard), not in cog code.
 - **Discord IDs** are snowflakes larger than JavaScript's safe integer
   range: always send them to the browser as strings (`webapi/settings.js_safe`).
 - **Errors**: log them with the standard `logging` module (`log.exception`
@@ -148,8 +157,10 @@ set in the dashboard.
   wizard, encrypted integrations, restart.
 - Phase 1 (done): Audit log page (structured storage in `audit.py`,
   filters, live feed, CSV export), and the Overview activity feed.
-- Phase 2: Announcement builder (live Discord-style preview, drafts,
-  publish/edit, templates). No scheduled posting.
+- Phase 2 (done): Announcement builder (`announcements.py`: live
+  Discord-style preview, autosaved drafts shared with `/announce`,
+  publish/edit in place, version history, templates). No scheduled
+  posting. Plus the Bot messages page (`bot_messages.py`).
 - Phase 3: Applications, Polls.
 - Phase 4: Raid summaries, Raid logs, Attendance, Tier recap, Records.
   These are the most game-version-dependent areas, so plan them together

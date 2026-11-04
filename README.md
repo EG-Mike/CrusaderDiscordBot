@@ -81,6 +81,36 @@ moderator-driven announcement system.
    containing just `---` splits the message into separate sections, each
    with a real divider between them.
 
+**On the dashboard (Communication, Announcements)** the same announcements
+can be written with a live Discord-style preview: a formatting toolbar,
+mentions picked by name, an accent colour, and an optional ping (@here,
+@everyone or a role; only that ping notifies anyone). Drafts save
+automatically and are shared with `/announce` (a draft started in Discord
+can be finished on the dashboard and the other way round). Publishing
+asks for a channel; published announcements can still be edited (Discord
+is updated in place, and edits never ping again), and every published
+version is kept in a history you can load back. **Templates** save a
+title, text, colour and ping for reuse, e.g. a weekly raid schedule. Two
+moderators editing the same draft get a clear warning instead of
+overwriting each other.
+
+The first start with this version imports existing announcements into the
+database once (the `announcements.json` store is left as a backup), so
+the Edit buttons on everything already posted keep working.
+
+### Bot messages
+
+The texts the bot posts on its own are editable on the dashboard
+(**Communication, Bot messages**): the pinned gear-check, review-channel
+and attendance explainers, and the DMs applicants get (note request,
+note timeout, approved, denied). Each has a live preview and its own
+placeholders, e.g. `{character}` for the applicant's character name or
+`{min_attended}` for the attendance setting, filled in when the message is
+sent. Edited texts keep a history and can be reset to the built-in
+default. For pinned explainers, **Save and update in Discord** edits the
+pinned message in place (or posts and pins it if it's missing); otherwise
+they're brought in line at the next start.
+
 ### Polls
 
 **`/poll create`** posts a self-updating poll. It works for a quick

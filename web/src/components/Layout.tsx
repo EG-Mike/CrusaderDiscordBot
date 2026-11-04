@@ -10,6 +10,7 @@ import {
   LogOut,
   Megaphone,
   Menu,
+  MessageSquareText,
   Rocket,
   ScrollText,
   Search,
@@ -41,7 +42,8 @@ export const NAV: { group: string; items: NavItem[] }[] = [
   {
     group: "Communication",
     items: [
-      { to: "/announcements", label: "Announcements", icon: Megaphone, soon: true },
+      { to: "/announcements", label: "Announcements", icon: Megaphone },
+      { to: "/bot-messages", label: "Bot messages", icon: MessageSquareText },
       { to: "/polls", label: "Polls", icon: Vote, soon: true },
     ],
   },

@@ -165,6 +165,8 @@ export type AuditKind =
   | "integration"
   | "setup"
   | "bot"
+  | "announcement"
+  | "bot_message"
   | "audit"
   | "other";
 
@@ -256,4 +258,93 @@ export interface SystemLogMeta {
     commit_url: string | null;
   };
   uptime_seconds: number;
+}
+
+// --- announcements ---------------------------------------------------------------
+
+export interface Announcement {
+  id: number;
+  status: "draft" | "published";
+  title: string | null;
+  body: string;
+  color: string | null;
+  ping: string | null; // "everyone" | "here" | "role:<id>"
+  channel_id: string | null;
+  channel_name: string | null;
+  message_id: string | null;
+  sandbox_message_id: string | null;
+  revision: number;
+  created_at: string;
+  created_by: string | null;
+  updated_at: string;
+  updated_by: string | null;
+  published_at: string | null;
+  published_by: string | null;
+}
+
+export interface AnnouncementVersion {
+  id: number;
+  event: "published" | "edited";
+  title: string | null;
+  body: string;
+  color: string | null;
+  saved_at: string;
+  saved_by: string | null;
+}
+
+export interface AnnouncementList {
+  announcements: Announcement[];
+  counts: { draft: number; published: number };
+  feature_enabled: boolean;
+}
+
+export interface AnnouncementTemplate {
+  id: number;
+  name: string;
+  title: string | null;
+  body: string;
+  color: string | null;
+  ping: string | null;
+  updated_at: string;
+  updated_by: string | null;
+}
+
+// --- bot messages ------------------------------------------------------------------
+
+export interface BotMessage {
+  key: string;
+  label: string;
+  group: string;
+  description: string;
+  kind: "embed" | "text";
+  where: string;
+  title: string | null;
+  body: string;
+  color: string | null;
+  customized: boolean;
+  updated_at: string | null;
+  updated_by: string | null;
+  default: { title: string | null; body: string; color: string | null };
+  default_color: string;
+  footer: string | null;
+  variables: { name: string; description: string; value: string; from_settings: boolean }[];
+  can_update_discord: boolean;
+  feature_enabled: boolean;
+  limit: number;
+}
+
+export interface BotMessageSaveResult {
+  message: BotMessage;
+  discord?: string;
+  discord_error?: string;
+  unknown_placeholders?: string[];
+}
+
+export interface BotMessageVersion {
+  id: number;
+  title: string | null;
+  body: string;
+  color: string | null;
+  saved_at: string;
+  saved_by: string | null;
 }

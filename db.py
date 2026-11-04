@@ -9,6 +9,8 @@ Used by:
     and their change history, encrypted API keys (secret_store.py).
   - audit.py: the audit trail (who did what with the bot, and when).
   - system_log.py: bot lifecycle events and captured console errors.
+  - announcements.py: announcements, their version history and templates.
+  - bot_messages.py: edited texts of the bot's standard messages.
 
 One process-wide connection guarded by a lock: the bot is a single asyncio
 process and every query here is tiny, so a connection pool would be pure
@@ -23,7 +25,7 @@ from threading import RLock
 _LOCK = RLock()
 _CONN = None
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _SCHEMA = [
     # Generic key -> JSON record store, one "store" per former JSON file
@@ -123,6 +125,84 @@ _SCHEMA = [
     "CREATE INDEX IF NOT EXISTS idx_system_log_created ON system_log(created_at)",
     "CREATE INDEX IF NOT EXISTS idx_system_log_level ON system_log(level, id)",
     "CREATE INDEX IF NOT EXISTS idx_system_log_fingerprint ON system_log(fingerprint, id)",
+    # Announcements (announcements.py). One row per announcement, draft or
+    # published; message IDs link it to Discord (the /announce sandbox
+    # draft and the published message).
+    """
+    CREATE TABLE IF NOT EXISTS announcements (
+        id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+        status             TEXT NOT NULL DEFAULT 'draft',
+        title              TEXT,
+        body               TEXT NOT NULL DEFAULT '',
+        color              TEXT,
+        ping               TEXT,
+        channel_id         TEXT,
+        message_id         TEXT,
+        sandbox_message_id TEXT,
+        revision           INTEGER NOT NULL DEFAULT 1,
+        created_at         TEXT NOT NULL,
+        created_by         TEXT,
+        updated_at         TEXT NOT NULL,
+        updated_by         TEXT,
+        published_at       TEXT,
+        published_by       TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_announcements_message ON announcements(message_id)",
+    "CREATE INDEX IF NOT EXISTS idx_announcements_sandbox ON announcements(sandbox_message_id)",
+    # What each announcement looked like when it was published and after
+    # every edit of the published message.
+    """
+    CREATE TABLE IF NOT EXISTS announcement_versions (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        announcement_id INTEGER NOT NULL REFERENCES announcements(id) ON DELETE CASCADE,
+        event           TEXT NOT NULL,
+        title           TEXT,
+        body            TEXT NOT NULL,
+        color           TEXT,
+        saved_at        TEXT NOT NULL,
+        saved_by        TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_announcement_versions ON announcement_versions(announcement_id, id)",
+    """
+    CREATE TABLE IF NOT EXISTS announcement_templates (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        name       TEXT NOT NULL,
+        title      TEXT,
+        body       TEXT NOT NULL DEFAULT '',
+        color      TEXT,
+        ping       TEXT,
+        created_at TEXT NOT NULL,
+        created_by TEXT,
+        updated_at TEXT NOT NULL,
+        updated_by TEXT
+    )
+    """,
+    # The bot's standard messages (bot_messages.py), as edited in the
+    # dashboard. A missing row = the built-in default text.
+    """
+    CREATE TABLE IF NOT EXISTS bot_messages (
+        key        TEXT PRIMARY KEY,
+        title      TEXT,
+        body       TEXT NOT NULL,
+        color      TEXT,
+        updated_at TEXT NOT NULL,
+        updated_by TEXT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS bot_message_history (
+        id       INTEGER PRIMARY KEY AUTOINCREMENT,
+        key      TEXT NOT NULL,
+        title    TEXT,
+        body     TEXT NOT NULL,
+        color    TEXT,
+        saved_at TEXT NOT NULL,
+        saved_by TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_bot_message_history ON bot_message_history(key, id)",
     # Web dashboard login sessions. Only a SHA-256 of the cookie token is
     # stored, so a leaked database file can't be replayed as a login.
     """

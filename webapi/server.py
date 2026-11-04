@@ -36,57 +36,19 @@ import config
 import db
 import secret_store
 import system_log
-from webapi import auth, integrations
+from webapi import announcements_api, auth, bot_messages_api, common, integrations
 from webapi import settings as settings_api
 
 log = logging.getLogger("wow-apply-bot.web")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIST = os.path.join(ROOT, "web", "dist")
-CSRF_HEADER = "X-Crusader-Request"
-
-BOT_KEY = web.AppKey("bot", object)
-HUB_KEY = web.AppKey("hub", object)
-STARTED_KEY = web.AppKey("started", float)
-
+CSRF_HEADER = common.CSRF_HEADER
+BOT_KEY, HUB_KEY, STARTED_KEY = common.BOT_KEY, common.HUB_KEY, common.STARTED_KEY
+Hub = common.Hub
+_json, _error, audit = common.json_response, common.error, common.audit
 
 VERSION = app_version.VERSION
-
-
-def _json(data, status=200):
-    return web.json_response(data, status=status, dumps=lambda d: json.dumps(d, default=str))
-
-
-def _error(message, status):
-    return _json({"error": message}, status=status)
-
-
-# --- live updates ----------------------------------------------------------------
-
-class Hub:
-    """Fan-out of events to every open dashboard tab. Each socket remembers
-    who opened it, so events can be limited to an access level and sockets
-    are closed once their session ends or their roles no longer allow
-    access (see _revalidate_sockets)."""
-
-    def __init__(self):
-        self.sockets = {}  # ws -> {"user_id", "token", "levels"}
-
-    def add(self, ws, user_id: int, token: str, levels: set):
-        self.sockets[ws] = {"user_id": user_id, "token": token, "levels": set(levels)}
-
-    def discard(self, ws):
-        self.sockets.pop(ws, None)
-
-    async def broadcast(self, event: dict, level: str = "moderator"):
-        payload = json.dumps(event, default=str)
-        for ws, info in list(self.sockets.items()):
-            if level not in info["levels"]:
-                continue
-            try:
-                await ws.send_str(payload)
-            except Exception:
-                self.discard(ws)
 
 
 async def _revalidate_sockets(app):
@@ -103,18 +65,6 @@ async def _revalidate_sockets(app):
             await ws.close(code=4403, message=b"Access ended")
         else:
             info["levels"] = set(levels)
-
-
-# --- audit -------------------------------------------------------------------------
-
-def audit(request, kind: str, action: str, summary: str, *, target=None, details=None):
-    """Records a dashboard action in the audit trail (audit.py). Always on
-    while the dashboard runs. Never pass secrets or private text."""
-    user = request["user"]
-    audit_store.record(
-        source="dashboard", kind=kind, action=action, summary=summary,
-        actor_id=user["user_id"], actor_name=user["username"], target=target, details=details,
-    )
 
 
 def _avatar_for(guild, actor_id):
@@ -802,6 +752,8 @@ def create_app(bot) -> web.Application:
     app.router.add_get("/api/audit/export", audit_export)
     app.router.add_get("/api/system-log", system_log_list)
     app.router.add_get("/api/system-log/meta", system_log_meta)
+    announcements_api.register(app)
+    bot_messages_api.register(app)
     app.router.add_get("/api/ws", websocket)
     app.router.add_route("*", "/api/{tail:.*}", api_not_found)
 

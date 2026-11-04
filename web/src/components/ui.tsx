@@ -1,5 +1,5 @@
 // Small shared UI building blocks.
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import { useEffect, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 
 export function cx(...parts: (string | false | null | undefined)[]) {
@@ -191,6 +191,43 @@ export function Segmented<T extends string>({
           {text}
         </button>
       ))}
+    </div>
+  );
+}
+
+/** A modal dialog. Escape or clicking outside closes it (unless busy). */
+export function Dialog({
+  open,
+  onClose,
+  title,
+  children,
+  actions,
+  busy,
+  wide,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  children: ReactNode;
+  actions?: ReactNode;
+  busy?: boolean;
+  wide?: boolean;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && !busy && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, busy, onClose]);
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-label={title}>
+      <div className="absolute inset-0 bg-black/60" onClick={() => !busy && onClose()} />
+      <div className={cx("card relative max-h-[90vh] w-full overflow-y-auto rounded-b-none shadow-2xl shadow-black/60 sm:rounded-xl", wide ? "sm:max-w-2xl" : "sm:max-w-md")}>
+        <div className="border-b border-line px-5 py-3.5 font-semibold">{title}</div>
+        <div className="px-5 py-4">{children}</div>
+        {actions && <div className="flex flex-wrap justify-end gap-2 border-t border-line px-5 py-3">{actions}</div>}
+      </div>
     </div>
   );
 }
