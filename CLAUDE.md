@@ -63,6 +63,17 @@ version or raid tier is a configuration change.
   changed freely**: breaking changes and rewrites are fine there.
 - The dashboard is reached over an SSH tunnel (PuTTY) at
   http://localhost:8081. It is not exposed to the internet.
+- **Dev bot (cloud sessions)**: Claude Code cloud sessions for this repo
+  have credentials for a third Discord application, "Crusader Dev", which
+  is in the same test server, plus WarcraftLogs and Blizzard API keys, as
+  environment variables (`DISCORD_TOKEN`, `WCL_CLIENT_ID`,
+  `WCL_CLIENT_SECRET`, `BLIZZARD_CLIENT_ID`, `BLIZZARD_CLIENT_SECRET`), and
+  network access to Discord, WarcraftLogs, Blizzard and Wowhead. Verify
+  with `python scripts/check_integrations.py` (never prints secrets). Use
+  it to run the bot for real and test against the live APIs. Keep
+  WarcraftLogs usage modest: the client is shared with the test bot, so
+  they share one hourly rate limit. Never print, log or commit these
+  values.
 
 ## Architecture (current)
 
@@ -133,3 +144,20 @@ set in the dashboard.
 
 Access is moderator-only for now; the permission model (Viewer level,
 public pages) must allow opening it up later.
+
+## Decisions already made (don't re-ask)
+
+- Single Discord server per bot instance.
+- No scheduled announcements, and no private approver comments on
+  applications, for now.
+- Audit log privacy: record who did what, where and when, never private
+  text (applicant notes, announcement bodies, modal contents). Exceptions:
+  settings changes keep old and new values (for history and revert), and
+  announcements keep their own version history.
+- `config/deployment.py` holds defaults only; the dashboard's saved values
+  win. Each setting has "Reset to default".
+- The dashboard theme: dark, dense, left sidebar with small uppercase group
+  labels, stat tiles, segmented tabs, class colours for character names.
+  Inspired by oxm.gg/pugs, not a copy of it.
+- The owner prefers being walked through server-side steps one command at
+  a time, with the exact commands to run.
