@@ -28,7 +28,7 @@ from datetime import datetime, timezone
 from urllib.parse import quote
 
 import discord
-from aiohttp import WSMsgType, web
+from aiohttp import WSCloseCode, WSMsgType, web
 
 import app_version
 import audit as audit_store
@@ -726,6 +726,20 @@ async def frontend(request):
     return response
 
 
+async def _close_live_connections(app):
+    """On shutdown, close every dashboard tab's live connection first: the
+    server otherwise waits for them (up to a minute), which is longer than
+    Docker/AMP wait before killing the bot. Tabs reconnect on their own
+    once the bot is back."""
+    hub = app[HUB_KEY]
+    for ws in list(hub.sockets):
+        hub.discard(ws)
+        try:
+            await ws.close(code=WSCloseCode.GOING_AWAY, message=b"Bot is restarting")
+        except Exception:
+            pass
+
+
 def create_app(bot) -> web.Application:
     app = web.Application(middlewares=[errors, security_headers, require_login], client_max_size=10 * 1024 * 1024)
     app[BOT_KEY] = bot
@@ -794,4 +808,5 @@ def create_app(bot) -> web.Application:
         task.cancel()
 
     app.cleanup_ctx.append(start_background)
+    app.on_shutdown.append(_close_live_connections)
     return app

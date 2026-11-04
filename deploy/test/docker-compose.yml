@@ -12,6 +12,9 @@ services:
     image: ghcr.io/eg-mike/crusaderdiscordbot:test
     container_name: crusader-test
     restart: unless-stopped
+    # Time to shut down cleanly on a stop/update before Docker kills the
+    # bot (it needs a few seconds; Docker's default is 10).
+    stop_grace_period: 30s
     env_file: .env
     environment:
       # Inside the container the dashboard listens on all interfaces; the

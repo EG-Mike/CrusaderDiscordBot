@@ -199,7 +199,10 @@ SHUTDOWN_SIGNALS = {
 }
 
 
-SHUTDOWN_GRACE_SECONDS = 5  # well inside Docker's 10 s before it kills the process
+# Docker and AMP kill the process if it hasn't exited within ~10 s of a stop:
+# close() gets this long, then whatever is still running is cancelled, so
+# the whole shutdown (and its "stopped" record) fits well inside that.
+SHUTDOWN_GRACE_SECONDS = 3
 
 
 def _install_signal_handlers():
@@ -220,7 +223,7 @@ def _install_signal_handlers():
         await asyncio.sleep(SHUTDOWN_GRACE_SECONDS)
         if main_task is not None and not main_task.done():
             log.warning("Still busy %ss after closing (e.g. a request to Discord hanging) - cancelling it",
-                        SHUTDOWN_GRACE_SECONDS)
+                        2 * SHUTDOWN_GRACE_SECONDS)
             main_task.cancel()
 
     for sig, reason in SHUTDOWN_SIGNALS.items():

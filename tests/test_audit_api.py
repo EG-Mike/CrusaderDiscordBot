@@ -116,6 +116,20 @@ class AuditApiTests(DatabaseTestCase, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(sent["mod"]), 1)
         self.assertEqual(sent["viewer"], [])
 
+    async def test_shutdown_closes_live_connections(self):
+        """Open dashboard tabs mustn't hold up a stop (Docker kills after 10 s)."""
+        hub = self.client.app[server.HUB_KEY]
+        closed = []
+
+        class FakeWs:
+            async def close(self, code, message):
+                closed.append(code)
+
+        hub.add(FakeWs(), 111, self.token, {"moderator"})
+        await server._close_live_connections(self.client.app)
+        self.assertEqual(closed, [1001])
+        self.assertEqual(hub.sockets, {})
+
     async def test_revalidation_closes_sockets_after_logout(self):
         hub = self.client.app[server.HUB_KEY]
         closed = []
