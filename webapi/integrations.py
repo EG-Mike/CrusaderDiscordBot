@@ -9,6 +9,7 @@ import aiohttp
 
 import config
 import secret_store
+from http_utils import basic_auth_header
 from blizzard_client import OAUTH_URL as BLIZZARD_TOKEN_URL, BlizzardClient
 from wcl_client import TOKEN_URL as WCL_TOKEN_URL
 
@@ -37,7 +38,7 @@ async def test(service: str, client_id: str, client_secret: str) -> tuple:
             async with http.post(
                 TOKEN_URLS[service],
                 data={"grant_type": "client_credentials"},
-                headers={"Authorization": aiohttp.BasicAuth(client_id, client_secret).encode()},
+                headers={"Authorization": basic_auth_header(client_id, client_secret)},
             ) as resp:
                 if resp.status in (400, 401, 403):
                     return False, "The service rejected these keys. Check the client ID and secret."

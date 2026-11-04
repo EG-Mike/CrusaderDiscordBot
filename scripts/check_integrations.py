@@ -21,6 +21,9 @@ import sys
 import aiohttp
 from dotenv import load_dotenv
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from http_utils import basic_auth_header  # noqa: E402
+
 DISCORD_API = "https://discord.com/api/v10"
 WCL_TOKEN_URL = "https://www.warcraftlogs.com/oauth/token"
 BLIZZARD_TOKEN_URL = "https://oauth.battle.net/oauth/token"
@@ -55,7 +58,7 @@ async def check_client_credentials(http: aiohttp.ClientSession, name: str, url: 
     async with http.post(
         url,
         data={"grant_type": "client_credentials"},
-        headers={"Authorization": aiohttp.BasicAuth(client_id, client_secret).encode()},
+        headers={"Authorization": basic_auth_header(client_id, client_secret)},
     ) as resp:
         if resp.status in (400, 401, 403):
             return FAIL, f"{name} rejected the client ID/secret (HTTP {resp.status})"

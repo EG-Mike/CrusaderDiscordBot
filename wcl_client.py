@@ -17,6 +17,7 @@ from collections import Counter
 import aiohttp
 
 import config
+from http_utils import basic_auth_header
 from storage import ApplicationStore
 
 log = logging.getLogger("wow-apply-bot.wcl")
@@ -415,10 +416,7 @@ class WarcraftLogsClient:
                 "(Settings -> Integrations)."
             )
 
-        # Build the Basic auth header explicitly (rather than aiohttp's
-        # `auth=` kwarg, which triggers a deprecation warning on newer
-        # aiohttp versions) using BasicAuth's own encoder.
-        auth_header = aiohttp.BasicAuth(self.client_id, self.client_secret).encode()
+        auth_header = basic_auth_header(self.client_id, self.client_secret)
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 TOKEN_URL,

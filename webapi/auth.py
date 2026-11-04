@@ -25,6 +25,7 @@ import discord
 
 import config
 import db
+from http_utils import basic_auth_header
 
 DISCORD_API = "https://discord.com/api/v10"
 SESSION_COOKIE = "crusader_session"
@@ -80,7 +81,7 @@ async def exchange_code(bot, code: str) -> dict:
                 "code": code,
                 "redirect_uri": redirect_uri(),
             },
-            auth=aiohttp.BasicAuth(client_id(bot), client_secret()),
+            headers={"Authorization": basic_auth_header(client_id(bot), client_secret())},
         ) as resp:
             if resp.status != 200:
                 raise PermissionError(f"Discord rejected the login (token exchange HTTP {resp.status})")

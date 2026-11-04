@@ -65,6 +65,7 @@ import time
 import logging
 import aiohttp
 
+from http_utils import basic_auth_header
 from storage import ApplicationStore
 
 log = logging.getLogger("wow-apply-bot.blizzard")
@@ -125,7 +126,7 @@ class BlizzardClient:
             log.debug("Reusing cached Blizzard API token (expires in %.0fs)", self._token_expires_at - time.time())
             return self._token
 
-        auth_header = aiohttp.BasicAuth(self.client_id, self.client_secret).encode()
+        auth_header = basic_auth_header(self.client_id, self.client_secret)
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 OAUTH_URL,
