@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { AlertTriangle } from "lucide-react";
 
@@ -12,14 +13,26 @@ function DiscordIcon({ className }: { className?: string }) {
 export default function Login() {
   const [params] = useSearchParams();
   const error = params.get("error");
+  // Public: the guild's own name and logo, when one was set in Settings.
+  const [branding, setBranding] = useState<{ name: string | null; logo_url: string | null; custom_logo: boolean } | null>(null);
+  useEffect(() => {
+    fetch("/branding")
+      .then((r) => (r.ok ? r.json() : null))
+      .then(setBranding)
+      .catch(() => undefined);
+  }, []);
   return (
     <div className="app-glow flex min-h-full items-center justify-center px-4 py-10">
       <div className="w-full max-w-sm">
         <div className="mb-8 flex flex-col items-center gap-3 text-center">
-          <img src="/crest.svg" alt="" className="h-14 w-14 drop-shadow-[0_0_24px_rgba(222,172,82,0.35)]" />
+          {branding?.custom_logo && branding.logo_url ? (
+            <img src={branding.logo_url} alt="" className="h-14 w-14 rounded-full object-cover ring-1 ring-line" />
+          ) : (
+            <img src="/crest.svg" alt="" className="h-14 w-14 drop-shadow-[0_0_24px_rgba(222,172,82,0.35)]" />
+          )}
           <div>
             <div className="text-lg font-bold tracking-[0.25em]">CRUSADER</div>
-            <div className="label mt-1">Bot dashboard</div>
+            <div className="label mt-1">{branding?.name ? `${branding.name} · Bot dashboard` : "Bot dashboard"}</div>
           </div>
         </div>
         <div className="card p-6">

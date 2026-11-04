@@ -30,8 +30,15 @@ def _env_int(name: str) -> int:
     return int(value) if value.isdigit() else 0
 
 
+# --- Guild identity (webapi/branding.py) ---
+# The guild's name as the dashboard shows it (header, login page). Empty:
+# the Discord server's name. The logo is uploaded in the dashboard and kept
+# next to the database, not here.
+GUILD_DISPLAY_NAME = ""
+
+
 # --- Discord server: channels, roles and realm ---
-# Set these in the web dashboard (Settings -> Discord server). The values
+# Set these in the web dashboard (Settings, or the setup guide). The values
 # below are only the fallback: whatever .env has for the same name (how
 # they were configured before the dashboard existed), else 0 / empty =
 # "not set". A feature whose channel isn't set yet just stays inactive

@@ -752,11 +752,13 @@ Built so far (phases 0 and 1):
 
 - **Overview**: bot status (online, latency, uptime, version), pending
   applications, enabled features, and anything that needs attention.
-- **Settings**: every value from `config/deployment.py`, grouped, with
-  role/channel pickers, help text taken from the comments in that file,
-  validation, per-setting change history with revert, and "reset to
-  default". Saved values take effect on the **next bot restart** (the
-  dashboard lists what's waiting for one).
+- **Settings**: grouped into General (guild name and logo, the bot's name,
+  picture and nickname, moderation), Features, Integrations and System,
+  with role/channel/list pickers, validation, per-setting change history
+  with revert, and "reset to default". Rarely needed settings appear with
+  "Advanced" switched on. Saved values take effect on the **next bot
+  restart** (the dashboard lists what's waiting for one), except those
+  marked "Applies immediately".
 - **Setup guide**: a step-by-step first-time setup (roles, channels,
   WarcraftLogs keys with a connection test, realm, features) that finishes
   with a restart.

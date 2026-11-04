@@ -56,6 +56,8 @@ export interface Status {
   environment: string | null;
   bot: { name: string | null; avatar_url: string | null };
   guild: { id: string; name: string; icon_url: string | null; member_count: number } | null;
+  /** The guild's name and logo as set in Settings (falls back to the Discord server's). */
+  branding: Branding;
   features: Record<string, boolean>;
   feature_labels: Record<string, string>;
   counts: { pending_applications: number };
@@ -69,15 +71,25 @@ export interface Status {
 export type SettingKind = "bool" | "int" | "float" | "string" | "text" | "enum" | "role" | "channel" | "json";
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 
+export interface Branding {
+  name: string | null;
+  logo_url: string | null;
+  custom_logo: boolean;
+}
+
 export interface Setting {
   key: string;
   label: string;
   group: string;
   kind: SettingKind;
-  options: string[] | null;
+  options: { value: string | number; label: string }[] | null;
   help: string;
-  read_only: boolean;
-  read_only_reason: string | null;
+  /** Only shown with "Show advanced settings" on. */
+  advanced: boolean;
+  /** A friendlier editor than raw JSON. */
+  widget: "text_list" | "number_list" | "role_map" | "role_set" | null;
+  /** Shown after a number field, e.g. "minutes". */
+  unit: string | null;
   value: Json;
   running_value: Json;
   default: Json;
@@ -92,9 +104,16 @@ export interface Setting {
 
 export interface SettingGroup {
   id: string;
+  section: string;
   label: string;
   description: string;
   count: number;
+  advanced_count: number;
+}
+
+export interface SettingSection {
+  id: string;
+  label: string;
 }
 
 export interface HistoryEntry {

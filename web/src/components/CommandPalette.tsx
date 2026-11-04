@@ -18,7 +18,7 @@ import {
   Smile,
   type LucideIcon,
 } from "lucide-react";
-import { ApiError, api, type Announcement, type AnnouncementList, type BotMessage, type Setting } from "../lib/api";
+import { ApiError, api, type Announcement, type AnnouncementList, type BotMessage, type Setting, type SettingGroup } from "../lib/api";
 import { useLive } from "../lib/live";
 import { useMe } from "../lib/me";
 import { NAV } from "../lib/nav";
@@ -97,6 +97,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
   const [q, setQ] = useState("");
   const [active, setActive] = useState(0);
   const [settings, setSettings] = useState<Setting[]>([]);
+  const [settingTabs, setSettingTabs] = useState<Record<string, string>>({});
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [messages, setMessages] = useState<BotMessage[]>([]);
   const [confirmRestart, setConfirmRestart] = useState(false);
@@ -109,7 +110,13 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     setQ("");
     setActive(0);
     window.setTimeout(() => inputRef.current?.focus(), 0);
-    api.get<{ settings: Setting[] }>("/api/settings").then((d) => setSettings(d.settings)).catch(() => undefined);
+    api
+      .get<{ settings: Setting[]; groups: SettingGroup[] }>("/api/settings")
+      .then((d) => {
+        setSettings(d.settings);
+        setSettingTabs(Object.fromEntries(d.groups.map((g) => [g.id, g.label])));
+      })
+      .catch(() => undefined);
     api.get<AnnouncementList>("/api/announcements").then((d) => setAnnouncements(d.announcements)).catch(() => undefined);
     api.get<BotMessage[]>("/api/bot-messages").then(setMessages).catch(() => undefined);
   }, [open]);
@@ -195,13 +202,13 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
         id: `set:${s.key}`,
         group: "Settings",
         label: s.label,
-        hint: s.key,
-        keywords: s.help.slice(0, 200),
+        hint: settingTabs[s.group],
+        keywords: `${s.key} ${s.help.slice(0, 200)}`,
         icon: Settings2,
         run: go(`/settings?group=${s.group}#${s.key}`),
       });
     return list;
-  }, [announcements, messages, settings, me, status, navigate, toast, go]);
+  }, [announcements, messages, settings, settingTabs, me, status, navigate, toast, go]);
 
   const results = useMemo(() => {
     const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);

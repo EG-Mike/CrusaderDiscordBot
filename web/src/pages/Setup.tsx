@@ -280,7 +280,7 @@ export default function SetupPage() {
           ) : step.id === "features" ? (
             <div className="space-y-3">
               {Object.values(settings)
-                .filter((s) => s.group === "features" && s.key !== "FEATURE_WEB_DASHBOARD_ENABLED")
+                .filter((s) => s.group === "features")
                 .map((s) => (
                   <SettingRow key={s.key} setting={s} roles={roles} channels={channels} onSaved={onSaved} compact />
                 ))}

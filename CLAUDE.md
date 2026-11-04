@@ -149,8 +149,11 @@ set in the dashboard.
 ## Conventions
 
 - **A new feature** is a new cog file plus a `FEATURE_*_ENABLED` flag; its
-  settings go in `config/deployment.py` (picked up by the dashboard
-  automatically, with help text from the comment above each constant).
+  settings go in `config/deployment.py` (defaults, with comments for
+  developers) and in `webapi/settings_catalog.py` (the dashboard's tab,
+  label, help text and editor, written for moderators: plain words, no
+  setting names; raw data and fine-tuning marked advanced). A test fails
+  until every setting is in the catalog or hidden with a reason.
   Missing configuration must make the feature inactive with a clear
   message, never crash the bot.
 - **Outbound HTTP**: create sessions with `aiohttp.ClientSession(trust_env=True)`

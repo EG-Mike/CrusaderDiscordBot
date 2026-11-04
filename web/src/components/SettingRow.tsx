@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { History, Lock, RotateCcw } from "lucide-react";
+import { History, Plus, RotateCcw, X } from "lucide-react";
 import { api, type Channel, type HistoryEntry, type Json, type Role, type Setting } from "../lib/api";
 import { useToast } from "./Toast";
 import { Badge, Button, Skeleton, Toggle, cx } from "./ui";
@@ -66,6 +66,128 @@ function ChannelPicker({ value, channels, onChange, disabled }: { value: number 
   );
 }
 
+// --- list and role editors (save on every change) ---------------------------------
+
+function Chip({ children, onRemove, disabled }: { children: ReactNode; onRemove: () => void; disabled?: boolean }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-md border border-line bg-raised py-0.5 pl-2 pr-1 text-xs">
+      {children}
+      <button type="button" onClick={onRemove} disabled={disabled} className="rounded p-0.5 text-faint hover:text-crimson" aria-label="Remove">
+        <X className="h-3 w-3" />
+      </button>
+    </span>
+  );
+}
+
+function ListEditor({ value, numbers, onChange, disabled }: { value: Json[]; numbers: boolean; onChange: (v: Json[]) => void; disabled?: boolean }) {
+  const [text, setText] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const add = () => {
+    const parts = text.split(",").map((t) => t.trim()).filter(Boolean);
+    if (!parts.length) return;
+    const parsed = numbers ? parts.map(Number) : parts;
+    if (numbers && parsed.some((n) => !Number.isInteger(n) || (n as number) < 0)) {
+      setError("Whole numbers only.");
+      return;
+    }
+    const next = [...value, ...parsed.filter((p) => !value.includes(p))];
+    if (numbers) next.sort((a, b) => (a as number) - (b as number));
+    setText("");
+    setError(null);
+    onChange(next);
+  };
+  return (
+    <div>
+      <div className="flex flex-wrap gap-1.5">
+        {value.map((item, i) => (
+          <Chip key={`${item}-${i}`} disabled={disabled} onRemove={() => onChange(value.filter((_, j) => j !== i))}>
+            {String(item)}
+          </Chip>
+        ))}
+        {value.length === 0 && <span className="text-xs text-faint">None</span>}
+      </div>
+      <div className="mt-2 flex max-w-md gap-2">
+        <input
+          className="input h-8 text-xs"
+          value={text}
+          disabled={disabled}
+          inputMode={numbers ? "numeric" : undefined}
+          placeholder={numbers ? "Add a number (or several, comma-separated)" : "Add (or several, comma-separated)"}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              add();
+            }
+          }}
+        />
+        <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={add} disabled={disabled || !text.trim()}>
+          Add
+        </Button>
+      </div>
+      {error && <p className="mt-1 text-xs text-crimson">{error}</p>}
+    </div>
+  );
+}
+
+/** Fixed names (e.g. Tank, Mage), each with a role picker. */
+function RoleMapEditor({ value, roles, onChange, disabled }: { value: Record<string, Json>; roles: Role[]; onChange: (v: Record<string, Json>) => void; disabled?: boolean }) {
+  return (
+    <div className="grid gap-x-4 gap-y-2 sm:grid-cols-2">
+      {Object.entries(value).map(([name, roleId]) => (
+        <label key={name} className="grid grid-cols-[80px_minmax(0,1fr)] items-center gap-2">
+          <span className="truncate text-xs text-muted">{name}</span>
+          <RolePicker value={roleId as string} roles={roles} disabled={disabled} onChange={(id) => onChange({ ...value, [name]: id })} />
+        </label>
+      ))}
+    </div>
+  );
+}
+
+/** A set of roles, stored as {role ID: role name}. */
+function RoleSetEditor({ value, roles, onChange, disabled }: { value: Record<string, Json>; roles: Role[]; onChange: (v: Record<string, Json>) => void; disabled?: boolean }) {
+  const name = (id: string) => roles.find((r) => r.id === id)?.name ?? String(value[id] ?? `Unknown role (${id})`);
+  const available = roles.filter((r) => !(r.id in value) && !r.managed);
+  return (
+    <div>
+      <div className="flex flex-wrap gap-1.5">
+        {Object.keys(value).map((id) => (
+          <Chip key={id} disabled={disabled} onRemove={() => onChange(Object.fromEntries(Object.entries(value).filter(([k]) => k !== id)))}>
+            @{name(id)}
+          </Chip>
+        ))}
+        {Object.keys(value).length === 0 && <span className="text-xs text-faint">None</span>}
+      </div>
+      <select
+        className="input mt-2 h-8 max-w-xs text-xs"
+        value=""
+        disabled={disabled}
+        onChange={(e) => {
+          const role = roles.find((r) => r.id === e.target.value);
+          if (role) onChange({ ...value, [role.id]: role.name });
+        }}
+      >
+        <option value="">Add a role…</option>
+        {available.map((r) => (
+          <option key={r.id} value={r.id}>
+            @{r.name}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+function describeDefault(setting: Setting): string {
+  const d = setting.default;
+  if ((setting.kind === "role" || setting.kind === "channel") && String(d) === "0") return "not set";
+  if (setting.options) return setting.options.find((o) => o.value === d)?.label ?? formatValue(d);
+  if (setting.widget === "text_list" || setting.widget === "number_list") return (d as Json[]).length ? (d as Json[]).join(", ") : "none";
+  if (setting.widget === "role_map" || setting.widget === "role_set") return `${Object.keys(d as object).length} roles`;
+  if (setting.kind === "string" && d === "") return "empty";
+  return formatValue(d) + (setting.unit && (setting.kind === "int" || setting.kind === "float") ? ` ${setting.unit}` : "");
+}
+
 // --- one setting ---------------------------------------------------------------
 
 export function SettingRow({
@@ -89,7 +211,7 @@ export function SettingRow({
   badge?: ReactNode;
 }) {
   const toast = useToast();
-  const isJson = setting.kind === "json";
+  const isJson = setting.kind === "json" && !setting.widget;
   const initialDraft = () => (isJson ? JSON.stringify(setting.value, null, 2) : setting.value);
   const [draft, setDraft] = useState<Json>(initialDraft);
   const [saving, setSaving] = useState(false);
@@ -166,33 +288,39 @@ export function SettingRow({
     }
   };
 
-  const ro = setting.read_only;
-  const instant = setting.kind === "bool" || setting.kind === "enum" || setting.kind === "role" || setting.kind === "channel";
+  const instant = setting.kind === "bool" || setting.kind === "enum" || setting.kind === "role" || setting.kind === "channel" || setting.widget !== null;
   const longHelp = setting.help.length > 260 || setting.help.split("\n").length > 3;
 
   let control;
   switch (setting.kind) {
     case "bool":
-      control = <Toggle checked={setting.value as boolean} disabled={ro || saving} onChange={(v) => save(v)} label={setting.label} />;
+      control = <Toggle checked={setting.value as boolean} disabled={saving} onChange={(v) => save(v)} label={setting.label} />;
       break;
     case "enum":
       control = (
-        <select className="input max-w-xs" value={setting.value as string} disabled={ro || saving} onChange={(e) => save(e.target.value)}>
+        <select
+          className="input max-w-xs"
+          value={String(setting.value)}
+          disabled={saving}
+          onChange={(e) => save(setting.options!.find((o) => String(o.value) === e.target.value)!.value)}
+        >
           {setting.options!.map((o) => (
-            <option key={o}>{o}</option>
+            <option key={String(o.value)} value={String(o.value)}>
+              {o.label}
+            </option>
           ))}
         </select>
       );
       break;
     case "role":
-      control = <RolePicker value={setting.value as number | string} roles={roles} disabled={ro || saving} onChange={(v) => save(v)} />;
+      control = <RolePicker value={setting.value as number | string} roles={roles} disabled={saving} onChange={(v) => save(v)} />;
       break;
     case "channel":
       control = (
         <ChannelPicker
           value={setting.value as number | string}
           channels={channelFilter ? channels.filter(channelFilter) : channels}
-          disabled={ro || saving}
+          disabled={saving}
           onChange={(v) => save(v)}
         />
       );
@@ -200,26 +328,40 @@ export function SettingRow({
     case "int":
     case "float":
       control = (
-        <input
-          className="input max-w-xs font-mono"
-          inputMode="numeric"
-          value={String(draft ?? "")}
-          disabled={ro}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && dirty && save()}
-        />
+        <div className="flex items-center gap-2">
+          <input
+            className={cx("input font-mono", setting.unit ? "max-w-[9rem]" : "max-w-xs")}
+            inputMode="numeric"
+            value={String(draft ?? "")}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && dirty && save()}
+          />
+          {setting.unit && <span className="text-xs text-muted">{setting.unit}</span>}
+        </div>
       );
       break;
     case "text":
-      control = <textarea className="input min-h-24" value={draft as string} disabled={ro} onChange={(e) => setDraft(e.target.value)} />;
+      control = <textarea className="input min-h-24" value={draft as string} onChange={(e) => setDraft(e.target.value)} />;
       break;
     case "json":
+      if (setting.widget === "text_list" || setting.widget === "number_list") {
+        control = <ListEditor value={setting.value as Json[]} numbers={setting.widget === "number_list"} disabled={saving} onChange={(v) => save(v)} />;
+        break;
+      }
+      if (setting.widget === "role_map") {
+        control = <RoleMapEditor value={setting.value as Record<string, Json>} roles={roles} disabled={saving} onChange={(v) => save(v)} />;
+        break;
+      }
+      if (setting.widget === "role_set") {
+        control = <RoleSetEditor value={setting.value as Record<string, Json>} roles={roles} disabled={saving} onChange={(v) => save(v)} />;
+        break;
+      }
       control = (
         <textarea
           className="input min-h-32 font-mono text-xs leading-relaxed"
           spellCheck={false}
           value={draft as string}
-          disabled={ro}
+         
           onChange={(e) => setDraft(e.target.value)}
           rows={Math.min(16, (draft as string).split("\n").length + 1)}
         />
@@ -230,7 +372,7 @@ export function SettingRow({
         <input
           className="input"
           value={draft as string}
-          disabled={ro}
+         
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && dirty && save()}
         />
@@ -251,13 +393,8 @@ export function SettingRow({
             {setting.live && !compact && <Badge tone="ok">Applies immediately</Badge>}
             {setting.default_source === "local" && <Badge tone="info">Local file</Badge>}
             {setting.default_source === "env" && !setting.overridden && <Badge tone="info">From .env</Badge>}
-            {ro && (
-              <Badge>
-                <Lock className="h-2.5 w-2.5" /> Read-only
-              </Badge>
-            )}
+            {setting.advanced && !compact && <Badge>Advanced</Badge>}
           </div>
-          {!compact && <div className="mt-0.5 font-mono text-2xs text-faint">{setting.key}</div>}
           {setting.help && (
             <div className="mt-2 max-w-3xl text-muted">
               <div className={cx("whitespace-pre-line", !showHelp && longHelp && "line-clamp-3")}>{setting.help}</div>
@@ -268,7 +405,6 @@ export function SettingRow({
               )}
             </div>
           )}
-          {ro && setting.read_only_reason && <p className="mt-2 text-xs text-faint">{setting.read_only_reason}</p>}
         </div>
         <div className={setting.kind === "bool" ? "pt-0.5" : "w-full"}>{control}</div>
       </div>
@@ -276,7 +412,7 @@ export function SettingRow({
       {error && <p className="mt-2 text-xs text-crimson">{error}</p>}
 
       {compact ? (
-        !instant && numericDirty && !ro && (
+        !instant && numericDirty && (
           <div className="mt-3 flex justify-end gap-2">
             <Button size="sm" variant="ghost" onClick={() => setDraft(initialDraft())}>
               Cancel
@@ -290,11 +426,7 @@ export function SettingRow({
       <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3 text-xs text-faint">
         <span className="mr-auto min-w-0 truncate">
           Default:{" "}
-          <span className="font-mono text-muted">
-            {(setting.kind === "role" || setting.kind === "channel") && String(setting.default) === "0"
-              ? "not set"
-              : formatValue(setting.default).slice(0, 120)}
-          </span>
+          <span className="text-muted">{describeDefault(setting).slice(0, 120)}</span>
           {setting.updated_at && (
             <>
               {" "}· changed {utc(setting.updated_at)}
@@ -302,7 +434,7 @@ export function SettingRow({
             </>
           )}
         </span>
-        {!instant && numericDirty && !ro && (
+        {!instant && numericDirty && (
           <>
             <Button size="sm" variant="ghost" onClick={() => setDraft(initialDraft())}>
               Cancel
@@ -315,7 +447,7 @@ export function SettingRow({
         <Button size="sm" variant="ghost" icon={<History className="h-3.5 w-3.5" />} onClick={toggleHistory}>
           History
         </Button>
-        {setting.overridden && !ro && (
+        {setting.overridden && (
           <Button size="sm" variant="ghost" icon={<RotateCcw className="h-3.5 w-3.5" />} onClick={reset} disabled={saving}>
             Reset
           </Button>
@@ -340,15 +472,13 @@ export function SettingRow({
                     {"  →  "}
                     <span className="text-fg">{h.new_value === null ? "default" : formatValue(h.new_value)}</span>
                   </span>
-                  {!ro && (
-                    <button
-                      className="text-gold hover:underline"
-                      onClick={() => (h.old_value === null ? reset() : save(h.old_value))}
-                      title="Set the value back to what it was before this change"
-                    >
-                      Revert
-                    </button>
-                  )}
+                  <button
+                    className="text-gold hover:underline"
+                    onClick={() => (h.old_value === null ? reset() : save(h.old_value))}
+                    title="Set the value back to what it was before this change"
+                  >
+                    Revert
+                  </button>
                 </li>
               ))}
             </ul>

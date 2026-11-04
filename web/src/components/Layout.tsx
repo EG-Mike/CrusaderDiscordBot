@@ -14,13 +14,13 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-2.5 border-b border-line px-4 py-3.5">
-        {status?.guild?.icon_url ? (
-          <img src={status.guild.icon_url} alt="" className="h-7 w-7 rounded-full ring-1 ring-line" />
+        {status?.branding.logo_url ? (
+          <img src={status.branding.logo_url} alt="" className="h-7 w-7 rounded-full object-cover ring-1 ring-line" />
         ) : (
           <div className="h-7 w-7 rounded-full bg-raised ring-1 ring-line" />
         )}
         <div className="min-w-0">
-          <div className="truncate text-[13px] font-semibold">{status?.guild?.name ?? "Your server"}</div>
+          <div className="truncate text-[13px] font-semibold">{status?.branding.name ?? "Your server"}</div>
           <div className="text-2xs text-faint">{status?.guild ? `${status.guild.member_count} members` : " "}</div>
         </div>
       </div>
@@ -29,7 +29,7 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         {NAV.map(({ group, items }) => (
           <div key={group || "root"} className="mb-3">
             {group && <div className="label px-2 pb-1.5 pt-2">{group}</div>}
-            {items.map((item) => (
+            {items.filter((item) => !(status && item.hidden?.(status))).map((item) => (
               <NavLink
                 key={item.to}
                 to={item.to}
@@ -158,7 +158,7 @@ function Breadcrumb() {
   return (
     <div className="mb-5 flex items-center gap-1.5 text-2xs font-semibold uppercase tracking-label">
       <Link to="/" className="text-faint transition hover:text-muted">
-        {status?.guild?.name ?? "Dashboard"}
+        {status?.branding.name ?? "Dashboard"}
       </Link>
       <span className="text-faint">/</span>
       <span className="text-gold">{item?.label ?? "Not found"}</span>

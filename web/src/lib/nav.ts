@@ -28,6 +28,8 @@ export interface NavItem {
   soon?: boolean;
   /** Small count shown next to the label (e.g. errors waiting to be read). */
   count?: (status: Status, me: Me) => number;
+  /** Left out of the sidebar (still in the command palette), e.g. Setup once it's done. */
+  hidden?: (status: Status) => boolean;
 }
 
 export const NAV: { group: string; items: NavItem[] }[] = [
@@ -60,7 +62,8 @@ export const NAV: { group: string; items: NavItem[] }[] = [
   {
     group: "System",
     items: [
-      { to: "/setup", label: "Setup", icon: Rocket },
+      // The setup guide is for the first run; afterwards it's in Settings, System.
+      { to: "/setup", label: "Setup", icon: Rocket, hidden: (status) => status.setup_completed },
       { to: "/audit-log", label: "Audit log", icon: ScrollText },
       {
         to: "/system-log",

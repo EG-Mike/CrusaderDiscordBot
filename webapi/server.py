@@ -37,8 +37,8 @@ import db
 import secret_store
 import system_log
 from webapi import (
-    announcements_api, auth, bot_messages_api, common, emoji_api, game_api, integrations, maintenance_api,
-    notifications_api, polls_api,
+    announcements_api, auth, bot_messages_api, branding_api, common, emoji_api, game_api, integrations,
+    maintenance_api, notifications_api, polls_api,
 )
 from webapi import settings as settings_api
 
@@ -260,10 +260,11 @@ def _status(app) -> dict:
             "icon_url": guild.icon.url if guild.icon else None,
             "member_count": guild.member_count,
         } if guild else None,
+        "branding": branding_api.branding(bot),
         "features": {
             key: bool(getattr(config, key)) for key in settings_api.all_keys() if key.startswith("FEATURE_")
         },
-        "feature_labels": {key: label for key, (label, _help) in settings_api.FEATURES.items()},
+        "feature_labels": settings_api.feature_labels(),
         "counts": {"pending_applications": pending_applications},
         "missing_setup": settings_api.missing_setup(),
         "setup_completed": db.get_meta("setup_completed_at") is not None,
@@ -778,6 +779,7 @@ def create_app(bot) -> web.Application:
     maintenance_api.register(app)
     polls_api.register(app)
     game_api.register(app)
+    branding_api.register(app)
     app.router.add_get("/api/ws", websocket)
     app.router.add_route("*", "/api/{tail:.*}", api_not_found)
 

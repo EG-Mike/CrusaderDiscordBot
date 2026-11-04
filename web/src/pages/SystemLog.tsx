@@ -549,7 +549,7 @@ export default function SystemLogPage() {
                 ? "Console output isn't being kept"
                 : `Keeping console ${(meta?.capture_level ?? "WARNING").toLowerCase()}s and above`}
               {meta && meta.retention_days > 0 && ` for ${meta.retention_days} days`}.{" "}
-              <Link to="/settings?group=system_log" className="text-gold hover:underline">
+              <Link to="/settings?group=logging" className="text-gold hover:underline">
                 Change
               </Link>
             </span>
