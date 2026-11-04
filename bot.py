@@ -10,6 +10,7 @@ import os
 import asyncio
 import logging
 import signal
+import sys
 import time
 
 import discord
@@ -228,6 +229,19 @@ def _install_signal_handlers():
             pass  # Windows: Ctrl+C still raises KeyboardInterrupt below
 
 
+def _startup_error_explanation(exc) -> str:
+    """What to do about the errors a misconfigured bot application hits
+    when connecting; empty for anything else (logged with a traceback)."""
+    if isinstance(exc, discord.PrivilegedIntentsRequired):
+        return ("Discord refused the bot's privileged intents. In the Discord Developer Portal "
+                "(https://discord.com/developers/applications), open this bot's application, go to Bot, "
+                "turn on Server Members Intent and Message Content Intent, save, and restart the bot.")
+    if isinstance(exc, discord.LoginFailure):
+        return ("Discord rejected the bot token. Copy a new token from the Developer Portal (Bot, Reset Token) "
+                "into DISCORD_TOKEN in .env and restart the bot.")
+    return ""
+
+
 async def main():
     system_log.startup()
     _install_signal_handlers()
@@ -252,7 +266,11 @@ async def main():
             # HTTP session raise; that's part of the requested stop, not a crash.
             log.info("Stopped while connecting to Discord", exc_info=True)
             return
-        log.critical("The bot stopped because of an error", exc_info=True)
+        explanation = _startup_error_explanation(sys.exc_info()[1])
+        if explanation:
+            log.critical("The bot couldn't connect to Discord: %s", explanation)
+        else:
+            log.critical("The bot stopped because of an error: %s", sys.exc_info()[1], exc_info=True)
         system_log.set_shutdown_reason("an error (see the critical entry before this one)")
         raise
     finally:
