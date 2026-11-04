@@ -111,6 +111,13 @@ version or raid tier is a configuration change.
   by Blizzard's icon file ID / icon name) with the items and spells that
   share it; Blizzard API first, Wowhead tooltip only as a fallback. Used by
   the Emoji page, the editor emoji picker, `/add-emoji` and raid summaries.
+- `wow_api.py`: Blizzard game data for the configured game version
+  (WoW Forever by default): reference data for pickers, a player's
+  characters from their Battle.net account, character lookups by name, and
+  the admin API explorer (Maintenance page). Namespaces, locale and lookup
+  paths are settings. What Forever's API offers is in
+  `docs/wow-forever-api.md`; re-check it with
+  `scripts/probe_blizzard_api.py`, which writes a shareable report.
 - `cogs/notifications.py`: alerts in a moderator channel, built from the
   System log and the audit trail. Settings named `NOTIFY_*` /
   `NOTIFICATIONS_*` apply immediately (`webapi/settings.LIVE_PREFIXES`):

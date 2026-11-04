@@ -3,6 +3,7 @@ import { Archive, Database, Download, Eraser, HardDrive, KeyRound, Lock, Refresh
 import { ApiError, api } from "../lib/api";
 import { useToast } from "../components/Toast";
 import { Button, Dialog, SectionHeader, Skeleton, StatTile } from "../components/ui";
+import BlizzardExplorer from "../components/BlizzardExplorer";
 
 interface Overview {
   database: { path: string; size: number; wal_size: number; storage_backend: string };
@@ -252,6 +253,10 @@ export default function MaintenancePage() {
             {data && <p className="truncate border-t border-line px-4 py-2 font-mono text-2xs text-faint md:px-5" title={data.database.path}>{data.database.path}</p>}
           </section>
         </div>
+      </div>
+
+      <div className="mt-5">
+        <BlizzardExplorer />
       </div>
 
       <Dialog

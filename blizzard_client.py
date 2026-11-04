@@ -142,6 +142,24 @@ class BlizzardClient:
         log.debug("Fetched a new Blizzard API token (expires in %ss)", data.get("expires_in", 86400))
         return self._token
 
+    async def request(self, path: str, namespace: str, params: Optional[dict] = None, *,
+                      session: Optional[aiohttp.ClientSession] = None, region: Optional[str] = None,
+                      token: Optional[str] = None, locale: str = "en_US") -> tuple:
+        """GET any API path (e.g. "/data/wow/realm/index") with a full
+        namespace ("dynamic-forever-eu"). Returns (status, headers, json or
+        None). Uses the app's own token unless a player's `token` is given
+        (e.g. for /profile/user/wow). Raises only for network failures."""
+        token = token or await self._get_token()
+        query = {"namespace": namespace, "locale": locale, **(params or {})}
+        if session is None:
+            async with aiohttp.ClientSession(trust_env=True, timeout=aiohttp.ClientTimeout(total=15)) as own:
+                return await self.request(path, namespace, params, session=own, region=region, token=token,
+                                          locale=locale)
+        async with session.get(f"{_api_base(region or self.region)}{path}", params=query,
+                               headers={"Authorization": f"Bearer {token}"}) as resp:
+            body = await resp.json(content_type=None) if resp.status == 200 else None
+            return resp.status, dict(resp.headers), body
+
     async def get_game_data(self, path: str, namespace: str, params: Optional[dict] = None,
                             session: Optional[aiohttp.ClientSession] = None) -> Optional[dict]:
         """GET /data/wow/{path} in the given namespace family ("static",
@@ -149,17 +167,13 @@ class BlizzardClient:
         None when Blizzard has no such record (404). Other failures raise,
         so callers can tell "doesn't exist" from "couldn't ask". Pass a
         `session` to reuse one connection for many requests."""
-        token = await self._get_token()
-        query = {"namespace": f"{namespace}-{self.region}", "locale": "en_US", **(params or {})}
-        if session is None:
-            async with aiohttp.ClientSession(trust_env=True, timeout=aiohttp.ClientTimeout(total=15)) as own:
-                return await self.get_game_data(path, namespace, params, own)
-        async with session.get(f"{_api_base(self.region)}/data/wow/{path}", params=query,
-                               headers={"Authorization": f"Bearer {token}"}) as resp:
-            if resp.status == 404:
-                return None
-            resp.raise_for_status()
-            return await resp.json()
+        status, _headers, body = await self.request(f"/data/wow/{path}", f"{namespace}-{self.region}", params,
+                                                    session=session)
+        if status == 404:
+            return None
+        if status != 200:
+            raise aiohttp.ClientResponseError(None, (), status=status, message=f"Blizzard API answered {status}")
+        return body
 
     async def get_item(self, item_id: int) -> dict:
         """Returns {"id", "name", "icon_slug", "icon_url", "quality"} -

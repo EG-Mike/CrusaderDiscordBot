@@ -88,6 +88,12 @@ GROUPS = [
      lambda k: k.startswith(("TRACKED_", "TOP_", "EXCLUDED_", "PARSE_")) or k in {
          "RAID_TIER_BANNERS", "CLEAR_STATUS_TAG_NAMES", "TIER_TAG_IDS", "RAID_TYPE_TAG_IDS"}),
     ("polls", "Polls", "Defaults for new polls.", lambda k: k.startswith("POLL_")),
+    ("game", "Game & Blizzard API", "Which game version the roster and Blizzard lookups use.",
+     lambda k: k == "GAME_VERSION" or k.startswith(("BLIZZARD_", "CHARACTER_LOOKUP"))),
+    ("roster", "Guild roster", "Characters linked to members, and verifying with Battle.net.",
+     lambda k: k.startswith("GUILD_ROSTER_")),
+    ("leveling", "Leveling", "The leveling leaderboard and milestone announcements.",
+     lambda k: k.startswith("LEVELING_")),
     ("notifications", "Notifications", "Alerts the bot posts in a moderator channel. Changes apply immediately.",
      lambda k: k.startswith(("NOTIFY_", "NOTIFICATIONS_"))),
     ("system_log", "System log", "Bot starts, stops, updates and console errors, and how long they're kept.",
@@ -121,6 +127,8 @@ FEATURES = {
     "FEATURE_POLLS_ENABLED": ("Polls", "/poll create and every poll's buttons."),
     "FEATURE_NOTIFICATIONS_ENABLED": ("Notifications", "Alerts in a moderator channel: restarts, updates, "
                                                        "unexpected stops, errors and dashboard changes."),
+    "FEATURE_ROSTER_ENABLED": ("Guild roster", "Characters linked to Discord members: /character and the Roster page."),
+    "FEATURE_LEVELING_ENABLED": ("Leveling", "Leveling leaderboard and milestone announcements. Needs the guild roster."),
     "FEATURE_AUDIT_LOG_ENABLED": ("Audit log", "Records the commands, buttons and forms members use in Discord, "
                                                 "for the Audit log page and /auditlog."),
     "FEATURE_WEB_DASHBOARD_ENABLED": ("Web dashboard", "This dashboard."),
@@ -135,6 +143,11 @@ LABELS = {
     "NOTIFICATIONS_CHANNEL_ID": "Notifications channel",
     "NOTIFY_ERRORS_EVERY_MINUTES": "Error reports at most every (minutes)",
     "NOTIFY_BOT_STATUS": "Restarts, updates and outages",
+    "LEVELING_CHANNEL_ID": "Milestone announcement channel",
+    "LEVELING_REFRESH_MINUTES": "Check for new levels every (minutes)",
+    "GUILD_ROSTER_SELF_SERVICE": "Members manage their own characters",
+    "GUILD_ROSTER_KEEP_BATTLENET_LOGIN": "Keep Battle.net logins for level updates",
+    "CHARACTER_LOOKUP_PATHS": "Character lookup paths",
     "EMOJI_BLIZZARD_NAMESPACES": "Blizzard namespaces for icons",
     "EMOJI_WOWHEAD_FALLBACK": "Use Wowhead when Blizzard can't help",
     "EMOJI_WOWHEAD_DATA_ENV": "Wowhead game version (dataEnv)",

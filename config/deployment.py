@@ -137,6 +137,12 @@ FEATURE_AUDIT_LOG_ENABLED = True
 # stops, errors, dashboard changes) to a moderator channel - see the
 # "Notifications" settings below.
 FEATURE_NOTIFICATIONS_ENABLED = True
+# cogs/roster.py: the guild roster - in-game characters linked to Discord
+# members (/character), including "verify with Battle.net".
+FEATURE_ROSTER_ENABLED = True
+# cogs/leveling.py: leveling leaderboard and level milestone announcements.
+# Needs the roster.
+FEATURE_LEVELING_ENABLED = True
 
 # cogs/web_dashboard.py: the browser-based management dashboard (see the
 # README's "Web dashboard" section). Off by default - turn it on in
@@ -195,6 +201,52 @@ ROLE_EMOJI_NAMES = {
     "Healer": "Roleicon_healer",
     "DPS": "Roleicon_dps",
 }
+
+# --- Game version and Blizzard API (wow_api.py) ---
+# Which game the roster and Blizzard lookups are for. Characters are stored
+# per game, so switching keeps the old characters apart.
+GAME_VERSION = "forever"
+
+# Blizzard API namespaces for that game (the region is added automatically,
+# e.g. "static-forever" becomes "static-forever-eu"). Static = game data
+# (classes, items), dynamic = realms, profile = characters and accounts.
+BLIZZARD_STATIC_NAMESPACE = "static-forever"
+BLIZZARD_DYNAMIC_NAMESPACE = "dynamic-forever"
+BLIZZARD_PROFILE_NAMESPACE = "profile-forever"
+
+# Language of names returned by Blizzard's API.
+BLIZZARD_LOCALE = "en_GB"
+
+# How to look a character up by name, tried in order until one answers.
+# {name}, {surname} and {realm} (the realm's slug) are filled in. Public
+# character lookups for WoW Forever weren't open yet at launch; the System
+# log and the API explorer (Maintenance) show what Blizzard answers.
+CHARACTER_LOOKUP_PATHS = ["/profile/wow/character/{name}-{surname}", "/profile/wow/character/{realm}/{name}"]
+
+# --- Guild roster (roster.py, cogs/roster.py) ---
+# Members may add and edit their own characters with /character. Off: only
+# moderators (and "verify with Battle.net") add characters.
+GUILD_ROSTER_SELF_SERVICE = True
+
+# Keep a member's Battle.net login (encrypted, read-only access to their
+# character list, valid for about a day) after they verify, so their
+# characters' levels keep updating until it expires. Off: characters are
+# only updated when they verify again.
+GUILD_ROSTER_KEEP_BATTLENET_LOGIN = True
+
+# --- Leveling (cogs/leveling.py) ---
+# Channel where level milestones are announced. Empty: no announcements
+# (the leaderboard still works).
+LEVELING_CHANNEL_ID = 0
+
+# Levels that get an announcement when a character reaches them.
+LEVELING_MILESTONES = [10, 20, 30, 40, 50, 60]
+
+# Also announce milestones for alts (off: mains only).
+LEVELING_ANNOUNCE_ALTS = False
+
+# How often (minutes) the bot checks Blizzard for new levels.
+LEVELING_REFRESH_MINUTES = 10
 
 # --- Notifications (cogs/notifications.py) ---
 # Channel the bot posts its notifications in. Leave it empty to use the
