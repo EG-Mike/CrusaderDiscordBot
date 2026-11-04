@@ -192,6 +192,25 @@ ROLE_EMOJI_NAMES = {
     "DPS": "Roleicon_dps",
 }
 
+# --- Emoji library (emoji_library.py) ---
+# Where item and spell icons for the bot's emoji are looked up: Blizzard's
+# Game Data API namespaces, tried in this order (the region is added
+# automatically). "static-classic" = progression Classic (TBC Anniversary),
+# "static" = the modern game, "static-classic1x" = Classic Era. Put the
+# namespace of the game version the guild plays first.
+EMOJI_BLIZZARD_NAMESPACES = ["static-classic", "static"]
+
+# Ask Wowhead's tooltip service when Blizzard can't help: for items/spells
+# Blizzard has no record of (e.g. spells removed from the modern game), and
+# for the icon's name when Blizzard only gives a file number (used to name
+# emoji and to spot icons shared with Wowhead-only spells). Blizzard is
+# always tried first and its images are used whenever it has them.
+EMOJI_WOWHEAD_FALLBACK = True
+
+# The game version Wowhead lookups use (Wowhead's "dataEnv"): 5 = TBC
+# Classic, 4 = Classic Era, 1 = the modern game. Only used by the fallback.
+EMOJI_WOWHEAD_DATA_ENV = 5
+
 # --- Icon sourcing ---
 # All class/role/spec icons use the same mechanism: bot-owned "application
 # emoji". On startup, the bot downloads each URL below once and uploads it

@@ -3,10 +3,13 @@
 // typed into the dashboard can't inject anything into the page.
 import { Fragment, type ReactNode } from "react";
 import type { Channel, Role } from "./api";
+import { useShortcodes } from "./emoji";
 
 export interface MentionContext {
   roles?: Role[];
   channels?: Channel[];
+  /** Standard emoji by shortcode (":tada:"), once loaded. */
+  shortcodes?: Map<string, string> | null;
 }
 
 type Rule = {
@@ -73,6 +76,11 @@ const RULES: Rule[] = [
     render: (m, _c, k) => (
       <img key={k} src={`https://cdn.discordapp.com/emojis/${m[2]}.webp?size=48`} alt={`:${m[1]}:`} title={`:${m[1]}:`} className="inline h-[1.375em] w-[1.375em] align-[-0.3em]" />
     ),
+  },
+  {
+    // Discord shows standard :shortcodes: as the emoji, even in bot messages.
+    re: /:([a-z0-9_+-]{1,40}):/,
+    render: (m, c, k) => <Fragment key={k}>{c.shortcodes?.get(m[1]) ?? m[0]}</Fragment>,
   },
   {
     re: /<@&(\d+)>/,
@@ -143,7 +151,9 @@ export function inline(text: string, ctx: MentionContext = {}): ReactNode[] {
 }
 
 /** Block markdown (headings, subtext, quotes, lists, code blocks) -> nodes. */
-export function DiscordMarkdown({ text, ctx = {} }: { text: string; ctx?: MentionContext }) {
+export function DiscordMarkdown({ text, ctx: given = {} }: { text: string; ctx?: MentionContext }) {
+  const loaded = useShortcodes();
+  const ctx = given.shortcodes ? given : { ...given, shortcodes: loaded };
   const blocks: ReactNode[] = [];
   const lines = text.split("\n");
   let i = 0;

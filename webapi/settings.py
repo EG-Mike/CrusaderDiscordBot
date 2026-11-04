@@ -99,7 +99,8 @@ def _group_for(key: str) -> str:
 # shared block, so each gets its own short explanation here instead.
 FEATURES = {
     "FEATURE_ANNOUNCEMENTS_ENABLED": ("Announcements", "/announce and its draft, edit and publish flow."),
-    "FEATURE_EMOJI_ADMIN_ENABLED": ("Emoji admin", "/add-emoji: add custom emoji from Wowhead links."),
+    "FEATURE_EMOJI_ADMIN_ENABLED": ("Emoji admin", "Adding item/spell icons as bot emoji: the dashboard's Emoji page "
+                                                   "and /add-emoji."),
     "FEATURE_ATTENDANCE_ENABLED": ("Attendance", "/checkattendance and all its subcommands."),
     "FEATURE_RAID_SUMMARY_ENABLED": ("Raid summaries", "/raidsummary and every raidsummary-* command."),
     "FEATURE_RAID_LOGS_ENABLED": ("Raid logs automation",

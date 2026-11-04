@@ -34,7 +34,7 @@ async def test(service: str, client_id: str, client_secret: str) -> tuple:
     if not client_id or not client_secret:
         return False, "Enter both the client ID and the client secret."
     try:
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as http:
+        async with aiohttp.ClientSession(trust_env=True, timeout=aiohttp.ClientTimeout(total=15)) as http:
             async with http.post(
                 TOKEN_URLS[service],
                 data={"grant_type": "client_credentials"},

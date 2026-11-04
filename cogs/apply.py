@@ -514,11 +514,6 @@ class ApplyCog(commands.Cog):
             lines.append("**Talent Build** *(live from Blizzard Armory)*\n" + "\n".join(spec_lines))
 
         if equipment:
-            try:
-                existing_by_name = {e.name: e for e in await self.bot.fetch_application_emojis()}
-            except Exception:
-                existing_by_name = {}
-
             gear_lines = []
             for it in equipment:
                 item_id = it.get("item_id")
@@ -529,9 +524,7 @@ class ApplyCog(commands.Cog):
                     try:
                         item_data = await self.bot.blizzard.get_item(item_id)
                         if item_data.get("icon_url"):
-                            icon = await icons.ensure_item_emoji(
-                                self.bot, existing_by_name, item_id, item_data["icon_url"]
-                            )
+                            icon = await icons.ensure_item_emoji(self.bot, item_id, item_data["icon_url"])
                     except Exception:
                         pass
                 icon_prefix = f"{icon} " if icon else ""

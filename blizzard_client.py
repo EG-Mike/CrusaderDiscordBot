@@ -64,6 +64,7 @@ exactly as it did before this file existed.
 import time
 import logging
 import aiohttp
+from typing import Optional
 
 from http_utils import basic_auth_header
 from storage import ApplicationStore
@@ -127,7 +128,7 @@ class BlizzardClient:
             return self._token
 
         auth_header = basic_auth_header(self.client_id, self.client_secret)
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(trust_env=True) as session:
             async with session.post(
                 OAUTH_URL,
                 params={"grant_type": "client_credentials"},
@@ -140,6 +141,25 @@ class BlizzardClient:
         self._token_expires_at = time.time() + data.get("expires_in", 86400)
         log.debug("Fetched a new Blizzard API token (expires in %ss)", data.get("expires_in", 86400))
         return self._token
+
+    async def get_game_data(self, path: str, namespace: str, params: Optional[dict] = None,
+                            session: Optional[aiohttp.ClientSession] = None) -> Optional[dict]:
+        """GET /data/wow/{path} in the given namespace family ("static",
+        "static-classic", ...; the region is appended). Returns the JSON, or
+        None when Blizzard has no such record (404). Other failures raise,
+        so callers can tell "doesn't exist" from "couldn't ask". Pass a
+        `session` to reuse one connection for many requests."""
+        token = await self._get_token()
+        query = {"namespace": f"{namespace}-{self.region}", "locale": "en_US", **(params or {})}
+        if session is None:
+            async with aiohttp.ClientSession(trust_env=True, timeout=aiohttp.ClientTimeout(total=15)) as own:
+                return await self.get_game_data(path, namespace, params, own)
+        async with session.get(f"{_api_base(self.region)}/data/wow/{path}", params=query,
+                               headers={"Authorization": f"Bearer {token}"}) as resp:
+            if resp.status == 404:
+                return None
+            resp.raise_for_status()
+            return await resp.json()
 
     async def get_item(self, item_id: int) -> dict:
         """Returns {"id", "name", "icon_slug", "icon_url", "quality"} -
@@ -182,7 +202,7 @@ class BlizzardClient:
         params = {"namespace": namespace, "locale": "en_US"}
 
         try:
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(trust_env=True) as session:
                 async with session.get(f"{base}/data/wow/item/{item_id}", params=params, headers=headers) as resp:
                     if resp.status == 404:
                         log.warning("Blizzard API has no item %s under namespace %s - using placeholder", item_id, namespace)
@@ -268,7 +288,7 @@ class BlizzardClient:
         params = {"namespace": _namespace(self.region), "locale": "en_US"}
 
         try:
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(trust_env=True) as session:
                 async with session.get(f"{base}/data/wow/media/spell/{spell_id}", params=params, headers=headers) as resp:
                     if resp.status == 404:
                         log.warning("Blizzard API has no media for spell %s - no icon", spell_id)
@@ -323,7 +343,7 @@ class BlizzardClient:
         params = {"namespace": namespace, "locale": "en_US"}
 
         try:
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(trust_env=True) as session:
                 async with session.get(f"{base}/data/wow/spell/{spell_id}", params=params, headers=headers) as resp:
                     spell_body = await resp.text()
                     lines.append(f"Spell endpoint: HTTP {resp.status}\n```\n{spell_body[:1500]}\n```")
@@ -383,7 +403,7 @@ class BlizzardClient:
         slug = character_name.lower()
 
         try:
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(trust_env=True) as session:
                 async with session.get(
                     f"{base}/profile/wow/character/{realm_slug}/{slug}/equipment",
                     params=params, headers=headers,
@@ -482,7 +502,7 @@ class BlizzardClient:
         slug = character_name.lower()
 
         try:
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(trust_env=True) as session:
                 async with session.get(
                     f"{base}/profile/wow/character/{realm_slug}/{slug}/specializations",
                     params=params, headers=headers,
@@ -533,7 +553,7 @@ class BlizzardClient:
         slug = character_name.lower()
 
         try:
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(trust_env=True) as session:
                 async with session.get(
                     f"{base}/profile/wow/character/{realm_slug}/{slug}/equipment",
                     params=params, headers=headers,
@@ -603,7 +623,7 @@ class BlizzardClient:
         params = {"namespace": _namespace(self.region), "locale": "en_US"}
 
         try:
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(trust_env=True) as session:
                 async with session.get(f"{base}/data/wow/item/{item_id}", params=params, headers=headers) as resp:
                     item_body = await resp.text()
                     lines.append(f"Item endpoint: HTTP {resp.status}\n```\n{item_body[:1500]}\n```")

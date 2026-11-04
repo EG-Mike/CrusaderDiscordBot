@@ -15,6 +15,7 @@ import SystemLogPage from "./pages/SystemLog";
 import AnnouncementsPage from "./pages/Announcements";
 import AnnouncementEditor from "./pages/AnnouncementEditor";
 import BotMessagesPage from "./pages/BotMessages";
+import EmojiPage from "./pages/Emoji";
 import { ToastProvider } from "./components/Toast";
 
 // First visit after install: open the setup wizard once per browser session
@@ -74,6 +75,7 @@ export default function App() {
           <Route path="/announcements" element={<AnnouncementsPage />} />
           <Route path="/announcements/:id" element={<AnnouncementEditor />} />
           <Route path="/bot-messages" element={<BotMessagesPage />} />
+          <Route path="/emoji" element={<EmojiPage />} />
           {soon.map((item) => (
             <Route key={item.to} path={item.to} element={<ComingSoon item={item} />} />
           ))}

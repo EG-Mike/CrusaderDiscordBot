@@ -1016,19 +1016,7 @@ class RaidSummaryCog(commands.Cog):
             resolved.append({**row, "item": item_cache[item_id]})
         return resolved
 
-    async def _fetch_existing_app_emojis(self) -> dict:
-        """Fetched ONCE per command run and passed to every icon-provisioning
-        call in that run (loot, potions, buff/debuff uptime) - see
-        icons.ensure_item_emoji/ensure_spell_emoji's own docstring for why
-        this needs to be shared rather than re-fetched per icon."""
-        try:
-            return {e.name: e for e in await self.bot.fetch_application_emojis()}
-        except Exception:
-            log.warning("Couldn't fetch application emojis for icon provisioning", exc_info=True)
-            return {}
-
-    async def _build_loot_lines(self, resolved_loot: list, guild: discord.Guild, classes_map: dict,
-                                 existing_by_name: dict) -> list:
+    async def _build_loot_lines(self, resolved_loot: list, guild: discord.Guild, classes_map: dict) -> list:
         """
         One compact line per loot row: "<item icon> [Item](wowhead) →
         <class icon> **Winner** *(OS)*". The item icon is a real bot-owned
@@ -1053,7 +1041,7 @@ class RaidSummaryCog(commands.Cog):
             if item_id not in icon_cache:
                 icon = ""
                 if item.get("icon_url"):
-                    icon = await icons.ensure_item_emoji(self.bot, existing_by_name, item_id, item["icon_url"])
+                    icon = await icons.ensure_item_emoji(self.bot, item_id, item["icon_url"])
                     await asyncio.sleep(0.3)  # pacing - a big loot night can provision many new emoji in a row
                 icon_cache[item_id] = icon or QUALITY_EMOJI.get(item.get("quality"), DEFAULT_QUALITY_EMOJI)
 
@@ -1362,7 +1350,7 @@ class RaidSummaryCog(commands.Cog):
             delta_fmt=lambda v: f"{v:.1f}%",
         )
 
-    async def _resolve_spell_icon(self, spell_id: int, existing_by_name: dict) -> str:
+    async def _resolve_spell_icon(self, spell_id: int) -> str:
         """One-off spell-icon resolution for a leaderboard header that
         isn't tied to per-line WCL matching (Top Interrupters/Dispellers) -
         same provisioning mechanism _build_uptime_lines uses per tracked
@@ -1372,10 +1360,10 @@ class RaidSummaryCog(commands.Cog):
         icon_url = await self._get_spell_icon_url(spell_id)
         if not icon_url:
             return ""
-        return await icons.ensure_spell_emoji(self.bot, existing_by_name, spell_id, icon_url)
+        return await icons.ensure_spell_emoji(self.bot, spell_id, icon_url)
 
     async def _build_potions_block(self, potion_casts: dict, guild: discord.Guild, classes_map: dict,
-                                    existing_by_name: dict, records: dict, tier_name: str) -> tuple:
+                                    records: dict, tier_name: str) -> tuple:
         """Top-3 "Destruction + Haste potions used" leaderboard (config.
         TRACKED_POTION_BUFF_SPELL_IDS, combined into one count per player by
         wcl_client._fetch_buff_usage_by_player - tracked via the temporary
@@ -1390,7 +1378,7 @@ class RaidSummaryCog(commands.Cog):
         for item_id in config.TRACKED_POTION_ITEM_IDS.values():
             item = await self._get_item_data(item_id)
             if item.get("icon_url"):
-                icon_prefix += await icons.ensure_item_emoji(self.bot, existing_by_name, item_id, item["icon_url"])
+                icon_prefix += await icons.ensure_item_emoji(self.bot, item_id, item["icon_url"])
         return self._build_ranked_block(
             "Top Potion Users (Destruction + Haste)", icon_prefix or "🧪", potion_casts, guild, classes_map,
             lambda v: f"{int(v)} used",
@@ -1399,7 +1387,7 @@ class RaidSummaryCog(commands.Cog):
         )
 
     async def _build_uptime_lines(self, aura_uptime: dict, records: dict, tier_name: str, guild: discord.Guild,
-                                   classes_map: dict, existing_by_name: dict) -> tuple:
+                                   classes_map: dict) -> tuple:
         """
         Returns (lines, updates) for the "Buff/Debuff Uptime" section -
         config.TRACKED_DEBUFFS (kept on the boss) and config.TRACKED_BUFFS
@@ -1438,7 +1426,7 @@ class RaidSummaryCog(commands.Cog):
             if not icon and spell_id:
                 icon_url = await self._get_spell_icon_url(spell_id)
                 if icon_url:
-                    icon = await icons.ensure_spell_emoji(self.bot, existing_by_name, spell_id, icon_url)
+                    icon = await icons.ensure_spell_emoji(self.bot, spell_id, icon_url)
                     await asyncio.sleep(0.3)  # same pacing _build_loot_lines uses for item-icon provisioning
 
             badge = ""
@@ -2117,10 +2105,6 @@ class RaidSummaryCog(commands.Cog):
         except Exception:
             log.warning("Boss-only totals lookup failed for %s", report_code, exc_info=True)
 
-        # Fetched once and reused for every icon this post provisions (loot,
-        # potions, buff/debuff uptime) - see _fetch_existing_app_emojis.
-        existing_by_name = await self._fetch_existing_app_emojis()
-
         header_ctx = {
             "clear_label": clear_label, "tier_name": tier_data["name"], "report_date": report_date,
             "killed_count": killed_count, "attempted_count": attempted_count, "total_pulls": total_pulls,
@@ -2190,12 +2174,12 @@ class RaidSummaryCog(commands.Cog):
         if activity_block:
             pre_loot_blocks.append(self._text_block(activity_block))
         potions_block, potions_record_update = await self._build_potions_block(
-            summary.get("potion_casts", {}), guild, classes_map, existing_by_name, records, tier_name
+            summary.get("potion_casts", {}), guild, classes_map, records, tier_name
         )
         if potions_block:
             pre_loot_blocks.append(self._text_block(potions_block))
 
-        interrupts_icon = config.TOP_INTERRUPTERS_ICON_EMOJI or await self._resolve_spell_icon(config.TOP_INTERRUPTERS_ICON_SPELL_ID, existing_by_name) or "⛔"
+        interrupts_icon = config.TOP_INTERRUPTERS_ICON_EMOJI or await self._resolve_spell_icon(config.TOP_INTERRUPTERS_ICON_SPELL_ID) or "⛔"
         interrupts_block, interrupts_record_update = self._build_ranked_block(
             "Top Interrupters", interrupts_icon, summary.get("interrupts", {}), guild, classes_map,
             lambda v: f"{int(v)} interrupt{'s' if int(v) != 1 else ''}",
@@ -2205,7 +2189,7 @@ class RaidSummaryCog(commands.Cog):
         if interrupts_block:
             pre_loot_blocks.append(self._text_block(interrupts_block))
 
-        dispels_icon = config.TOP_DISPELLERS_ICON_EMOJI or await self._resolve_spell_icon(config.TOP_DISPELLERS_ICON_SPELL_ID, existing_by_name) or "🧹"
+        dispels_icon = config.TOP_DISPELLERS_ICON_EMOJI or await self._resolve_spell_icon(config.TOP_DISPELLERS_ICON_SPELL_ID) or "🧹"
         dispels_block, dispels_record_update = self._build_ranked_block(
             "Top Dispellers", dispels_icon, summary.get("dispels", {}), guild, classes_map,
             lambda v: f"{int(v)} dispel{'s' if int(v) != 1 else ''}",
@@ -2216,7 +2200,7 @@ class RaidSummaryCog(commands.Cog):
             pre_loot_blocks.append(self._text_block(dispels_block))
 
         uptime_lines, uptime_updates = await self._build_uptime_lines(
-            aura_uptime, records, tier_name, guild, classes_map, existing_by_name
+            aura_uptime, records, tier_name, guild, classes_map
         )
         if uptime_lines:
             pre_loot_blocks.append(self._text_block("**Buff/Debuff Uptime**\n" + "\n".join(uptime_lines)))
@@ -2230,7 +2214,7 @@ class RaidSummaryCog(commands.Cog):
             }.items() if v is not None
         }
 
-        loot_lines = await self._build_loot_lines(resolved_loot, guild, classes_map, existing_by_name)
+        loot_lines = await self._build_loot_lines(resolved_loot, guild, classes_map)
         loot_blocks = self._build_loot_blocks(loot_lines)
 
         banner_source, banner_file = self._load_banner(tier_data["name"])
@@ -3407,8 +3391,7 @@ class RaidSummaryCog(commands.Cog):
             except Exception:
                 log.warning("Role composition lookup failed while adding loot for %s", report_code, exc_info=True)
 
-        existing_by_name = await self._fetch_existing_app_emojis()
-        loot_lines = await self._build_loot_lines(resolved_loot, interaction.guild, classes_map, existing_by_name)
+        loot_lines = await self._build_loot_lines(resolved_loot, interaction.guild, classes_map)
 
         record["loot_blocks"] = self._build_loot_blocks(loot_lines)
         record["loot_rows"] = loot_rows

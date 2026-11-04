@@ -15,5 +15,11 @@ export default defineConfig({
       "/auth": BOT,
     },
   },
-  build: { outDir: "dist", sourcemap: false },
+  build: {
+    outDir: "dist",
+    sourcemap: false,
+    // The standard emoji data (src/lib/emoji.ts) is one ~540 kB chunk (83 kB
+    // gzipped), loaded only when the emoji picker or a preview needs it.
+    chunkSizeWarningLimit: 600,
+  },
 });

@@ -11,6 +11,7 @@ Used by:
   - system_log.py: bot lifecycle events and captured console errors.
   - announcements.py: announcements, their version history and templates.
   - bot_messages.py: edited texts of the bot's standard messages.
+  - emoji_library.py: the bot's WoW icon emoji and which items/spells use them.
 
 One process-wide connection guarded by a lock: the bot is a single asyncio
 process and every query here is tiny, so a connection pool would be pure
@@ -25,7 +26,7 @@ from threading import RLock
 _LOCK = RLock()
 _CONN = None
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 _SCHEMA = [
     # Generic key -> JSON record store, one "store" per former JSON file
@@ -203,6 +204,38 @@ _SCHEMA = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_bot_message_history ON bot_message_history(key, id)",
+    # The bot's WoW icon emoji (emoji_library.py): one row per icon image,
+    # identified by Blizzard's icon file ID and/or the icon's name, so every
+    # item/spell sharing an icon reuses one emoji.
+    """
+    CREATE TABLE IF NOT EXISTS emoji_library (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        emoji_id    TEXT NOT NULL UNIQUE,
+        emoji_name  TEXT NOT NULL,
+        animated    INTEGER NOT NULL DEFAULT 0,
+        file_id     INTEGER,
+        icon_name   TEXT,
+        image_url   TEXT,
+        source      TEXT,
+        created_at  TEXT NOT NULL,
+        created_by  TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_emoji_library_file ON emoji_library(file_id)",
+    "CREATE INDEX IF NOT EXISTS idx_emoji_library_icon ON emoji_library(icon_name)",
+    # Which items/spells use which library emoji (the reuse list).
+    """
+    CREATE TABLE IF NOT EXISTS emoji_aliases (
+        kind       TEXT NOT NULL,
+        game_id    INTEGER NOT NULL,
+        name       TEXT NOT NULL,
+        library_id INTEGER NOT NULL REFERENCES emoji_library(id) ON DELETE CASCADE,
+        added_at   TEXT NOT NULL,
+        added_by   TEXT,
+        PRIMARY KEY (kind, game_id)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_emoji_aliases_library ON emoji_aliases(library_id)",
     # Web dashboard login sessions. Only a SHA-256 of the cookie token is
     # stored, so a leaked database file can't be replayed as a login.
     """

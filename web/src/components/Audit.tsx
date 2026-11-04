@@ -17,6 +17,7 @@ import {
   Rocket,
   ScrollText,
   Settings2,
+  Smile,
   SquareSlash,
   SquareMousePointer,
   Sparkles,
@@ -41,6 +42,7 @@ export const KINDS: Record<AuditKind, { label: string; tone: Tone; icon: LucideI
   bot: { label: "Bot", tone: "crimson", icon: Bot },
   announcement: { label: "Announcement", tone: "gold", icon: Megaphone },
   bot_message: { label: "Bot message", tone: "info", icon: MessageSquareText },
+  emoji: { label: "Emoji", tone: "gold", icon: Smile },
   audit: { label: "Audit log", tone: "neutral", icon: ScrollText },
   other: { label: "Other", tone: "neutral", icon: Sparkles },
 };

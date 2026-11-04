@@ -167,6 +167,7 @@ export type AuditKind =
   | "bot"
   | "announcement"
   | "bot_message"
+  | "emoji"
   | "audit"
   | "other";
 
@@ -347,4 +348,68 @@ export interface BotMessageVersion {
   color: string | null;
   saved_at: string;
   saved_by: string | null;
+}
+
+// --- emoji ------------------------------------------------------------------------
+
+export interface EmojiAlias {
+  kind: "item" | "spell";
+  game_id: number;
+  name: string;
+}
+
+export interface LibraryEmoji {
+  id: number;
+  emoji_id: string;
+  name: string;
+  animated: boolean;
+  text: string; // how to write it in a message, e.g. <:inv_sword_39:123>
+  url: string;
+  file_id: number | null;
+  icon_name: string | null;
+  source: string | null;
+  created_at: string;
+  created_by: string | null;
+  aliases: EmojiAlias[];
+}
+
+export interface PlainEmoji {
+  emoji_id: string;
+  name: string;
+  animated: boolean;
+  url: string;
+  text: string;
+  available?: boolean;
+}
+
+export interface EmojiOverview {
+  library: LibraryEmoji[];
+  other: PlainEmoji[];
+  server: PlainEmoji[];
+  used: number;
+  limit: number;
+  can_manage: boolean;
+  blizzard_configured: boolean;
+}
+
+export interface EmojiSearchResult {
+  kind: "item" | "spell";
+  game_id: number;
+  name?: string;
+  image_url?: string;
+  file_id?: number | null;
+  icon_name?: string | null;
+  source?: string;
+  state?: "new" | "shared" | "added";
+  emoji?: LibraryEmoji;
+  error?: string;
+}
+
+export interface EmojiAddResult {
+  kind: "item" | "spell";
+  game_id: number;
+  status: "created" | "shared" | "exists" | "error";
+  emoji?: LibraryEmoji;
+  item?: EmojiSearchResult;
+  error?: string;
 }

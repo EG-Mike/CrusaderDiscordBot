@@ -18,6 +18,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { Channel, Role } from "../lib/api";
+import { EmojiPicker } from "./EmojiPicker";
 import { cx } from "./ui";
 
 type Edit = (text: string, start: number, end: number) => { text: string; select: [number, number] };
@@ -122,7 +123,10 @@ export function MarkdownEditor({
 
   return (
     <div className={cx("overflow-hidden rounded-lg border bg-bg transition focus-within:border-gold/60", over ? "border-crimson/60" : "border-line")}>
-      <div className="scrollbar-thin flex items-center gap-0.5 overflow-x-auto border-b border-line px-1.5 py-1" role="toolbar" aria-label="Formatting">
+      <div className="flex items-center gap-0.5 border-b border-line px-1.5 py-1" role="toolbar" aria-label="Formatting">
+        {/* The picker sits outside the scrolling part so its popup isn't clipped. */}
+        <EmojiPicker onPick={(text) => apply(insert(text))} disabled={disabled} />
+        <div className="scrollbar-thin flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
         {TOOLS.filter((t) => !t.sectionsOnly || sections).map((tool) => (
           <ToolButton key={tool.label} label={tool.label} onClick={() => apply(tool.edit)} disabled={disabled}>
             <tool.icon className="h-3.5 w-3.5" />
@@ -150,6 +154,7 @@ export function MarkdownEditor({
             ))}
           </select>
         )}
+        </div>
       </div>
       <textarea
         ref={ref}

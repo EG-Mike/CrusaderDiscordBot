@@ -282,7 +282,7 @@ class WowheadClient:
         }
 
         try:
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(trust_env=True) as session:
                 text = await self._get_xml_text(session, ITEM_XML_URL.format(item_id=item_id))
         except Exception:
             log.warning("Wowhead lookup failed for item %s - using placeholder", item_id, exc_info=True)
@@ -336,7 +336,7 @@ class WowheadClient:
         }
 
         try:
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(trust_env=True) as session:
                 text = await self._get_xml_text(session, SPELL_XML_URL.format(spell_id=spell_id))
         except Exception:
             log.warning("Wowhead lookup failed for spell %s - using placeholder", spell_id, exc_info=True)

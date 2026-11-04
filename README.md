@@ -255,9 +255,9 @@ Every poll carries the footer from `config.POLL_FOOTER`.
    permanently, since Gargul's export only gives an item ID) - see the
    setup step below and `wowhead.py`. Each loot line's icon is a real
    Discord emoji, auto-provisioned the first time that item shows up in a
-   summary (reusing `/add-emoji`'s own "Wowhead icon -> bot-owned
-   application emoji" mechanism - see `icons.ensure_item_emoji`) - never
-   consumes the server's own emoji slots.
+   summary through the emoji library (one emoji per icon, shared with every
+   item/spell using that icon - see "Emoji") - never consumes the server's
+   own emoji slots.
 
 ## Commands
 
@@ -276,7 +276,7 @@ Every poll carries the footer from `config.POLL_FOOTER`.
 | `/announce` | Draft an announcement in the sandbox channel, with Edit/Publish buttons. |
 | `/announce-edit-published <message_id>` | Edit a published announcement by message ID - fallback for one with no working Edit button. |
 | `/announce-fix-legacy-buttons` | One-time cleanup: strip the old public Edit button from announcements published before it moved to the sandbox. |
-| `/add-emoji <wowhead_links>` | Add custom emoji from one or more Wowhead item/spell links. |
+| `/add-emoji <wowhead_links>` | Add item/spell icons as bot emoji from Wowhead links (icons are reused; see "Emoji"). |
 | `/gearcheck archive` | Move all approved/denied applications to the archive channel. |
 | `/checkattendance run` | Generate/refresh the attendance overview (no cooldown). |
 | `/checkattendance addlog <date> <tier> <link>` | Add a main-raid log to the tracked list. |
@@ -319,7 +319,7 @@ extension list, just flip the flag and restart:
 | Flag | Cog | Disables |
 |---|---|---|
 | `FEATURE_ANNOUNCEMENTS_ENABLED` | `cogs/announcements.py` | `/announce` and its edit/publish flow |
-| `FEATURE_EMOJI_ADMIN_ENABLED` | `cogs/emoji_admin.py` | `/add-emoji` |
+| `FEATURE_EMOJI_ADMIN_ENABLED` | `cogs/emoji_admin.py` | `/add-emoji` and adding/deleting emoji on the dashboard |
 | `FEATURE_ATTENDANCE_ENABLED` | `cogs/attendance.py` | `/checkattendance` and all its subcommands |
 | `FEATURE_RAID_SUMMARY_ENABLED` | `cogs/raid_summary.py` | `/raidsummary` and every `raidsummary-*` command |
 | `FEATURE_RAID_LOGS_ENABLED` | `cogs/raid_logs.py` | the #logs tagging/auto-Summarize automation (section 11 below) |
@@ -400,6 +400,27 @@ Where to read it:
 
 The text file rotates at 5 MB keeping 5 backups (`AUDIT_LOG_MAX_BYTES`,
 `AUDIT_LOG_BACKUP_COUNT`).
+
+## Emoji
+
+The bot can turn WoW item and spell icons into its own emoji ("application
+emoji", owned by the bot and usable by it in any message; Discord allows
+2000 per bot). On the dashboard (**Communication, Emoji**) search an item or
+spell by name, or paste Wowhead links (only their ID is used), and add it.
+`/add-emoji <links>` does the same from Discord.
+
+- **One emoji per icon.** Many items and spells share an icon (Flash Heal,
+  Flash of Light and Amplify Magic all use `spell_holy_flashheal`), so the
+  icon gets one emoji and every item/spell using it is listed with it.
+  Raid summaries' loot and ability icons use the same library.
+- **Blizzard first.** Names and icons come from Blizzard's API, trying the
+  namespaces in `EMOJI_BLIZZARD_NAMESPACES` (classic first while on TBC).
+  Wowhead's tooltip service is only used for things Blizzard doesn't have,
+  and to learn an icon's name; `EMOJI_WOWHEAD_FALLBACK` switches that off.
+- **Emoji picker.** The announcement and bot-message editors have an emoji
+  button with the bot's emoji (searchable by item/spell name), the
+  server's custom emoji and the standard set. The previews also show
+  `:shortcodes:` like `:tada:` the way Discord does.
 
 ## System log
 
@@ -983,7 +1004,7 @@ icons.py             - shared icon resolution (guild emoji + auto-provisioned ap
 cogs/
   apply.py           - the whole guild-application feature (self-contained)
   announcements.py   - the whole announcement feature (self-contained)
-  emoji_admin.py     - /add-emoji (Wowhead link -> bot-owned application emoji)
+  emoji_admin.py     - /add-emoji (item/spell icons -> bot emoji, via emoji_library.py)
   attendance.py      - the whole attendance-tracking feature (self-contained)
   raid_summary.py    - the whole raid-summary feature (self-contained)
   tier_retrospective.py - /tier-recap, an end-of-tier stats recap built entirely from

@@ -73,7 +73,7 @@ def login_url(bot, state: str) -> str:
 
 async def exchange_code(bot, code: str) -> dict:
     """Authorization code -> the Discord user ({id, username, global_name, avatar})."""
-    async with aiohttp.ClientSession() as http:
+    async with aiohttp.ClientSession(trust_env=True) as http:
         async with http.post(
             f"{DISCORD_API}/oauth2/token",
             data={

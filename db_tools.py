@@ -40,7 +40,8 @@ def info():
     system_count = db.query("SELECT COUNT(*) AS n FROM system_log")[0]["n"]
     print(f"  system log entries:          {system_count}")
     for label, table in (("announcements", "announcements"), ("announcement templates", "announcement_templates"),
-                         ("edited bot messages", "bot_messages")):
+                         ("edited bot messages", "bot_messages"), ("icon emoji", "emoji_library"),
+                         ("items/spells with an emoji", "emoji_aliases")):
         count = db.query(f"SELECT COUNT(*) AS n FROM {table}")[0]["n"]
         print(f"  {label + ':':<29}{count}")
 

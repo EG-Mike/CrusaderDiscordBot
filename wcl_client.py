@@ -417,7 +417,7 @@ class WarcraftLogsClient:
             )
 
         auth_header = basic_auth_header(self.client_id, self.client_secret)
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(trust_env=True) as session:
             async with session.post(
                 TOKEN_URL,
                 data={"grant_type": "client_credentials"},
@@ -490,7 +490,7 @@ class WarcraftLogsClient:
         token = await self._get_token()
         headers = {"Authorization": f"Bearer {token}"}
 
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(trust_env=True) as session:
             payload = await self._post_graphql(session, headers, CLASS_MAP_QUERY)
 
         if "errors" in payload:
@@ -509,7 +509,7 @@ class WarcraftLogsClient:
         token = await self._get_token()
         headers = {"Authorization": f"Bearer {token}"}
 
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(trust_env=True) as session:
             payload = await self._post_graphql(
                 session, headers, CHARACTER_QUERY,
                 {"name": name, "serverSlug": server_slug, "serverRegion": server_region},
@@ -563,7 +563,7 @@ class WarcraftLogsClient:
         headers = {"Authorization": f"Bearer {token}"}
         variables = {"id": character_id, "zoneId": zone_id}
 
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(trust_env=True) as session:
             payload = await self._post_graphql(session, headers, CHARACTER_TIER_QUERY, variables)
 
         if "errors" in payload:
@@ -1036,7 +1036,7 @@ class WarcraftLogsClient:
         token = await self._get_token()
         headers = {"Authorization": f"Bearer {token}"}
 
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(trust_env=True) as session:
             payload = await self._post_graphql(
                 session, headers, REPORT_FIGHTS_AND_RANKINGS_QUERY, {"code": report_code}
             )
@@ -1184,7 +1184,7 @@ class WarcraftLogsClient:
 
         token = await self._get_token()
         headers = {"Authorization": f"Bearer {token}"}
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(trust_env=True) as session:
             _, wipe_tally = await self._fetch_player_details(session, headers, report_code, wipe_fight_ids)
 
         tally = {name: dict(counts) for name, counts in summary["kill_fight_roles"].items()}
@@ -1274,7 +1274,7 @@ class WarcraftLogsClient:
 
         token = await self._get_token()
         headers = {"Authorization": f"Bearer {token}"}
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(trust_env=True) as session:
             debuffs_all = await self._fetch_aura_uptime(session, headers, report_code, all_fight_ids, REPORT_DEBUFFS_QUERY)
             debuffs_boss = await self._fetch_aura_uptime(session, headers, report_code, boss_fight_ids, REPORT_DEBUFFS_QUERY)
             debuffs_by_source = await self._fetch_aura_uptime_by_player(
@@ -1340,7 +1340,7 @@ class WarcraftLogsClient:
 
         token = await self._get_token()
         headers = {"Authorization": f"Bearer {token}"}
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(trust_env=True) as session:
             damage_done = await self._fetch_damage_done(session, headers, report_code, boss_fight_ids)
             healing_done, _overheal_pct, overheal_raw = await self._fetch_healing_done(
                 session, headers, report_code, boss_fight_ids
@@ -1390,7 +1390,7 @@ class WarcraftLogsClient:
         }
 
         try:
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(trust_env=True) as session:
                 payload = await self._post_graphql(session, headers, GUILD_ZONE_RANKINGS_QUERY, variables)
         except Exception:
             log.warning("Failed to fetch guild zone rankings for %s", guild_name, exc_info=True)
@@ -1456,7 +1456,7 @@ class WarcraftLogsClient:
         try:
             token = await self._get_token()
             headers = {"Authorization": f"Bearer {token}"}
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(trust_env=True) as session:
                 async with session.post(API_URL, json={"query": RATE_LIMIT_QUERY}, headers=headers) as resp:
                     resp.raise_for_status()
                     payload = await resp.json()

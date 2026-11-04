@@ -107,6 +107,10 @@ version or raid tier is a configuration change.
 - `bot_messages.py`: the bot's standard texts (pinned explainers, DMs)
   with their defaults and `{placeholders}`; cogs call `bot_messages.embed()`
   / `.text()` instead of hardcoding text.
+- `emoji_library.py`: the bot's WoW icon emoji, one per icon image (keyed
+  by Blizzard's icon file ID / icon name) with the items and spells that
+  share it; Blizzard API first, Wowhead tooltip only as a fallback. Used by
+  the Emoji page, the editor emoji picker, `/add-emoji` and raid summaries.
 - `secret_store.py`: external API keys, Fernet-encrypted in the database
   (key file `secret.key` next to it). Write-only towards the browser.
 - `webapi/`: aiohttp dashboard API inside the bot process: Discord OAuth
@@ -136,6 +140,10 @@ set in the dashboard.
   automatically, with help text from the comment above each constant).
   Missing configuration must make the feature inactive with a clear
   message, never crash the bot.
+- **Outbound HTTP**: create sessions with `aiohttp.ClientSession(trust_env=True)`
+  so a host's proxy settings are honoured (the dev environment needs it;
+  without a proxy nothing changes). Prefer Blizzard's API over Wowhead
+  (Wowhead blocks datacenter IPs).
 - **Texts the bot posts on its own** belong in `bot_messages.py` (editable
   on the dashboard), not in cog code.
 - **Discord IDs** are snowflakes larger than JavaScript's safe integer
@@ -169,8 +177,9 @@ set in the dashboard.
 - Phase 4: Raid summaries, Raid logs, Attendance, Tier recap, Records.
   These are the most game-version-dependent areas, so plan them together
   with the WoW Forever data model.
-- Phase 5: Maintenance tools, emoji, public pages, notifications,
-  command palette.
+- Emoji (brought forward from Phase 5, done): Emoji page with item/spell
+  search and icon reuse, and an emoji picker in the editors.
+- Phase 5: Maintenance tools, public pages, notifications, command palette.
 
 Access is moderator-only for now; the permission model (Viewer level,
 public pages) must allow opening it up later.
