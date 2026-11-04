@@ -12,9 +12,10 @@ this), either shown or hidden with a reason.
   hidden     not shown at all (still read from deployment.py and
              deployment_local.py); the reason is in a comment
   widget     a friendlier editor than raw JSON: "text_list", "number_list",
-             "role_map" (fixed names -> a role each), "role_set" (pick roles)
+             "role_map" (fixed names -> a role each), "role_set" (pick roles),
+             "choice_list" (an ordered pick from `choices`)
   unit       shown after a number field ("minutes", "days", ...)
-  choices    [(value, label)] for a dropdown
+  choices    [(value, label)] for a dropdown (or a choice_list's options)
 """
 
 from typing import Dict, List, NamedTuple, Optional, Tuple
@@ -23,9 +24,17 @@ from typing import Dict, List, NamedTuple, Optional, Tuple
 SECTIONS: List[Tuple[str, str]] = [
     ("general", "General"),
     ("features", "Features"),
-    ("integrations", "Integrations"),
     ("system", "System"),
 ]
+
+# Tabs that combine several groups, each shown as its own subsection:
+# tab id -> (label, description, group ids in order). Every other group is
+# a tab of its own.
+COMBINED_TABS: Dict[str, Tuple[str, str, List[str]]] = {
+    "integrations": ("Integrations", "API keys and how the bot talks to Blizzard and WarcraftLogs.",
+                     ["api_keys", "blizzard", "warcraftlogs", "icons"]),
+    "logs": ("Logs", "What the System log and the Audit log keep, and for how long.", ["logging", "audit"]),
+}
 
 # (id, section, label, description). Groups with a custom panel (guild,
 # api_keys, setup) can have few or no settings of their own.
@@ -43,12 +52,12 @@ GROUPS: List[Tuple[str, str, str, str]] = [
     ("roster", "features", "Guild roster", "Characters linked to Discord members."),
     ("leveling", "features", "Leveling", "The leveling leaderboard and milestone announcements."),
     ("notifications", "features", "Notifications", "Alerts the bot posts for moderators. Changes apply immediately."),
-    ("api_keys", "integrations", "API keys", "Keys for Blizzard and WarcraftLogs."),
-    ("blizzard", "integrations", "Blizzard", "Which game Blizzard's API is asked about."),
-    ("warcraftlogs", "integrations", "WarcraftLogs", "How your guild and realm are named on WarcraftLogs."),
-    ("icons", "integrations", "Item & spell icons", "Where the icons for emoji come from."),
-    ("logging", "system", "Logging", "What the System log keeps, and for how long."),
-    ("audit", "system", "Audit log", "How long the history of who did what is kept."),
+    ("api_keys", "general", "API keys", "Keys for Blizzard and WarcraftLogs. Stored encrypted and never shown again."),
+    ("blizzard", "general", "Blizzard", "Which game Blizzard's API is asked about."),
+    ("warcraftlogs", "general", "WarcraftLogs", "How your guild and realm are named on WarcraftLogs."),
+    ("icons", "general", "Item & spell icons", "Where the icons for emoji come from."),
+    ("logging", "system", "System log", "Bot starts, stops and updates, and the console messages kept with them."),
+    ("audit", "system", "Audit log", "The history of who did what with the bot."),
     ("setup", "system", "Setup guide", "The step-by-step guide for setting the bot up."),
 ]
 
@@ -320,8 +329,9 @@ CATALOG: Dict[str, Entry] = {
     # --- Item & spell icons ------------------------------------------------------------------------------
     "EMOJI_BLIZZARD_NAMESPACES": Entry(
         "icons", "Blizzard game data to search",
-        "Tried in order; the region is added automatically. \"static-classic\" is TBC Anniversary, \"static\" the "
-        "modern game, \"static-forever\" WoW Forever.", widget="text_list"),
+        "Searched in this order until one has the item or spell.", widget="choice_list",
+        choices=[("static-forever", "WoW Forever"), ("static-classic", "TBC Anniversary (progression Classic)"),
+                 ("static-classic1x", "Classic Era"), ("static", "The modern game (retail)")]),
     "EMOJI_WOWHEAD_FALLBACK": Entry("icons", "Ask Wowhead when Blizzard can't help",
                                     "For items and spells Blizzard doesn't know, and for icon names."),
     "EMOJI_WOWHEAD_DATA_ENV": Entry("icons", "Wowhead game version", "Which game Wowhead lookups are for.",

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { CheckCircle2, ChevronDown, Rocket, RotateCcw, Search, SlidersHorizontal } from "lucide-react";
-import { api, type Channel, type Role, type Setting, type SettingGroup, type SettingSection } from "../lib/api";
+import { api, type Channel, type Role, type Setting, type SettingGroup, type SettingSection, type SettingTab } from "../lib/api";
 import { useLive } from "../lib/live";
 import { SettingRow } from "../components/SettingRow";
 import { GuildPanel } from "../components/GuildPanel";
@@ -12,13 +12,14 @@ import { Button, EmptyState, SectionHeader, Skeleton, Toggle, cx } from "../comp
 
 interface SettingsResponse {
   sections: SettingSection[];
+  tabs: SettingTab[];
   groups: SettingGroup[];
   settings: Setting[];
 }
 
 type Filter = "all" | "changed" | "pending";
 
-// Tabs with their own panel above (or instead of) the settings list.
+// Groups with their own panel above (or instead of) their settings.
 const PANELS = new Set(["guild", "api_keys", "notifications", "setup"]);
 const ADVANCED_KEY = "settings.showAdvanced";
 
@@ -71,8 +72,13 @@ export default function SettingsPage() {
   const query = params.get("q") ?? "";
   const filter = (params.get("filter") as Filter) ?? "all";
   const browsing = !query && filter === "all";
+  // ?group= takes a tab or any group inside one (older links name the group).
+  const tabFor = (id: string | undefined) => data?.tabs.find((t) => t.id === id || (id && t.groups.includes(id)))?.id;
   const targetGroup = data?.settings.find((s) => s.key === target)?.group;
-  const group = params.get("group") ?? (browsing ? targetGroup ?? "guild" : "");
+  const param = params.get("group");
+  const group = param ? tabFor(param) ?? param : browsing ? tabFor(targetGroup) ?? "guild" : "";
+  const activeTab = data?.tabs.find((t) => t.id === group);
+  const tabGroups = activeTab?.groups ?? [group];
 
   const setParam = (updates: Record<string, string | null>) => {
     const next = new URLSearchParams(params);
@@ -106,14 +112,21 @@ export default function SettingsPage() {
   // Links like /settings#REVIEW_CHANNEL_ID: scroll to that setting once it
   // has rendered, and highlight it briefly.
   useEffect(() => {
-    if (!data || !target) return;
-    const el = document.getElementById(target);
+    if (!data) return;
+    // A link to a group inside a combined tab (e.g. ?group=api_keys) scrolls to that part.
+    const subsection = !target && param && param !== group ? `section-${param}` : "";
+    if (!target && !subsection) return;
+    const el = document.getElementById(target || subsection);
     if (!el) return;
+    if (subsection) {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
     el.scrollIntoView({ behavior: "smooth", block: "start" });
     el.classList.add("ring-2", "ring-gold/50");
     const t = window.setTimeout(() => el.classList.remove("ring-2", "ring-gold/50"), 1800);
     return () => window.clearTimeout(t);
-  }, [data, target]);
+  }, [data, target, param, group]);
 
   // Advanced settings show when asked for, when searching, or when linked to directly.
   const shown = (s: Setting) => showAdvanced || !s.advanced || s.key === target || !browsing;
@@ -123,12 +136,12 @@ export default function SettingsPage() {
     const q = query.toLowerCase();
     return data.settings.filter(
       (s) =>
-        (!group || s.group === group) &&
+        (!group || tabGroups.includes(s.group)) &&
         shown(s) &&
         (filter === "all" || (filter === "changed" ? s.overridden : s.pending_restart)) &&
         (!q || s.key.toLowerCase().includes(q) || s.label.toLowerCase().includes(q) || s.help.toLowerCase().includes(q)),
     );
-  }, [data, group, filter, query, showAdvanced, target]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [data, group, activeTab, filter, query, showAdvanced, target]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const onSaved = (updated: Setting) => {
     setData((d) => d && { ...d, settings: d.settings.map((s) => (s.key === updated.key ? updated : s)) });
@@ -139,10 +152,22 @@ export default function SettingsPage() {
 
   const pendingCount = data?.settings.filter((s) => s.pending_restart).length ?? 0;
   const changedCount = data?.settings.filter((s) => s.overridden).length ?? 0;
-  const activeGroup = data?.groups.find((g) => g.id === group);
-  const tabCount = (g: SettingGroup) => g.count - (showAdvanced ? 0 : g.advanced_count);
-  const tabs = (sectionId: string) => (data?.groups ?? []).filter((g) => g.section === sectionId && (tabCount(g) > 0 || PANELS.has(g.id)));
-  const hiddenAdvanced = activeGroup && browsing && !showAdvanced ? activeGroup.advanced_count : 0;
+  const shownCount = (t: SettingTab | SettingGroup) => t.count - (showAdvanced ? 0 : t.advanced_count);
+  const tabs = (sectionId: string) =>
+    (data?.tabs ?? []).filter((t) => t.section === sectionId && (shownCount(t) > 0 || t.groups.some((g) => PANELS.has(g))));
+  const hiddenAdvanced = activeTab && browsing && !showAdvanced ? activeTab.advanced_count : 0;
+  const groupInfo = (id: string) => data?.groups.find((g) => g.id === id);
+
+  const panel = (id: string) =>
+    id === "guild" ? <GuildPanel /> : id === "notifications" ? <NotificationsPanel /> : id === "setup" ? <SetupPanel /> : id === "api_keys" ? <Integrations /> : null;
+
+  const rows = (list: Setting[]) => (
+    <div className="space-y-3">
+      {list.map((s) => (
+        <SettingRow key={s.key} setting={s} roles={roles} channels={channels} onSaved={onSaved} />
+      ))}
+    </div>
+  );
 
   return (
     <>
@@ -175,17 +200,17 @@ export default function SettingsPage() {
             ? data.sections.map((section) => (
                 <div key={section.id} className="mb-4">
                   <div className="label px-2.5 pb-1.5">{section.label}</div>
-                  {tabs(section.id).map((g) => (
+                  {tabs(section.id).map((t) => (
                     <button
-                      key={g.id}
-                      onClick={() => setParam({ group: g.id, filter: null, q: null })}
+                      key={t.id}
+                      onClick={() => setParam({ group: t.id, filter: null, q: null })}
                       className={cx(
                         "flex w-full items-center justify-between gap-3 rounded-lg px-2.5 py-1.5 text-left text-[13px] transition",
-                        group === g.id ? "bg-gold/10 text-fg" : "text-muted hover:bg-raised hover:text-fg",
+                        group === t.id ? "bg-gold/10 text-fg" : "text-muted hover:bg-raised hover:text-fg",
                       )}
                     >
-                      {g.label}
-                      {tabCount(g) > 0 && <span className="text-2xs text-faint">{tabCount(g)}</span>}
+                      {t.label}
+                      {shownCount(t) > 0 && <span className="text-2xs text-faint">{shownCount(t)}</span>}
                     </button>
                   ))}
                 </div>
@@ -201,9 +226,9 @@ export default function SettingsPage() {
           {!group && <option value="">Search results</option>}
           {data?.sections.map((section) => (
             <optgroup key={section.id} label={section.label}>
-              {tabs(section.id).map((g) => (
-                <option key={g.id} value={g.id}>
-                  {g.label}
+              {tabs(section.id).map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.label}
                 </option>
               ))}
             </optgroup>
@@ -247,45 +272,62 @@ export default function SettingsPage() {
             </label>
           </div>
 
-          {activeGroup && browsing && (
+          {activeTab && browsing && (
             <div className="mb-4">
-              <h2 className="text-base font-semibold">{activeGroup.label}</h2>
-              <p className="text-muted">{activeGroup.description}</p>
+              <h2 className="text-base font-semibold">{activeTab.label}</h2>
+              <p className="text-muted">{activeTab.description}</p>
             </div>
           )}
 
-          {browsing && group === "guild" && <GuildPanel />}
-          {browsing && group === "notifications" && <NotificationsPanel />}
-          {browsing && group === "setup" && <SetupPanel />}
-
-          {browsing && group === "api_keys" ? (
-            <Integrations />
-          ) : !data ? (
+          {!data ? (
             <div className="space-y-3">
               {[0, 1, 2].map((i) => (
                 <Skeleton key={i} className="h-32" />
               ))}
             </div>
-          ) : visible.length === 0 ? (
-            browsing && PANELS.has(group) ? null : (
-              <div className="card">
-                <EmptyState icon={<SlidersHorizontal className="h-6 w-6" />} title="Nothing here">
-                  {query
-                    ? `No setting matches "${query}".`
-                    : filter === "pending"
-                      ? "No changes are waiting for a restart."
-                      : filter === "changed"
-                        ? "No settings have been changed from their defaults."
-                        : "Only advanced settings here. Switch on Advanced to see them."}
-                </EmptyState>
-              </div>
-            )
-          ) : (
-            <div className="space-y-3">
-              {visible.map((s) => (
-                <SettingRow key={s.key} setting={s} roles={roles} channels={channels} onSaved={onSaved} />
-              ))}
+          ) : browsing && activeTab ? (
+            // One tab: its groups in order, each with its panel and settings
+            // (with a heading when the tab combines several).
+            <div className="space-y-8">
+              {activeTab.groups.map((gid) => {
+                const info = groupInfo(gid);
+                const list = visible.filter((s) => s.group === gid);
+                const own = panel(gid);
+                if (!own && list.length === 0 && activeTab.groups.length > 1) return null;
+                return (
+                  <section key={gid} id={`section-${gid}`} className="scroll-mt-24">
+                    {activeTab.groups.length > 1 && info && (
+                      <div className="mb-3 border-b border-line pb-2">
+                        <h3 className="font-semibold">{info.label}</h3>
+                        <p className="text-muted">{info.description}</p>
+                      </div>
+                    )}
+                    {own}
+                    {list.length > 0 ? (
+                      rows(list)
+                    ) : !own ? (
+                      <div className="card">
+                        <EmptyState icon={<SlidersHorizontal className="h-6 w-6" />} title="Nothing here">
+                          Only advanced settings here. Switch on Advanced to see them.
+                        </EmptyState>
+                      </div>
+                    ) : null}
+                  </section>
+                );
+              })}
             </div>
+          ) : visible.length === 0 ? (
+            <div className="card">
+              <EmptyState icon={<SlidersHorizontal className="h-6 w-6" />} title="Nothing here">
+                {query
+                  ? `No setting matches "${query}".`
+                  : filter === "pending"
+                    ? "No changes are waiting for a restart."
+                    : "No settings have been changed from their defaults."}
+              </EmptyState>
+            </div>
+          ) : (
+            rows(visible)
           )}
           {data && (visible.length > 0 || hiddenAdvanced > 0) && (
             <p className="mt-4 flex flex-wrap items-center gap-1.5 text-2xs text-faint">

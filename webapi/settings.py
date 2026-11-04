@@ -70,7 +70,7 @@ def feature_labels() -> dict:
 
 
 def _kind_for(key: str, value) -> str:
-    if _entry(key).choices:
+    if _entry(key).choices and _entry(key).widget != "choice_list":
         return "enum"
     if isinstance(value, bool):
         return "bool"
@@ -186,7 +186,31 @@ def list_settings() -> dict:
         groups.append({"id": "other", "section": "system", "label": "Other", "description": "New settings.",
                        "count": len(other), "advanced_count": len(other)})
     return {"sections": [{"id": sid, "label": label} for sid, label in catalog.SECTIONS],
-            "groups": groups, "settings": items}
+            "tabs": _tabs(groups), "groups": groups, "settings": items}
+
+
+def _tabs(groups: list) -> list:
+    """The Settings page's menu: one tab per group, except COMBINED_TABS,
+    which show several groups as subsections. In the order of their first
+    group."""
+    by_id = {g["id"]: g for g in groups}
+    combined_of = {gid: tab for tab, (_, _, gids) in catalog.COMBINED_TABS.items() for gid in gids}
+    tabs, seen = [], set()
+    for group in groups:
+        tab_id = combined_of.get(group["id"], group["id"])
+        if tab_id in seen:
+            continue
+        seen.add(tab_id)
+        if tab_id in catalog.COMBINED_TABS:
+            label, description, gids = catalog.COMBINED_TABS[tab_id]
+            members = [by_id[g] for g in gids if g in by_id]
+        else:
+            label, description, members = group["label"], group["description"], [group]
+        tabs.append({"id": tab_id, "section": group["section"], "label": label, "description": description,
+                     "groups": [g["id"] for g in members],
+                     "count": sum(g["count"] for g in members),
+                     "advanced_count": sum(g["advanced_count"] for g in members)})
+    return tabs
 
 
 class SettingError(ValueError):
@@ -214,7 +238,13 @@ def validate(key: str, value, guild=None):
         raise SettingError(str(exc)) from None
 
     choices = _entry(key).choices
-    if choices and typed not in [v for v, _ in choices]:
+    allowed = [v for v, _ in choices or []]
+    if _entry(key).widget == "choice_list":
+        if not typed:
+            raise SettingError(f"{label}: pick at least one")
+        if any(v not in allowed for v in typed) or len(set(typed)) != len(typed):
+            raise SettingError(f"{label}: pick from the options, each once")
+    elif choices and typed not in allowed:
         raise SettingError(f"{label}: pick one of the options")
     if key == "RAID_LOG_AUTO_SUMMARIZE_TIME" and not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", typed):
         raise SettingError("Use 24-hour HH:MM, e.g. 23:59")
