@@ -38,7 +38,7 @@ export const NAV: { group: string; items: NavItem[] }[] = [
       { to: "/announcements", label: "Announcements", icon: Megaphone },
       { to: "/bot-messages", label: "Bot messages", icon: MessageSquareText },
       { to: "/emoji", label: "Emoji", icon: Smile },
-      { to: "/polls", label: "Polls", icon: Vote, soon: true },
+      { to: "/polls", label: "Polls", icon: Vote },
     ],
   },
   {

@@ -401,6 +401,45 @@ Where to read it:
 The text file rotates at 5 MB keeping 5 backups (`AUDIT_LOG_MAX_BYTES`,
 `AUDIT_LOG_BACKUP_COUNT`).
 
+## Notifications
+
+The bot posts alerts in a moderator channel (**Settings, Notifications**;
+when no notifications channel is set it uses the moderator chat channel):
+
+- **Restarts, updates and outages**: one "back online" message after every
+  start, saying which version is running (with a link to the changes after
+  an update), why the bot stopped and for how long, or that the previous
+  run ended unexpectedly; plus Discord connection outages.
+- **Error reports**: how many errors the console logged and where, at most
+  every `NOTIFY_ERRORS_EVERY_MINUTES`. Never the error text itself: that
+  stays in the System log, which only admins can read.
+- **Dashboard changes** (settings, API keys, setup, restarts, maintenance)
+  and **announcements**, grouped so a burst of changes is one message.
+
+Each kind can be switched off. These settings apply immediately (no
+restart), and the settings page has a "Send a test" button.
+
+## Polls on the dashboard
+
+**Communication, Polls** lists every poll (also the ones made with
+`/poll create`), with live vote counts. Start a poll with the same options
+as the command, then open or close voting, add or remove options, remove
+the deadline, change settings or delete it. Votes stay as private as the
+poll promised: moderators see the counts, but who voted for what only when
+the poll's votes are public, and privacy settings can only be switched off.
+
+## Maintenance
+
+**System, Maintenance** shows what's stored and lets admins download a
+database backup (made while the bot runs; API keys stay encrypted and need
+`secret.key` to restore), apply log retention now, compact the database,
+log out every other dashboard session, empty the Blizzard and Wowhead
+caches, re-sync slash commands, and remove old Edit buttons from published
+announcements. Everything is recorded in the audit log.
+
+Press **Ctrl+K** (or Cmd+K) anywhere on the dashboard to jump to a page,
+setting, announcement or bot message, or to run a common action.
+
 ## Emoji
 
 The bot can turn WoW item and spell icons into its own emoji ("application
@@ -726,6 +765,9 @@ Built so far (phases 0 and 1):
   it stops (`WEB_RESTART_ENABLED`, on in the Docker setup).
 - **System log**: bot starts, stops, updates, unexpected stops and
   console errors, without SSH. See "System log" above.
+- **Announcements, Bot messages, Emoji, Polls, Maintenance** and
+  **notifications** (phases 2 and 3), and a **Ctrl+K command palette**.
+  See their sections above.
 - **Audit log** (phase 1): the full, searchable history of who did what,
   in Discord and on the dashboard, updating live, with CSV export. The
   Overview shows the latest activity. See "Audit log" above.

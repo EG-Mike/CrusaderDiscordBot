@@ -3,7 +3,6 @@ import { SectionHeader } from "../components/ui";
 
 const PHASE: Record<string, string> = {
   "/applications": "Phase 4",
-  "/polls": "Phase 3",
   "/raid-summaries": "Phase 4",
   "/raid-logs": "Phase 4",
   "/records": "Phase 4",

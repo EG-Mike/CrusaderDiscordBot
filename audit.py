@@ -62,6 +62,7 @@ KINDS = {
     "bot_message": "Bot message",
     "emoji": "Emoji",
     "maintenance": "Maintenance",
+    "poll": "Poll",
     "audit": "Audit log",
     "other": "Other",
 }

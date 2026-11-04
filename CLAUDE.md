@@ -111,13 +111,19 @@ version or raid tier is a configuration change.
   by Blizzard's icon file ID / icon name) with the items and spells that
   share it; Blizzard API first, Wowhead tooltip only as a fallback. Used by
   the Emoji page, the editor emoji picker, `/add-emoji` and raid summaries.
+- `cogs/notifications.py`: alerts in a moderator channel, built from the
+  System log and the audit trail. Settings named `NOTIFY_*` /
+  `NOTIFICATIONS_*` apply immediately (`webapi/settings.LIVE_PREFIXES`):
+  use that pattern only for settings read at the moment they're used.
 - `secret_store.py`: external API keys, Fernet-encrypted in the database
   (key file `secret.key` next to it). Write-only towards the browser.
 - `webapi/`: aiohttp dashboard API inside the bot process: Discord OAuth
   login, DB-backed sessions, role-based access (moderator/approver/admin),
   CSRF header check, settings, integrations, setup wizard, restart.
   `server.py` wires the app; feature APIs live in their own module
-  (`announcements_api.py`, `bot_messages_api.py`) using `common.py`.
+  (`announcements_api.py`, `polls_api.py`, `maintenance_api.py`, ...)
+  using `common.py`. When a cog feature gets a dashboard page, move its
+  rules into interaction-free methods both sides call (see `cogs/polls.py`).
 - `web/`: dashboard frontend (React + TypeScript + Vite + Tailwind). The
   dark theme is inspired by (not copied from) oxm.gg, with a "crusader
   gold" accent.
@@ -175,12 +181,11 @@ set in the dashboard.
   posting. Plus the Bot messages page (`bot_messages.py`).
 - Emoji (brought forward, done): Emoji page with item/spell search and
   icon reuse, and an emoji picker in the editors.
-- Phase 3: Polls, command palette (Ctrl+K: pages, settings, actions),
-  notifications (alerts for crashes, errors, updates and other events),
-  and general maintenance tools (database backup/download, storage info,
-  cache clearing, slash command re-sync, one-off cleanups such as
-  `/announce-fix-legacy-buttons`). Brought forward from the old phase 5:
-  none of them depends on game data.
+- Phase 3 (done): Polls page (`webapi/polls_api.py` on the polls cog's
+  shared rules), command palette (Ctrl+K), notifications to a moderator
+  channel (`cogs/notifications.py`), and maintenance tools
+  (`webapi/maintenance_api.py`: backup, retention, compact, caches,
+  command re-sync, sessions).
 - Phase 4: Applications, Raid summaries, Raid logs, Attendance, Tier recap,
   Records, and the game-data diagnostics (`/apply-test-blizzard`,
   `/raidsummary-test-*`, `/raidsummary-refresh-cache`). These all depend

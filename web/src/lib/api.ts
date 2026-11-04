@@ -172,6 +172,7 @@ export type AuditKind =
   | "bot_message"
   | "emoji"
   | "maintenance"
+  | "poll"
   | "audit"
   | "other";
 
@@ -416,4 +417,42 @@ export interface EmojiAddResult {
   emoji?: LibraryEmoji;
   item?: EmojiSearchResult;
   error?: string;
+}
+
+// --- polls ---------------------------------------------------------------------
+
+export type PollPhase = "adding" | "voting" | "closed";
+
+export interface PollSettings {
+  members_can_add: boolean;
+  max_adds: number;
+  collect_first: boolean;
+  max_votes: number;
+  live_results: boolean;
+  show_authors: boolean;
+  show_voters: boolean;
+  allow_vote_change: boolean;
+}
+
+export interface Poll {
+  message_id: string;
+  channel_id: string;
+  channel_name: string | null;
+  question: string;
+  description: string | null;
+  phase: PollPhase;
+  created_by: string;
+  created_by_name: string | null;
+  closes_at: number | null; // unix seconds
+  duration: number | null;
+  voter_count: number;
+  results_public: boolean;
+  settings: PollSettings;
+  options: { id: number; text: string; votes: number; author_name: string | null; voters: string[] }[];
+}
+
+export interface PollList {
+  polls: Poll[];
+  defaults: Omit<PollSettings, "members_can_add">;
+  feature_enabled: boolean;
 }
