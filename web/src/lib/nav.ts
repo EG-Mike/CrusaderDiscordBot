@@ -69,7 +69,7 @@ export const NAV: { group: string; items: NavItem[] }[] = [
         count: (status, me) => (me.levels.includes("admin") ? status.system.errors_24h : 0) + status.system.crashes_7d,
       },
       { to: "/settings", label: "Settings", icon: Settings },
-      { to: "/maintenance", label: "Maintenance", icon: Wrench, soon: true },
+      { to: "/maintenance", label: "Maintenance", icon: Wrench },
     ],
   },
 ];

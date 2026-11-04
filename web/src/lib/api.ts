@@ -171,6 +171,7 @@ export type AuditKind =
   | "announcement"
   | "bot_message"
   | "emoji"
+  | "maintenance"
   | "audit"
   | "other";
 

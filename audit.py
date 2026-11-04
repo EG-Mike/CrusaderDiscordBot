@@ -61,6 +61,7 @@ KINDS = {
     "announcement": "Announcement",
     "bot_message": "Bot message",
     "emoji": "Emoji",
+    "maintenance": "Maintenance",
     "audit": "Audit log",
     "other": "Other",
 }

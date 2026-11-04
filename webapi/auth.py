@@ -181,6 +181,15 @@ def delete_session(token: str):
         db.execute("DELETE FROM web_sessions WHERE token_hash = ?", (_hash(token),))
 
 
+def delete_other_sessions(keep_token: str) -> int:
+    """Logs out every dashboard session except the given one."""
+    return db.execute("DELETE FROM web_sessions WHERE token_hash != ?", (_hash(keep_token or ""),)).rowcount
+
+
+def count_sessions() -> int:
+    return db.query("SELECT COUNT(*) AS n FROM web_sessions WHERE expires_at > datetime('now')")[0]["n"]
+
+
 def purge_expired_sessions():
     db.execute("DELETE FROM web_sessions WHERE expires_at <= datetime('now')")
 

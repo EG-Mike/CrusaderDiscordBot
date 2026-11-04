@@ -26,7 +26,7 @@ that are exactly `---`. Text follows Discord's own markdown.
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import discord
 
@@ -457,6 +457,21 @@ async def delete_everywhere(bot, announcement_id) -> List[str]:
                 pass
     delete(record["id"])
     return notes
+
+
+async def remove_legacy_buttons(bot) -> Tuple[int, List[str]]:
+    """Re-renders every published announcement without buttons (very early
+    versions put a public Edit button on them). Safe to run repeatedly.
+    Returns (updated, [message IDs that couldn't be reached])."""
+    updated, unreachable = 0, []
+    for record in list_announcements(status="published", limit=500):
+        try:
+            message = await _published_message(bot, record)
+            await message.edit(view=published_view(record), allowed_mentions=discord.AllowedMentions.none())
+            updated += 1
+        except (AnnouncementError, discord.HTTPException):
+            unreachable.append(str(record.get("message_id")))
+    return updated, unreachable
 
 
 # --- templates -------------------------------------------------------------------------

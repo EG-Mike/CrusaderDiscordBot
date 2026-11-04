@@ -311,6 +311,19 @@ def exists() -> bool:
     return os.path.exists(db_path())
 
 
+def backup_to(target: str):
+    """A consistent copy of the database at `target`, safe while the bot
+    runs (SQLite's online backup)."""
+    import sqlite3
+
+    with _LOCK:
+        dest = sqlite3.connect(target)
+        try:
+            connection().backup(dest)
+        finally:
+            dest.close()
+
+
 def get_meta(key: str, default=None):
     rows = query("SELECT value FROM meta WHERE key = ?", (key,))
     return rows[0]["value"] if rows else default

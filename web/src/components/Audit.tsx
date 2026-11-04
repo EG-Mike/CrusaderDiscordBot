@@ -18,6 +18,7 @@ import {
   ScrollText,
   Settings2,
   Smile,
+  Wrench,
   SquareSlash,
   SquareMousePointer,
   Sparkles,
@@ -43,6 +44,7 @@ export const KINDS: Record<AuditKind, { label: string; tone: Tone; icon: LucideI
   announcement: { label: "Announcement", tone: "gold", icon: Megaphone },
   bot_message: { label: "Bot message", tone: "info", icon: MessageSquareText },
   emoji: { label: "Emoji", tone: "gold", icon: Smile },
+  maintenance: { label: "Maintenance", tone: "warn", icon: Wrench },
   audit: { label: "Audit log", tone: "neutral", icon: ScrollText },
   other: { label: "Other", tone: "neutral", icon: Sparkles },
 };

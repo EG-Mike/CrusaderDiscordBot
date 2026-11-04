@@ -39,7 +39,7 @@ class LifecycleTests(SystemLogTestCase):
         system_log.shutdown()
         system_log.startup()
         self.assertEqual(self.events(), ["bot.started", "bot.stopped", "bot.started"])
-        stopped = system_log.search({"q": "dashboard"})[0][0]
+        stopped = system_log.search({"q": "restarted from the dashboard"})[0][0]
         self.assertEqual(stopped["message"], "Bot stopped: restarted from the dashboard by Mike.")
 
     def test_unclean_stop_is_reported_on_next_start(self):

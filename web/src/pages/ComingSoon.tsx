@@ -2,14 +2,13 @@ import { Hourglass } from "lucide-react";
 import { SectionHeader } from "../components/ui";
 
 const PHASE: Record<string, string> = {
-  "/applications": "Phase 3",
+  "/applications": "Phase 4",
   "/polls": "Phase 3",
   "/raid-summaries": "Phase 4",
   "/raid-logs": "Phase 4",
   "/records": "Phase 4",
   "/attendance": "Phase 4",
   "/tier-recap": "Phase 4",
-  "/maintenance": "Phase 5",
 };
 
 export default function ComingSoon({ item }: { item: { to: string; label: string } }) {

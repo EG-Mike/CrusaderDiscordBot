@@ -13,7 +13,6 @@ folder, with the bot STOPPED for `export`/`import`:
 
 import json
 import os
-import sqlite3
 import sys
 from datetime import datetime
 
@@ -61,8 +60,7 @@ def export(folder="json_export"):
 
 def backup(target=None):
     target = target or f"crusader-backup-{datetime.now():%Y%m%d-%H%M%S}.db"
-    with sqlite3.connect(target) as dest:
-        db.connection().backup(dest)
+    db.backup_to(target)
     print(f"Backed up to {target}")
 
 

@@ -236,18 +236,8 @@ class AnnouncementsCog(commands.Cog):
         if await self._refuse_non_mod(interaction, "run this"):
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
-        updated, unreachable = 0, []
-        for record in service.list_announcements(status="published", limit=500):
-            channel = self.bot.get_channel(int(record["channel_id"])) if record.get("channel_id") else None
-            try:
-                message = await channel.fetch_message(int(record["message_id"])) if channel else None
-            except discord.HTTPException:
-                message = None
-            if message is None:
-                unreachable.append(f"`{record['message_id']}`")
-                continue
-            await message.edit(view=service.published_view(record), allowed_mentions=discord.AllowedMentions.none())
-            updated += 1
+        updated, unreachable = await service.remove_legacy_buttons(self.bot)
+        unreachable = [f"`{m}`" for m in unreachable]
         summary = f"Done - re-rendered **{updated}** published announcement(s) with no Edit button."
         if unreachable:
             summary += f"\nCouldn't reach {len(unreachable)}: {', '.join(unreachable[:10])}"

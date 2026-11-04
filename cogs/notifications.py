@@ -46,7 +46,7 @@ CHANGES_QUIET_SECONDS = 30      # post dashboard changes once they've stopped fo
 CHANGES_MAX_WAIT_SECONDS = 120  # ...or when the oldest has waited this long
 MAX_LINES = 15
 
-DASHBOARD_CHANGE_KINDS = {"setting", "integration", "setup", "bot", "bot_message", "emoji"}
+DASHBOARD_CHANGE_KINDS = {"setting", "integration", "setup", "bot", "bot_message", "emoji", "maintenance"}
 ANNOUNCEMENT_ACTIONS = {
     "announcements.publish": "published",
     "announcements.edit_published": "edited",
