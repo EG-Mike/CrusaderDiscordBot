@@ -57,10 +57,12 @@ version or raid tier is a configuration change.
 - **Test bot**: a separate Discord application in a private test server,
   running as a Docker container on the same VPS (`/opt/crusader-test`,
   see `deploy/test/`). GitHub Actions builds the image on every push
-  (`.github/workflows/docker-image.yml`; tag `test` for the dashboard
-  branch, `latest` for `main`, for **amd64 and arm64**; the VPS is ARM).
+  (`.github/workflows/docker-image.yml`; tag `test` for the `beta` branch, `latest` for `main`, for **amd64 and arm64**; the VPS is ARM).
   The VPS pulls new builds every 5 minutes. **The test environment can be
   changed freely**: breaking changes and rewrites are fine there.
+- **Branches**: work happens on `beta` (the test bot runs it); merging
+  `beta` into `main` releases it to the live bot. Push to `beta`, not to a
+  new branch of your own.
 - The dashboard is reached over an SSH tunnel (PuTTY) at
   http://localhost:8081. It is not exposed to the internet.
 - **Dev bot (cloud sessions)**: Claude Code cloud sessions for this repo

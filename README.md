@@ -818,7 +818,7 @@ How updates flow:
 1. Code is pushed to GitHub.
 2. GitHub Actions (`.github/workflows/docker-image.yml`) builds a Docker
    image (bot and dashboard together) and publishes it to GitHub's
-   container registry: tag `test` for the dashboard branch, `latest` for
+   container registry: tag `test` for the `beta` branch, `latest` for
    `main`.
 3. On the VPS, `update.sh` runs every 5 minutes from cron. When there's a
    new image it restarts the container with it; otherwise it does nothing.
@@ -864,7 +864,7 @@ At https://discord.com/developers/applications create a new application
 
 #### 3. Let GitHub build the image
 
-The workflow runs automatically on every push to the dashboard branch. To
+The workflow runs automatically on every push to the `beta` branch. To
 check it: on GitHub, open the repository's **Actions** tab, then **Docker
 image**. A green run means the image is published; the repository page's
 **Packages** section then lists it.
