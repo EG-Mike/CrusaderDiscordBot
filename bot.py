@@ -9,6 +9,7 @@ shouldn't need much else touched.
 import os
 import asyncio
 import logging
+import signal
 import time
 
 import discord
@@ -22,6 +23,7 @@ from blizzard_client import BlizzardClient
 from storage import ApplicationStore
 import icons
 import secret_store
+import system_log
 
 load_dotenv()
 
@@ -47,6 +49,10 @@ if _bot_log_level != (config.LOG_LEVEL or "").upper():
     log.warning("config.LOG_LEVEL=%r isn't a valid logging level - using INFO instead", config.LOG_LEVEL)
 
 logging.getLogger("discord").setLevel(_resolve_log_level(config.LOG_DISCORD_LIBRARY_LEVEL, "WARNING"))
+
+# Keep console warnings/errors in the dashboard's System log too
+# (config.SYSTEM_LOG_LEVEL), so they can be read without SSH access.
+system_log.install()
 
 DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
 
@@ -183,19 +189,74 @@ async def on_ready():
     )
 
 
-async def main():
-    async with bot:
-        disabled = [name for name, enabled in OPTIONAL_EXTENSIONS if not enabled]
-        log.info("Loading extensions: %s", EXTENSIONS)
-        if disabled:
-            log.info("Disabled by config/deployment.py FEATURE_*_ENABLED flags: %s", disabled)
-        for extension in EXTENSIONS:
-            await bot.load_extension(extension)
+# Why the process is stopping, by signal: Docker, AMP and systemd send
+# SIGTERM to stop, restart or update the bot; Ctrl+C sends SIGINT.
+SHUTDOWN_SIGNALS = {
+    signal.SIGTERM: "the host asked it to stop (a stop, restart or update from Docker/AMP)",
+    signal.SIGINT: "Ctrl+C in the console",
+}
+
+
+SHUTDOWN_GRACE_SECONDS = 5  # well inside Docker's 10 s before it kills the process
+
+
+def _install_signal_handlers():
+    """Turn stop signals into a clean shutdown, so the System log records why
+    the bot stopped instead of reporting an unexpected stop next time."""
+    loop = asyncio.get_running_loop()
+    main_task = asyncio.current_task()
+
+    async def stop(reason):
+        log.info("Shutting down: %s", reason)
+        system_log.set_shutdown_reason(reason)
         try:
-            await bot.start(DISCORD_TOKEN)
-        except (KeyboardInterrupt, asyncio.CancelledError):
-            print("Shutting down gracefully...")
-            await bot.close()
+            await asyncio.wait_for(bot.close(), SHUTDOWN_GRACE_SECONDS)
+        except asyncio.TimeoutError:
+            pass
+        # Something (e.g. a login request still in flight) can keep
+        # bot.start() waiting after close(): stop it rather than be killed.
+        await asyncio.sleep(SHUTDOWN_GRACE_SECONDS)
+        if main_task is not None and not main_task.done():
+            log.warning("Still busy %ss after closing (e.g. a request to Discord hanging) - cancelling it",
+                        SHUTDOWN_GRACE_SECONDS)
+            main_task.cancel()
+
+    for sig, reason in SHUTDOWN_SIGNALS.items():
+        try:
+            loop.add_signal_handler(sig, lambda reason=reason: loop.create_task(stop(reason)))
+        except (NotImplementedError, RuntimeError):
+            pass  # Windows: Ctrl+C still raises KeyboardInterrupt below
+
+
+async def main():
+    system_log.startup()
+    _install_signal_handlers()
+    try:
+        async with bot:
+            system_log.attach(bot)
+            disabled = [name for name, enabled in OPTIONAL_EXTENSIONS if not enabled]
+            log.info("Loading extensions: %s", EXTENSIONS)
+            if disabled:
+                log.info("Disabled by config/deployment.py FEATURE_*_ENABLED flags: %s", disabled)
+            for extension in EXTENSIONS:
+                await bot.load_extension(extension)
+            try:
+                await bot.start(DISCORD_TOKEN)
+            except (KeyboardInterrupt, asyncio.CancelledError):
+                system_log.set_shutdown_reason(SHUTDOWN_SIGNALS[signal.SIGINT], overwrite=False)
+                print("Shutting down gracefully...")
+                await bot.close()
+    except Exception:
+        if system_log.stop_requested():
+            # Stopping while still logging in can make discord.py's closed
+            # HTTP session raise; that's part of the requested stop, not a crash.
+            log.info("Stopped while connecting to Discord", exc_info=True)
+            return
+        log.critical("The bot stopped because of an error", exc_info=True)
+        system_log.set_shutdown_reason("an error (see the critical entry before this one)")
+        raise
+    finally:
+        system_log.shutdown()
 
 
 if __name__ == "__main__":

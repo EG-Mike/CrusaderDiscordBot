@@ -8,6 +8,7 @@ Used by:
   - the web dashboard (webapi/): login sessions, dashboard-edited settings
     and their change history, encrypted API keys (secret_store.py).
   - audit.py: the audit trail (who did what with the bot, and when).
+  - system_log.py: bot lifecycle events and captured console errors.
 
 One process-wide connection guarded by a lock: the bot is a single asyncio
 process and every query here is tiny, so a connection pool would be pure
@@ -22,7 +23,7 @@ from threading import RLock
 _LOCK = RLock()
 _CONN = None
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA = [
     # Generic key -> JSON record store, one "store" per former JSON file
@@ -102,6 +103,26 @@ _SCHEMA = [
     "CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_events(actor_id, id)",
     "CREATE INDEX IF NOT EXISTS idx_audit_channel ON audit_events(channel_id, id)",
     "CREATE INDEX IF NOT EXISTS idx_audit_kind ON audit_events(kind, id)",
+    # System log (system_log.py): bot lifecycle events (started, stopped,
+    # updated, crashed) and console warnings/errors. Repeats of the same
+    # message are folded into one row (count, last_seen).
+    """
+    CREATE TABLE IF NOT EXISTS system_log (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at TEXT NOT NULL,
+        last_seen  TEXT NOT NULL,
+        count      INTEGER NOT NULL DEFAULT 1,
+        level      TEXT NOT NULL,
+        category   TEXT NOT NULL,
+        event      TEXT NOT NULL,
+        message    TEXT NOT NULL,
+        details    TEXT,
+        fingerprint TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_system_log_created ON system_log(created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_system_log_level ON system_log(level, id)",
+    "CREATE INDEX IF NOT EXISTS idx_system_log_fingerprint ON system_log(fingerprint, id)",
     # Web dashboard login sessions. Only a SHA-256 of the cookie token is
     # stored, so a leaked database file can't be replayed as a login.
     """

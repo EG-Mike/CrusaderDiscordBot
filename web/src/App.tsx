@@ -11,6 +11,7 @@ import Overview from "./pages/Overview";
 import SettingsPage from "./pages/Settings";
 import ComingSoon from "./pages/ComingSoon";
 import AuditLogPage from "./pages/AuditLog";
+import SystemLogPage from "./pages/SystemLog";
 import { ToastProvider } from "./components/Toast";
 
 // First visit after install: open the setup wizard once per browser session
@@ -66,6 +67,7 @@ export default function App() {
           <Route path="/setup" element={<SetupPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/audit-log" element={<AuditLogPage />} />
+          <Route path="/system-log" element={<SystemLogPage />} />
           {soon.map((item) => (
             <Route key={item.to} path={item.to} element={<ComingSoon item={item} />} />
           ))}

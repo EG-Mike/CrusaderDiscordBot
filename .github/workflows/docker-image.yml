@@ -47,6 +47,9 @@ jobs:
           fi
           echo "tags=$image:$channel,$image:sha-$short_sha" >> "$GITHUB_OUTPUT"
           echo "version=$short_sha" >> "$GITHUB_OUTPUT"
+          # First line of the commit message, shown in the dashboard's System log.
+          echo "title=$(git log -1 --format=%s | tr -d '\r' | cut -c1-200)" >> "$GITHUB_OUTPUT"
+          echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-qemu-action@v3
 
@@ -64,6 +67,10 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
-          build-args: APP_VERSION=${{ steps.meta.outputs.version }}
+          build-args: |
+            APP_VERSION=${{ steps.meta.outputs.version }}
+            APP_COMMIT_TITLE=${{ steps.meta.outputs.title }}
+            APP_BUILT_AT=${{ steps.meta.outputs.built_at }}
+            APP_REPOSITORY=${{ github.repository }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

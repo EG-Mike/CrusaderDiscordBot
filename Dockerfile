@@ -32,9 +32,16 @@ RUN pip install -r requirements.txt
 COPY . .
 COPY --from=web /web/dist /app/web/dist
 
-# Shown in the dashboard's sidebar (set by the GitHub Actions build).
+# Which build this is (set by the GitHub Actions build): shown in the
+# dashboard and recorded in the System log when the bot is updated.
 ARG APP_VERSION=dev
+ARG APP_COMMIT_TITLE=
+ARG APP_BUILT_AT=
+ARG APP_REPOSITORY=
 ENV APP_VERSION=$APP_VERSION \
+    APP_COMMIT_TITLE=$APP_COMMIT_TITLE \
+    APP_BUILT_AT=$APP_BUILT_AT \
+    APP_REPOSITORY=$APP_REPOSITORY \
     WEB_HOST=0.0.0.0 \
     WEB_PORT=8081 \
     BOT_DB_PATH=/data/crusader.db

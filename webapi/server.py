@@ -9,7 +9,7 @@ Routes:
   /api/...                                    JSON API (login required)
   /api/ws                                     live updates (WebSocket):
                                               bot status, setting changes,
-                                              new audit events
+                                              new audit and system log entries
   everything else                             the built frontend (web/dist)
 
 Binds to 127.0.0.1 by default: put a reverse proxy (Caddy) in front of it
@@ -23,7 +23,6 @@ import json
 import logging
 import os
 import secrets
-import subprocess
 import time
 from datetime import datetime, timezone
 from urllib.parse import quote
@@ -31,10 +30,12 @@ from urllib.parse import quote
 import discord
 from aiohttp import WSMsgType, web
 
+import app_version
 import audit as audit_store
 import config
 import db
 import secret_store
+import system_log
 from webapi import auth, integrations
 from webapi import settings as settings_api
 
@@ -49,19 +50,7 @@ HUB_KEY = web.AppKey("hub", object)
 STARTED_KEY = web.AppKey("started", float)
 
 
-def _git_version() -> str:
-    # Docker images have no .git folder: the build passes the commit in.
-    if os.environ.get("APP_VERSION"):
-        return os.environ["APP_VERSION"][:12]
-    try:
-        return subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True, timeout=5,
-        ).stdout.strip() or "unknown"
-    except Exception:
-        return "unknown"
-
-
-VERSION = _git_version()
+VERSION = app_version.VERSION
 
 
 def _json(data, status=200):
@@ -267,6 +256,22 @@ async def me(request):
     })
 
 
+def _system_status() -> dict:
+    """System log headline for the Overview (counts only, no log text)."""
+    summary = system_log.summary()
+    update = summary["last_update"]
+    return {
+        "errors_24h": summary["errors_24h"],
+        "warnings_24h": summary["warnings_24h"],
+        "crashes_7d": summary["crashes_7d"],
+        "last_error_at": summary["last_error_at"],
+        "last_update": {
+            "at": update["created_at"],
+            "previous_version": update["details"].get("previous_version"),
+        } if update else None,
+    }
+
+
 def _status(app) -> dict:
     bot = app[BOT_KEY]
     guild = auth.guild_for(bot)
@@ -284,6 +289,12 @@ def _status(app) -> dict:
         "latency_ms": round(latency * 1000) if latency == latency and latency != float("inf") else None,
         "uptime_seconds": round(time.monotonic() - app[STARTED_KEY]),
         "version": VERSION,
+        "version_info": {
+            "title": app_version.INFO["title"],
+            "built_at": app_version.INFO["built_at"],
+            "commit_url": app_version.commit_url(VERSION),
+        },
+        "system": _system_status(),
         # e.g. "test" - shown as a badge so a test dashboard is never mistaken for live.
         "environment": os.environ.get("WEB_ENVIRONMENT") or None,
         "bot": {
@@ -582,6 +593,65 @@ def _csv_safe(value: str) -> str:
     return "'" + value if value[:1] in ("=", "+", "-", "@", "\t", "\r") else value
 
 
+# --- system log ----------------------------------------------------------------------
+
+SYSTEM_EVENTS_LEVEL = "moderator"  # bot started/stopped/updated/crashed
+CONSOLE_LEVEL = "admin"            # console output can include member data and internals
+
+SYSTEM_VIEWS = {
+    "": {},
+    "lifecycle": {"category": "lifecycle"},
+    "errors": {"levels": ["ERROR", "CRITICAL"]},
+    "warnings": {"levels": ["WARNING"]},
+}
+
+
+def _system_filters(request) -> dict:
+    query = request.query
+    view = query.get("view", "")
+    if view not in SYSTEM_VIEWS:
+        raise ValueError("Unknown view")
+    filters = dict(SYSTEM_VIEWS[view])
+    if CONSOLE_LEVEL not in request["levels"]:
+        filters["category"] = "lifecycle"
+    if query.get("since"):
+        try:
+            filters["since"] = audit_store.parse_time(query["since"])
+        except ValueError:
+            raise ValueError("'since' must be an ISO date/time") from None
+    if query.get("q", "").strip():
+        filters["q"] = query["q"].strip()[:100]
+    return filters
+
+
+async def system_log_list(request):
+    if SYSTEM_EVENTS_LEVEL not in request["levels"]:
+        return _error("You don't have access to the system log", 403)
+    try:
+        filters = _system_filters(request)
+    except ValueError as exc:
+        return _error(str(exc), 400)
+    try:
+        before_id = int(request.query["before_id"]) if request.query.get("before_id") else None
+        limit = int(request.query.get("limit", 50))
+    except ValueError:
+        return _error("before_id and limit must be numbers", 400)
+    entries, has_more = await asyncio.to_thread(system_log.search, filters, before_id=before_id, limit=limit)
+    return _json({"entries": entries, "has_more": has_more})
+
+
+async def system_log_meta(request):
+    if SYSTEM_EVENTS_LEVEL not in request["levels"]:
+        return _error("You don't have access to the system log", 403)
+    summary = await asyncio.to_thread(system_log.summary)
+    return _json({
+        **summary,
+        "console_visible": CONSOLE_LEVEL in request["levels"],
+        "version": {**app_version.INFO, "commit_url": app_version.commit_url(VERSION)},
+        "uptime_seconds": round(time.monotonic() - request.app[STARTED_KEY]),
+    })
+
+
 # --- setup & restart -----------------------------------------------------------------
 
 def _restart_available() -> bool:
@@ -637,6 +707,7 @@ async def restart(request):
         return _error("Restarting from the dashboard isn't enabled on this server (WEB_RESTART_ENABLED)", 400)
     audit(request, "bot", "bot.restart", "Restarted the bot")
     log.warning("Restart requested from the dashboard by %s", request["user"]["username"])
+    system_log.set_shutdown_reason(f"restarted from the dashboard by {request['user']['username']}")
     bot = request.app[BOT_KEY]
 
     async def _shutdown():
@@ -729,6 +800,8 @@ def create_app(bot) -> web.Application:
     app.router.add_get("/api/audit", audit_list)
     app.router.add_get("/api/audit/meta", audit_meta)
     app.router.add_get("/api/audit/export", audit_export)
+    app.router.add_get("/api/system-log", system_log_list)
+    app.router.add_get("/api/system-log/meta", system_log_meta)
     app.router.add_get("/api/ws", websocket)
     app.router.add_route("*", "/api/{tail:.*}", api_not_found)
 
@@ -747,9 +820,17 @@ def create_app(bot) -> web.Application:
                                                level=AUDIT_LEVEL))
             loop.call_soon_threadsafe(send)
 
-        unsubscribe = audit_store.subscribe(on_audit_event)
+        def on_system_entry(entry):
+            level = SYSTEM_EVENTS_LEVEL if entry["category"] == "lifecycle" else CONSOLE_LEVEL
+
+            def send():
+                loop.create_task(hub.broadcast({"type": "system.entry", "entry": entry}, level=level))
+            loop.call_soon_threadsafe(send)
+
+        unsubscribers = [audit_store.subscribe(on_audit_event), system_log.subscribe(on_system_entry)]
         yield
-        unsubscribe()
+        for unsubscribe in unsubscribers:
+            unsubscribe()
         task.cancel()
 
     app.cleanup_ctx.append(start_background)

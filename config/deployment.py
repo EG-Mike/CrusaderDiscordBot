@@ -160,6 +160,16 @@ AUDIT_LOG_RETENTION_DAYS = 365
 AUDIT_LOG_MAX_BYTES = 5 * 1024 * 1024
 AUDIT_LOG_BACKUP_COUNT = 5
 
+# --- System log (system_log.py) ---
+# Which console output is also kept in the dashboard's System log, so it
+# can be read without SSH access: "ERROR" (errors only), "WARNING" (default:
+# warnings and errors), "INFO" (everything the console shows, noisy) or
+# "OFF". Bot starts, stops, updates and unexpected stops are always kept.
+SYSTEM_LOG_LEVEL = "WARNING"
+
+# How many days of system log the database keeps. 0 keeps everything.
+SYSTEM_LOG_RETENTION_DAYS = 90
+
 # Fallback guild emoji names, used only if a class/role isn't in
 # CLASS_ICON_URLS / ROLE_ICON_URLS below (e.g. you already manually
 # uploaded some before switching to the URL-based method, or just prefer

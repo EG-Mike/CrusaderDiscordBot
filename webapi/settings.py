@@ -34,6 +34,7 @@ ENUMS = {
     "LOG_LEVEL": LOG_LEVELS,
     "LOG_DISCORD_LIBRARY_LEVEL": LOG_LEVELS,
     "SERVER_REGION": ["us", "eu", "kr", "tw", "cn"],
+    "SYSTEM_LOG_LEVEL": ["OFF", "ERROR", "WARNING", "INFO"],
 }
 
 # Settings whose fallback comes from .env (see deployment.py's "Discord
@@ -78,6 +79,8 @@ GROUPS = [
      lambda k: k.startswith(("TRACKED_", "TOP_", "EXCLUDED_", "PARSE_")) or k in {
          "RAID_TIER_BANNERS", "CLEAR_STATUS_TAG_NAMES", "TIER_TAG_IDS", "RAID_TYPE_TAG_IDS"}),
     ("polls", "Polls", "Defaults for new polls.", lambda k: k.startswith("POLL_")),
+    ("system_log", "System log", "Bot starts, stops, updates and console errors, and how long they're kept.",
+     lambda k: k.startswith("SYSTEM_LOG_")),
     ("audit", "Audit log", "Who did what with the bot, and how long that history is kept.", lambda k: k.startswith("AUDIT_LOG_")),
     ("icons", "Icons & emoji", "Where class, role, spec and ability icons come from.",
      lambda k: "ICON" in k or "EMOJI" in k),

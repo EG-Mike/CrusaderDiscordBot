@@ -371,6 +371,33 @@ Where to read it:
 The text file rotates at 5 MB keeping 5 backups (`AUDIT_LOG_MAX_BYTES`,
 `AUDIT_LOG_BACKUP_COUNT`).
 
+## System log
+
+The dashboard's **System log** page shows what happened to the bot itself,
+so you don't need SSH access to find out:
+
+- **Bot events**: every start and stop, with the reason ("the host asked
+  it to stop" for a Docker/AMP stop, restart or update; "restarted from
+  the dashboard by ..."; an error), every **update to a new version** (with
+  the commit title, a link to the changes on GitHub and, for git
+  installs, the list of commits), unexpected stops (a crash, out of
+  memory, or the process being killed, noticed on the next start), and
+  Discord connection outages longer than a minute.
+- **Console output**: warnings and errors from the bot and the libraries
+  it uses, with full tracebacks. The same message repeating is shown once
+  with a count, and an error loop can't flood the database.
+
+Known secrets (bot token, OAuth client secret, API keys) and anything that
+looks like a token are replaced with `[redacted]` before anything is
+stored. Console output is only shown to dashboard **admins**, since it can
+contain technical details; moderators see the bot events.
+
+The Overview shows the running version and when it was last updated, and
+lists errors from the last 24 hours and unexpected stops under "Needs
+attention". Settings (dashboard, "System log" section):
+`SYSTEM_LOG_LEVEL` (`WARNING` by default; `ERROR`, `INFO` or `OFF`) and
+`SYSTEM_LOG_RETENTION_DAYS` (90).
+
 ## Restricting who can approve applications
 
 By default the review channel is meant to be mod-only at the Discord
@@ -646,6 +673,8 @@ Built so far (phases 0 and 1):
 - **Integrations**: API keys entered in the browser, stored encrypted.
 - **Restart** button for admins, when the hosting restarts the bot after
   it stops (`WEB_RESTART_ENABLED`, on in the Docker setup).
+- **System log**: bot starts, stops, updates, unexpected stops and
+  console errors, without SSH. See "System log" above.
 - **Audit log** (phase 1): the full, searchable history of who did what,
   in Discord and on the dashboard, updating live, with CSV export. The
   Overview shows the latest activity. See "Audit log" above.

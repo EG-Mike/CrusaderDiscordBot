@@ -20,7 +20,7 @@ import { ApiError, api, type AuditEvent, type AuditKind, type AuditMeta, type Au
 import { useLive } from "../lib/live";
 import { fullDateTime, shortDateTime, useNow } from "../lib/time";
 import { Avatar, EventDetails, KINDS, KindBadge, Where } from "../components/Audit";
-import { Button, EmptyState, SectionHeader, Skeleton, StatTile, cx } from "../components/ui";
+import { Button, EmptyState, SectionHeader, Segmented, Skeleton, StatTile, cx } from "../components/ui";
 
 const PAGE_SIZE = 50;
 
@@ -84,37 +84,6 @@ function matches(e: AuditEvent, f: Filters) {
       (v ?? "").toLowerCase().includes(q),
     );
   return true;
-}
-
-function Segmented<T extends string>({
-  value,
-  options,
-  onChange,
-  label,
-}: {
-  value: T;
-  options: readonly (readonly [T, string, ...unknown[]])[];
-  onChange: (v: T) => void;
-  label: string;
-}) {
-  return (
-    <div className="flex shrink-0 rounded-lg border border-line bg-surface p-0.5" role="group" aria-label={label}>
-      {options.map(([id, text]) => (
-        <button
-          key={id}
-          type="button"
-          aria-pressed={value === id}
-          onClick={() => onChange(id)}
-          className={cx(
-            "rounded-md px-2.5 py-1.5 text-xs font-medium transition",
-            value === id ? "bg-gold/15 text-gold" : "text-muted hover:text-fg",
-          )}
-        >
-          {text}
-        </button>
-      ))}
-    </div>
-  );
 }
 
 function EventRow({

@@ -13,6 +13,7 @@ import {
   Rocket,
   ScrollText,
   Search,
+  Server,
   Settings,
   Swords,
   Trophy,
@@ -21,7 +22,8 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import { api, type Me } from "../lib/api";
+import { api, type Me, type Status } from "../lib/api";
+import { useMe } from "../lib/me";
 import { formatDuration, useLive } from "../lib/live";
 import { Badge, cx } from "./ui";
 
@@ -30,6 +32,8 @@ interface NavItem {
   label: string;
   icon: LucideIcon;
   soon?: boolean;
+  /** Small count shown next to the label (e.g. errors waiting to be read). */
+  count?: (status: Status, me: Me) => number;
 }
 
 export const NAV: { group: string; items: NavItem[] }[] = [
@@ -62,6 +66,12 @@ export const NAV: { group: string; items: NavItem[] }[] = [
     items: [
       { to: "/setup", label: "Setup", icon: Rocket },
       { to: "/audit-log", label: "Audit log", icon: ScrollText },
+      {
+        to: "/system-log",
+        label: "System log",
+        icon: Server,
+        count: (status, me) => (me.levels.includes("admin") ? status.system.errors_24h : 0) + status.system.crashes_7d,
+      },
       { to: "/settings", label: "Settings", icon: Settings },
       { to: "/maintenance", label: "Maintenance", icon: Wrench, soon: true },
     ],
@@ -70,6 +80,7 @@ export const NAV: { group: string; items: NavItem[] }[] = [
 
 function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const { status } = useLive();
+  const me = useMe();
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-2.5 border-b border-line px-4 py-3.5">
@@ -107,6 +118,14 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                     <item.icon className={cx("h-4 w-4", isActive ? "text-gold" : "text-faint group-hover:text-muted")} />
                     <span className="flex-1">{item.label}</span>
                     {item.soon && <Badge className="!px-1 !text-[9px]">Soon</Badge>}
+                    {status && item.count && item.count(status, me) > 0 && (
+                      <span
+                        className="rounded-full bg-crimson/15 px-1.5 text-2xs font-semibold tabular-nums text-crimson"
+                        title="Errors in the last 24 hours and unexpected stops this week"
+                      >
+                        {item.count(status, me)}
+                      </span>
+                    )}
                   </>
                 )}
               </NavLink>

@@ -37,6 +37,8 @@ def info():
     print(f"  active web sessions:         {sessions}")
     audit_count = db.query("SELECT COUNT(*) AS n FROM audit_events")[0]["n"]
     print(f"  audit log entries:           {audit_count}")
+    system_count = db.query("SELECT COUNT(*) AS n FROM system_log")[0]["n"]
+    print(f"  system log entries:          {system_count}")
 
 
 def export(folder="json_export"):

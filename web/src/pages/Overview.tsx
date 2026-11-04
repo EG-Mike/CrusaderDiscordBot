@@ -2,13 +2,16 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Activity,
+  AlertOctagon,
   AlertTriangle,
   CheckCircle2,
   ClipboardList,
   Clock,
   Power,
   RotateCcw,
+  GitCommitHorizontal,
   ScrollText,
+  Skull,
   ToggleRight,
 } from "lucide-react";
 import { api, type AuditEvent, type AuditPage, type Me } from "../lib/api";
@@ -138,7 +141,18 @@ export default function Overview({ me }: { me: Me }) {
   const features = Object.entries(status.features);
   const enabled = features.filter(([, on]) => on).length;
   const missing = status.missing_setup;
-  const attention = status.warnings.length + (status.pending_restart.length ? 1 : 0) + (missing.length ? 1 : 0);
+  const isAdmin = me.levels.includes("admin");
+  // Console errors are admin-only (see the System log page); unexpected
+  // stops are shown to every moderator.
+  const errors = isAdmin ? status.system.errors_24h : 0;
+  const crashes = status.system.crashes_7d;
+  const attention =
+    status.warnings.length +
+    (status.pending_restart.length ? 1 : 0) +
+    (missing.length ? 1 : 0) +
+    (errors ? 1 : 0) +
+    (crashes ? 1 : 0);
+  const lastUpdate = status.system.last_update;
 
   return (
     <>
@@ -152,6 +166,24 @@ export default function Overview({ me }: { me: Me }) {
           {status.bot.name ?? "The bot"} is {status.online ? "online" : "offline"} in{" "}
           <span className="text-fg">{status.guild?.name ?? "your server"}</span>.{" "}
           {attention ? `${attention} thing${attention === 1 ? " needs" : "s need"} your attention.` : "Everything looks good."}
+        </p>
+        <p className="mt-2 flex flex-wrap items-center gap-x-1.5 text-xs text-faint">
+          <GitCommitHorizontal className="h-3.5 w-3.5" />
+          Running version{" "}
+          {status.version_info.commit_url ? (
+            <a href={status.version_info.commit_url} target="_blank" rel="noreferrer" className="font-mono text-muted hover:text-gold">
+              {status.version}
+            </a>
+          ) : (
+            <span className="font-mono text-muted">{status.version}</span>
+          )}
+          {status.version_info.title && <span className="max-w-full truncate">· {status.version_info.title}</span>}
+          <span>
+            ·{" "}
+            <Link to="/system-log?view=lifecycle" className="hover:text-gold">
+              {lastUpdate ? `updated ${timeAgo(lastUpdate.at)}` : "no updates recorded yet"}
+            </Link>
+          </span>
         </p>
       </div>
 
@@ -237,6 +269,37 @@ export default function Overview({ me }: { me: Me }) {
                   </Link>
                   <RestartButton />
                 </div>
+              </div>
+            )}
+            {crashes > 0 && (
+              <div className="flex gap-3 px-5 py-3.5">
+                <Skull className="mt-0.5 h-4 w-4 shrink-0 text-crimson" />
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium">
+                    The bot stopped unexpectedly {crashes === 1 ? "once" : `${crashes} times`} in the last 7 days
+                  </div>
+                  <p className="mt-0.5 text-muted">A crash, running out of memory, or the server restarting without warning.</p>
+                </div>
+                <Link to="/system-log?view=lifecycle&range=7d" className="shrink-0 self-center text-xs text-gold hover:underline">
+                  Review
+                </Link>
+              </div>
+            )}
+            {errors > 0 && (
+              <div className="flex gap-3 px-5 py-3.5">
+                <AlertOctagon className="mt-0.5 h-4 w-4 shrink-0 text-crimson" />
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium">
+                    {errors} error{errors === 1 ? "" : "s"} in the bot's console in the last 24 hours
+                  </div>
+                  <p className="mt-0.5 text-muted">
+                    Latest {status.system.last_error_at ? timeAgo(status.system.last_error_at) : "recently"}. Read them,
+                    with tracebacks, in the System log.
+                  </p>
+                </div>
+                <Link to="/system-log?view=errors&range=24h" className="shrink-0 self-center text-xs text-gold hover:underline">
+                  Review
+                </Link>
               </div>
             )}
             {status.warnings.map((warning) => (

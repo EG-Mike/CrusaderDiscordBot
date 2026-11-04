@@ -94,6 +94,10 @@ version or raid tier is a configuration change.
   mirrored to the `audit.log` text file); written by `cogs/audit_log.py`
   (Discord) and `webapi.server.audit` (dashboard), read by the dashboard
   and `/auditlog`.
+- `system_log.py`: bot lifecycle events (start, stop with reason,
+  update, unexpected stop, Discord outages) and console warnings/errors
+  captured from logging, secrets redacted; `app_version.py`: which build
+  is running. Console output is admin-only in the dashboard.
 - `secret_store.py`: external API keys, Fernet-encrypted in the database
   (key file `secret.key` next to it). Write-only towards the browser.
 - `webapi/`: aiohttp dashboard API inside the bot process: Discord OAuth
@@ -123,6 +127,9 @@ set in the dashboard.
   message, never crash the bot.
 - **Discord IDs** are snowflakes larger than JavaScript's safe integer
   range: always send them to the browser as strings (`webapi/settings.js_safe`).
+- **Errors**: log them with the standard `logging` module (`log.exception`
+  for tracebacks); they reach the dashboard's System log automatically.
+  Never put secrets in log messages (they're redacted, but don't rely on it).
 - **Audit**: user actions are logged (Discord interactions by
   `cogs/audit_log.py`, dashboard actions via `webapi.server.audit`). Never
   log secrets or private text such as applicant notes.

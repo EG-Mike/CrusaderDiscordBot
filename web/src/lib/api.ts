@@ -45,6 +45,14 @@ export interface Status {
   latency_ms: number | null;
   uptime_seconds: number;
   version: string;
+  version_info: { title: string | null; built_at: string | null; commit_url: string | null };
+  system: {
+    errors_24h: number;
+    warnings_24h: number;
+    crashes_7d: number;
+    last_error_at: string | null;
+    last_update: { at: string; previous_version: string | null } | null;
+  };
   environment: string | null;
   bot: { name: string | null; avatar_url: string | null };
   guild: { id: string; name: string; icon_url: string | null; member_count: number } | null;
@@ -195,4 +203,57 @@ export interface AuditMeta {
     retention_days: number;
   };
   discord_capture_enabled: boolean;
+}
+
+// --- system log ----------------------------------------------------------------
+
+export type LogLevel = "DEBUG" | "INFO" | "WARNING" | "ERROR" | "CRITICAL";
+
+export interface SystemEntry {
+  id: number;
+  created_at: string; // first seen, ISO 8601 UTC
+  last_seen: string;
+  count: number;
+  level: LogLevel;
+  category: "lifecycle" | "console";
+  event: string; // e.g. "bot.updated", or the logger name for console output
+  message: string;
+  details: {
+    logger?: string;
+    where?: string;
+    traceback?: string;
+    version?: string;
+    previous_version?: string;
+    title?: string | null;
+    commit_url?: string | null;
+    compare_url?: string | null;
+    commits?: { version: string; title: string }[];
+    last_heartbeat?: string | null;
+    [key: string]: Json | undefined;
+  };
+}
+
+export interface SystemLogPage {
+  entries: SystemEntry[];
+  has_more: boolean;
+}
+
+export interface SystemLogMeta {
+  errors_24h: number;
+  warnings_24h: number;
+  starts_7d: number;
+  crashes_7d: number;
+  last_update: SystemEntry | null;
+  last_error_at: string | null;
+  capture_level: string;
+  retention_days: number;
+  console_visible: boolean;
+  version: {
+    version: string;
+    title: string | null;
+    built_at: string | null;
+    repository: string | null;
+    commit_url: string | null;
+  };
+  uptime_seconds: number;
 }
