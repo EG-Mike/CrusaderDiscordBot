@@ -3,15 +3,12 @@ Minimal Wowhead item lookup client - resolves an itemID (all Gargul's loot
 export gives us) into a display name, icon, and quality, so loot can be
 shown with real names/icons/links instead of bare numbers.
 
-Uses Wowhead's `&xml` data feed (e.g. wowhead.com/item=12345&xml) - the
-same mechanism cogs/emoji_admin.py's /add-emoji command already uses to
-resolve an item/spell link into an icon (see that file's docstring: this
-isn't scraping the regular page - its og:image meta tag is a user-submitted
-screenshot, not the icon - it's a long-standing data endpoint many
-third-party WoW tools rely on for exactly this). This file is now the one
-place that talks to Wowhead for item data; /add-emoji still has its own
-separate resolution for spell links (which this client doesn't handle) and
-its own emoji-creation step, but its item-link path could be pointed at
+Uses Wowhead's `&xml` data feed (e.g. wowhead.com/item=12345&xml) to
+resolve an item into its icon (this isn't scraping the regular page - its
+og:image meta tag is a user-submitted screenshot, not the icon - it's a
+long-standing data endpoint many third-party WoW tools rely on for exactly
+this). The Emoji library has its own Wowhead fallback for spells (which
+this client doesn't handle), but its item path could be pointed at
 get_item() below instead of re-fetching independently.
 
 Caveat: this still wasn't independently re-verified against a live request
@@ -140,7 +137,7 @@ def item_wowhead_url(item_id: int) -> str:
 
 def item_icon_url(icon_slug: str) -> str:
     # Same wow.zamimg.com CDN convention relied on elsewhere in this repo
-    # (see config/deployment.py's CLASS_ICON_URLS and emoji_admin.py).
+    # (see config/deployment.py's CLASS_ICON_URLS and emoji_library.py).
     # Takes a REAL icon_slug only, never None - see the module docstring's
     # issue #3 for why a placeholder-image fallback here is a real bug,
     # not a convenience.
@@ -167,8 +164,7 @@ class WowheadClient:
         # at retail Wowhead, and every item successfully resolved under
         # that (not just the failures the icon_slug-None check already
         # retries) is now cached against the WRONG item's data, silently -
-        # invalidate_all() exists for exactly that one-time migration, see
-        # cogs/raid_summary.py's raidsummary_refresh_wowhead_cache.
+        # empty the cache then (Maintenance, API caches, Wowhead lookups).
         self._cache = ApplicationStore(path=cache_path)
         # Serializes + paces every outbound wowhead.com request (item and
         # spell alike) - see PACE_SECONDS/the module docstring. A lock, not
@@ -177,15 +173,6 @@ class WowheadClient:
         # the same "long enough ago" timestamp and fire back-to-back anyway.
         self._pace_lock = asyncio.Lock()
         self._last_request_at = 0.0
-
-    def invalidate_all(self):
-        """Wipes every cached item AND spell lookup, forcing a fresh fetch
-        next time each is needed - see __init__'s comment on why a
-        permanently-cached "successful" result can still be wrong (a data-
-        source change, not just a fixed transient failure). Safe to call
-        any time - callers just pay for a full re-fetch on their next
-        lookup of each item/spell, same cost as a cold cache."""
-        self._cache.clear()
 
     async def _pace(self):
         async with self._pace_lock:

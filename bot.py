@@ -64,7 +64,6 @@ DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
 # touching any code - see config/deployment.py's comment above those flags.
 OPTIONAL_EXTENSIONS = [
     ("cogs.announcements", config.FEATURE_ANNOUNCEMENTS_ENABLED),
-    ("cogs.emoji_admin", config.FEATURE_EMOJI_ADMIN_ENABLED),
     ("cogs.attendance", config.FEATURE_ATTENDANCE_ENABLED),
     ("cogs.raid_summary", config.FEATURE_RAID_SUMMARY_ENABLED),
     ("cogs.raid_logs", config.FEATURE_RAID_LOGS_ENABLED),

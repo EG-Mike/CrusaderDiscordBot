@@ -63,13 +63,6 @@ class DescribeTests(unittest.TestCase):
         self.assertNotIn(secret, repr(event))
         self.assertNotIn("Healer", repr(event))
 
-    def test_format_entry(self):
-        line = audit_log.format_entry({
-            "created_at": "2026-11-03T19:42:10Z", "source": "discord", "actor_name": "Mike",
-            "channel_id": "1", "channel_name": "raid", "summary": "/apply",
-        })
-        self.assertEqual(line, "2026-11-03 19:42  Mike  #raid  /apply")
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -20,7 +20,7 @@ Each event is also written, in the original one-line text format, to the
 audit.log file to that logger, so the plain-text file keeps working for
 anyone who reads it on the server.
 
-Readers (the dashboard's Audit log page and /auditlog) use `search()`,
+Readers (the dashboard's Audit log page and its CSV export) use `search()`,
 `facets()` and `stats()`. Live listeners (the dashboard's WebSocket hub)
 register with `subscribe()`.
 
@@ -46,7 +46,7 @@ text_logger.setLevel(logging.INFO)
 SOURCES = ("discord", "dashboard")
 
 # kind -> human label. The dashboard has its own copy of these labels for
-# display; this one is used by /auditlog and the CSV export.
+# display; this one is used by the CSV export.
 KINDS = {
     "command": "Command",
     "context_menu": "Context menu",

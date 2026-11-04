@@ -21,7 +21,7 @@ Where icons come from, in order:
      service (name + icon name), for the EMOJI_WOWHEAD_DATA_ENV game version.
 
 Used by the dashboard's Emoji page and editor emoji picker
-(webapi/emoji_api.py), /add-emoji (cogs/emoji_admin.py), and raid summaries'
+(webapi/emoji_api.py), and raid summaries'
 loot/ability icons (icons.ensure_item_emoji / ensure_spell_emoji).
 """
 

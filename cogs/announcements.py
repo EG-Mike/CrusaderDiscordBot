@@ -224,46 +224,6 @@ class AnnouncementsCog(commands.Cog):
             return
         await interaction.followup.send(f"🚀 Published to <#{chosen['channel_id']}>.", ephemeral=True)
 
-    # --- escape hatches for very old announcements --------------------------
-
-    @app_commands.command(
-        name="announce-fix-legacy-buttons",
-        description="Remove the old public Edit button from already-published announcements (moderator only)",
-    )
-    async def announce_fix_legacy_buttons(self, interaction: discord.Interaction):
-        """Re-renders every published announcement without buttons (the
-        public Edit button of early versions). Safe to run repeatedly."""
-        if await self._refuse_non_mod(interaction, "run this"):
-            return
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        updated, unreachable = await service.remove_legacy_buttons(self.bot)
-        unreachable = [f"`{m}`" for m in unreachable]
-        summary = f"Done - re-rendered **{updated}** published announcement(s) with no Edit button."
-        if unreachable:
-            summary += f"\nCouldn't reach {len(unreachable)}: {', '.join(unreachable[:10])}"
-            summary += " ..." if len(unreachable) > 10 else ""
-        await interaction.followup.send(summary, ephemeral=True)
-
-    @app_commands.command(
-        name="announce-edit-published",
-        description="Edit an already-published announcement by its message ID (moderator only)",
-    )
-    @app_commands.describe(
-        message_id="The announcement's message ID (enable Developer Mode, right-click the message, Copy Message ID)"
-    )
-    async def announce_edit_published(self, interaction: discord.Interaction, message_id: str):
-        """For a published announcement with no working Edit button. The
-        dashboard's announcement list is the easier way to do this."""
-        if await self._refuse_non_mod(interaction, "edit announcements"):
-            return
-        record = service.find_by_message(message_id.strip()) if message_id.strip().isdigit() else None
-        if record is None or record["status"] != "published":
-            await interaction.response.send_message(
-                "Couldn't find a published announcement with that message ID.", ephemeral=True
-            )
-            return
-        await interaction.response.send_modal(AnnouncementModal(self, mode="edit_published", announcement=record))
-
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(AnnouncementsCog(bot))

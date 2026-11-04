@@ -106,8 +106,8 @@ CATALOG: Dict[str, Entry] = {
 
     # --- Features: on / off ------------------------------------------------------------
     "FEATURE_ANNOUNCEMENTS_ENABLED": Entry("features", "Announcements", "/announce and the Announcements page."),
-    "FEATURE_EMOJI_ADMIN_ENABLED": Entry("features", "Emoji", "Adding item and spell icons as emoji: the Emoji page "
-                                                              "and /add-emoji."),
+    "FEATURE_EMOJI_ADMIN_ENABLED": Entry("features", "Emoji", "Adding item and spell icons as emoji on the "
+                                                              "Emoji page."),
     "FEATURE_POLLS_ENABLED": Entry("features", "Polls", "/poll and the Polls page."),
     "FEATURE_ROSTER_ENABLED": Entry("features", "Guild roster", "Characters linked to members: /character and the "
                                                                 "Roster page."),
@@ -341,8 +341,8 @@ CATALOG: Dict[str, Entry] = {
     "LOG_DISCORD_LIBRARY_LEVEL": Entry("logging", "Discord connection detail",
                                        "How much the Discord library writes to the console. Debug is very noisy.",
                                        choices=LOG_LEVELS, advanced=True),
-    "DEBUG_COMMANDS_ENABLED": Entry("logging", "Diagnostic commands",
-                                    "Slash commands that show raw API answers, for troubleshooting game data.",
+    "DEBUG_COMMANDS_ENABLED": Entry("logging", "One-time import commands",
+                                    "/raidsummary-bulk, for importing old raid reports in one go.",
                                     advanced=True),
 
     # --- Audit log -------------------------------------------------------------------------------------------

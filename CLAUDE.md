@@ -96,8 +96,7 @@ version or raid tier is a configuration change.
   info/export/backup.
 - `audit.py`: the audit trail (structured events in the database,
   mirrored to the `audit.log` text file); written by `cogs/audit_log.py`
-  (Discord) and `webapi.server.audit` (dashboard), read by the dashboard
-  and `/auditlog`.
+  (Discord) and `webapi.server.audit` (dashboard), read by the dashboard.
 - `system_log.py`: bot lifecycle events (start, stop with reason,
   update, unexpected stop, Discord outages) and console warnings/errors
   captured from logging, secrets redacted; `app_version.py`: which build
@@ -110,7 +109,7 @@ version or raid tier is a configuration change.
 - `emoji_library.py`: the bot's WoW icon emoji, one per icon image (keyed
   by Blizzard's icon file ID / icon name) with the items and spells that
   share it; Blizzard API first, Wowhead tooltip only as a fallback. Used by
-  the Emoji page, the editor emoji picker, `/add-emoji` and raid summaries.
+  the Emoji page, the editor emoji picker and raid summaries.
 - `wow_api.py`: Blizzard game data for the configured game version
   (WoW Forever by default): reference data for pickers, a player's
   characters from their Battle.net account, character lookups by name, and
@@ -197,8 +196,8 @@ set in the dashboard.
   (`webapi/maintenance_api.py`: backup, retention, compact, caches,
   command re-sync, sessions).
 - Phase 4: Applications, Raid summaries, Raid logs, Attendance, Tier recap,
-  Records, and the game-data diagnostics (`/apply-test-blizzard`,
-  `/raidsummary-test-*`, `/raidsummary-refresh-cache`). These all depend
+  Records, and the raid cache tools (`/raidsummary-refresh-cache`,
+  `/raidsummary-refresh-report`). These all depend
   on TBC-era data sources, so plan them together with the WoW Forever data
   model rather than polishing what's there.
 - Phase 5: Public pages. Kept last on purpose: the dashboard is only

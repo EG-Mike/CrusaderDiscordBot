@@ -70,12 +70,10 @@ moderator-driven announcement system.
 4. The published message itself has no Edit button - only the sandbox
    draft does, so editing an announcement always happens from the
    mod-only sandbox channel, never a button visible to the whole audience
-   of the published message. `/announce-edit-published <message_id>` is a
-   fallback for editing one with no working button at all (e.g. one
-   published before this existed); `/announce-fix-legacy-buttons` is a
+   of the published message. Any published announcement can also be
+   edited from the dashboard's Announcements page, and Maintenance has a
    one-time cleanup that strips the old public Edit button from
-   already-published announcements from before this changed - safe to run
-   more than once, never touches reactions or the message's history.
+   announcements published before this changed.
 5. Formatting: `## Header text 🎉` and any emoji work directly (standard
    Discord message markdown - no special handling needed). A line
    containing just `---` splits the message into separate sections, each
@@ -274,9 +272,6 @@ Every poll carries the footer from `config.POLL_FOOTER`.
 | Command | Description |
 |---|---|
 | `/announce` | Draft an announcement in the sandbox channel, with Edit/Publish buttons. |
-| `/announce-edit-published <message_id>` | Edit a published announcement by message ID - fallback for one with no working Edit button. |
-| `/announce-fix-legacy-buttons` | One-time cleanup: strip the old public Edit button from announcements published before it moved to the sandbox. |
-| `/add-emoji <wowhead_links>` | Add item/spell icons as bot emoji from Wowhead links (icons are reused; see "Emoji"). |
 | `/gearcheck archive` | Move all approved/denied applications to the archive channel. |
 | `/checkattendance run` | Generate/refresh the attendance overview (no cooldown). |
 | `/checkattendance addlog <date> <tier> <link>` | Add a main-raid log to the tracked list. |
@@ -293,20 +288,18 @@ Every poll carries the footer from `config.POLL_FOOTER`.
 | `/raidsummary-refresh-report <report>` | Force-refetch ONE report from WCL before posting/regenerating its summary, without waiting for the next full cache refresh. |
 | `/raidsummary-regenerate [report]` | Rebuild an already-posted summary's entire content from fresh WCL/Wowhead data, in place. |
 | `/raidsummary-merge-weeks <tier> <reports>` | Fold two or more already-imported reports into one raid week for `/tier-recap`'s stats, optionally consolidating their separate summary posts into one thread. |
-| `/auditlog [lines] [user]` | Show the most recent bot actions (who ran which command / clicked which button), optionally filtered to one member - see "Audit log" below. |
 | `/tier-recap <tier>` | Draft an end-of-tier stats recap (medals, records, most-improved, etc.) in the sandbox channel, same draft/Edit/Publish flow as `/announce` - built entirely from data already cached by past `/raidsummary` posts, no new WCL calls. |
 
-Five more commands exist purely for diagnosing API/lookup issues or doing a
-one-time data migration/import, and are disabled by default
-(`config.DEBUG_COMMANDS_ENABLED = False`) so they don't clutter the command
-list day-to-day. Set that flag to `True` to use one, then set it back off:
+Managing the bot (emoji, the audit log, editing published announcements,
+raw Blizzard API answers, emptying caches) happens on the web dashboard;
+those used to be slash commands too.
+
+One more command is a one-time import, disabled by default
+(`config.DEBUG_COMMANDS_ENABLED = False`, Settings, System, Logging, with
+Advanced on) so it doesn't clutter the command list:
 
 | Command | Description |
 |---|---|
-| `/apply-test-blizzard <character>` | Step-by-step test of a character's Blizzard Armory data (gear/talents) - dumps raw responses to spot a namespace/field mismatch. |
-| `/raidsummary-test-blizzard [item]` | Same, for a single item against Blizzard's Game Data API. |
-| `/raidsummary-test-spell [spell]` | Same, for a single spell's icon. |
-| `/raidsummary-refresh-wowhead` | One-time cache wipe for Wowhead item/spell lookups (was for the retail→`/tbc/` endpoint migration; safe to run anytime, just costs a fresh fetch of everything). |
 | `/raidsummary-bulk <tier> <raid_type> <reports>` | One-time bulk import: posts one raid summary per WCL report, oldest first - for backfilling history when first setting up. |
 
 ## Enabling/disabling features
@@ -319,13 +312,13 @@ extension list, just flip the flag and restart:
 | Flag | Cog | Disables |
 |---|---|---|
 | `FEATURE_ANNOUNCEMENTS_ENABLED` | `cogs/announcements.py` | `/announce` and its edit/publish flow |
-| `FEATURE_EMOJI_ADMIN_ENABLED` | `cogs/emoji_admin.py` | `/add-emoji` and adding/deleting emoji on the dashboard |
+| `FEATURE_EMOJI_ADMIN_ENABLED` | (dashboard) | adding/deleting emoji on the dashboard |
 | `FEATURE_ATTENDANCE_ENABLED` | `cogs/attendance.py` | `/checkattendance` and all its subcommands |
 | `FEATURE_RAID_SUMMARY_ENABLED` | `cogs/raid_summary.py` | `/raidsummary` and every `raidsummary-*` command |
 | `FEATURE_RAID_LOGS_ENABLED` | `cogs/raid_logs.py` | the #logs tagging/auto-Summarize automation (section 11 below) |
 | `FEATURE_TIER_RETROSPECTIVE_ENABLED` | `cogs/tier_retrospective.py` | `/tier-recap` |
 | `FEATURE_POLLS_ENABLED` | `cogs/polls.py` | `/poll create` and every poll's buttons |
-| `FEATURE_AUDIT_LOG_ENABLED` | `cogs/audit_log.py` | the audit log file and `/auditlog` |
+| `FEATURE_AUDIT_LOG_ENABLED` | `cogs/audit_log.py` | recording Discord actions in the audit log |
 | `FEATURE_WEB_DASHBOARD_ENABLED` | `cogs/web_dashboard.py` | the web dashboard (**off** by default, see "Web dashboard" below) |
 
 Two of these lean on another cog to actually do anything:
@@ -394,9 +387,6 @@ Where to read it:
   action type, Discord/dashboard and time range, live updates, details
   per entry (with a link to the Discord message), and CSV export.
 - **Dashboard, Overview**: the latest activity, live.
-- **Discord, `/auditlog`** (moderators): the last 25 entries (or
-  `lines:` up to 500, optionally `user:` to filter to one member) as an
-  ephemeral reply; longer output is attached as a `.txt` file.
 
 The text file rotates at 5 MB keeping 5 backups (`AUDIT_LOG_MAX_BYTES`,
 `AUDIT_LOG_BACKUP_COUNT`).
@@ -446,7 +436,6 @@ The bot can turn WoW item and spell icons into its own emoji ("application
 emoji", owned by the bot and usable by it in any message; Discord allows
 2000 per bot). On the dashboard (**Communication, Emoji**) search an item or
 spell by name, or paste Wowhead links (only their ID is used), and add it.
-`/add-emoji <links>` does the same from Discord.
 
 - **One emoji per icon.** Many items and spells share an icon (Flash Heal,
   Flash of Light and Amplify Magic all use `spell_holy_flashheal`), so the
@@ -1050,12 +1039,11 @@ icons.py             - shared icon resolution (guild emoji + auto-provisioned ap
 cogs/
   apply.py           - the whole guild-application feature (self-contained)
   announcements.py   - the whole announcement feature (self-contained)
-  emoji_admin.py     - /add-emoji (item/spell icons -> bot emoji, via emoji_library.py)
   attendance.py      - the whole attendance-tracking feature (self-contained)
   raid_summary.py    - the whole raid-summary feature (self-contained)
   tier_retrospective.py - /tier-recap, an end-of-tier stats recap built entirely from
                         data raid_summary.py already cached (see its own module docstring)
-  audit_log.py       - who-did-what audit log file (on_interaction) + /auditlog
+  audit_log.py       - who-did-what audit log file (on_interaction)
   web_dashboard.py   - starts the web dashboard server (off by default)
   raid_logs.py       - raid log tagging + attendance/raidsummary automation
                         (self-contained; reuses raid_summary.py's
@@ -1125,8 +1113,8 @@ when adding a new persistent component elsewhere.
   fights - handled, but a reminder these WCL shapes vary more than the
   docs suggest. Post one real summary and check each section actually
   populated before trusting it. Item lookups (`wowhead.py`)
-  reuse the same `&xml` endpoint `/add-emoji` already relies on, so that
-  part carries the same (lighter) caveat as that existing command. The
+  use Wowhead's long-standing `&xml` endpoint, so that part carries a
+  lighter caveat. The
   ✏️ Edit button's `message.edit(view=...)` call on an already-posted forum
   thread message follows the same pattern already used for announcements'
   Edit button, but specifically for a `LayoutView`-based forum *thread*

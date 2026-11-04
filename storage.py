@@ -175,7 +175,7 @@ class ApplicationStore:
         """
         Every (key, record) pair currently in the store, as a read-only
         snapshot - e.g. for a one-off migration/cleanup pass over every
-        record (see cogs/announcements.py's announce-fix-legacy-buttons).
+        record (e.g. announcements.remove_legacy_buttons).
         Keys come back exactly as stored (string form) - callers that need
         the numeric Discord message ID should int() them.
         """

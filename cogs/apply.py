@@ -1627,54 +1627,6 @@ class ApplyCog(commands.Cog):
 
     # --- Blizzard armory diagnostic -------------------------------------
 
-    @app_commands.command(
-        name="apply-test-blizzard",
-        description="Step-by-step test of a character's Blizzard Armory data (gear+talents) (moderator only)",
-    )
-    @app_commands.describe(character="Character name to test (must exist on this guild's realm)")
-    async def apply_test_blizzard(self, interaction: discord.Interaction, character: str):
-        """
-        Diagnostic-only command for blizzard_client.py's character-profile
-        methods (get_character_equipment/get_character_specializations) -
-        same purpose as cogs/raid_summary.py's raidsummary_test_blizzard:
-        this sandbox could never reach api.blizzard.com to confirm the
-        equipment/specializations JSON shape live (see
-        blizzard_client.py's module docstring, and
-        get_character_specializations()'s docstring specifically - the
-        specializations/talent-split shape is a real unconfirmed guess,
-        unlike equipment). Dumps raw response bodies plus each endpoint's
-        parsed result so a namespace/field-name/realm-slug mismatch is
-        immediately visible instead of just silently showing no armory
-        block the way a normal /apply run would (by design - see
-        _compute_armory_block's docstring).
-        """
-        if not await self._is_mod(interaction.guild, interaction.user.id):
-            await interaction.response.send_message("Only moderators can run this.", ephemeral=True)
-            return
-        if not config.DEBUG_COMMANDS_ENABLED:
-            await interaction.response.send_message(
-                "This is a diagnostic tool, disabled by default - set DEBUG_COMMANDS_ENABLED = True in "
-                "config/deployment.py to use it.",
-                ephemeral=True,
-            )
-            return
-        if self.bot.blizzard is None:
-            await interaction.response.send_message(
-                "BLIZZARD_CLIENT_ID/BLIZZARD_CLIENT_SECRET aren't set - the Armory block is "
-                "skipped entirely until those are configured. Register a free client at "
-                "https://develop.battle.net/access/clients, set both env vars, and restart "
-                "the bot to enable this.",
-                ephemeral=True,
-            )
-            return
-
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        report = await self.bot.blizzard.diagnose_character(self.server_slug, character.strip())
-        # Discord's 2000-char message limit - a long raw-body dump can
-        # exceed it, so this chunks rather than truncating silently.
-        for i in range(0, len(report), 1900):
-            await interaction.followup.send(report[i:i + 1900], ephemeral=True)
-
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(ApplyCog(bot))

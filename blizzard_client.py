@@ -50,8 +50,8 @@ exist.)
   (via a real third-party client library's source), but the exact JSON
   shape for Classic's freeform talent trees is a best-effort guess, not
   independently verified - see that method's docstring for the honest
-  caveat and how to check/fix it against a real response via
-  diagnose_character()).
+  caveat and how to check/fix it against a real response with the
+  dashboard's Blizzard API explorer (Maintenance)).
 
 Nothing here ever raises - a failed/unexpected lookup just falls back to a
 plain "Item #<id>" with no icon, same philosophy as wowhead.py/icons.py.
@@ -327,56 +327,6 @@ class BlizzardClient:
             self._cache.set(cache_key, **result)
         return result
 
-    async def diagnose_spell(self, spell_id: int) -> str:
-        """
-        Step-by-step verbose report for a spell/ability icon lookup -
-        mirrors diagnose_item()'s contract, but ALSO dumps the plain spell
-        metadata endpoint (/data/wow/spell/{id}), which get_spell_icon()
-        itself never calls (that method only hits the media endpoint,
-        needing just an icon). That metadata endpoint's own "name" field
-        is the fastest way to tell whether a configured spell ID (e.g.
-        config.TRACKED_ABILITY_ICON_SPELL_IDS) actually IS the ability
-        it's supposed to be under this namespace, or a mismatched/wrong-
-        rank ID Blizzard is nonetheless returning A response for - see
-        get_spell_icon()'s docstring for the confirmed "inv_misc_
-        questionmark" placeholder-icon case this was built to investigate.
-        Never raises.
-        """
-        namespace = _namespace(self.region)
-        lines = [f"**Diagnosing spell {spell_id}** (region={self.region}, namespace={namespace})"]
-
-        try:
-            token = await self._get_token()
-            lines.append(f"✅ OAuth token acquired ({token[:8]}...)")
-        except Exception as e:
-            lines.append(f"❌ OAuth token request failed: {e!r}")
-            return "\n".join(lines)
-
-        headers = {"Authorization": f"Bearer {token}"}
-        base = _api_base(self.region)
-        params = {"namespace": namespace, "locale": "en_US"}
-
-        try:
-            async with aiohttp.ClientSession(trust_env=True) as session:
-                async with session.get(f"{base}/data/wow/spell/{spell_id}", params=params, headers=headers) as resp:
-                    spell_body = await resp.text()
-                    lines.append(f"Spell endpoint: HTTP {resp.status}\n```\n{spell_body[:1500]}\n```")
-
-                async with session.get(f"{base}/data/wow/media/spell/{spell_id}", params=params, headers=headers) as resp:
-                    media_body = await resp.text()
-                    lines.append(f"Spell media endpoint: HTTP {resp.status}\n```\n{media_body[:1500]}\n```")
-        except Exception as e:
-            lines.append(f"❌ Request failed: {e!r}")
-            return "\n".join(lines)
-
-        try:
-            result = await self.get_spell_icon(spell_id)
-            lines.append(f"Parsed result: `{result}`")
-        except Exception as e:
-            lines.append(f"❌ Parsing raised (this shouldn't happen - get_spell_icon never raises normally): {e!r}")
-
-        return "\n".join(lines)
-
     async def get_character_equipment(self, realm_slug: str, character_name: str) -> list:
         """
         Returns a list of equipped items via Blizzard's Character Equipment
@@ -400,8 +350,8 @@ class BlizzardClient:
         OWNER's own OAuth consent rather than just app client-credentials,
         or may be gated by an in-game armory-visibility toggle - either
         looks identical to this method, logged but not distinguished
-        further). Use diagnose_character() to see exactly which case
-        applies for a given character.
+        further). The Blizzard API explorer (Maintenance) shows exactly
+        which case applies for a given character.
         """
         fallback = []
         try:
@@ -481,9 +431,8 @@ class BlizzardClient:
         isn't ruled out either. If Blizzard genuinely never includes tree
         membership per talent, getting the 31/10/20 split would need a
         separate static talent-id -> tree lookup table (not attempted
-        here - see _bucket_talent_points' docstring). Use
-        diagnose_character() (now dumping a much longer raw body for this
-        endpoint specifically) to check a fuller response and adjust
+        here - see _bucket_talent_points' docstring). Use the Blizzard API
+        explorer (Maintenance) to check a full response and adjust
         _parse_specialization_groups/_bucket_talent_points if a real field
         turns up.
 
@@ -536,146 +485,6 @@ class BlizzardClient:
 
         return _parse_specialization_groups(data)
 
-    async def diagnose_character(self, realm_slug: str, character_name: str) -> str:
-        """
-        Step-by-step verbose report for a diagnostic slash command (see
-        cogs/apply.py's apply_test_blizzard) - same contract as
-        diagnose_item(): dumps raw HTTP status + response bodies for both
-        the equipment and specializations endpoints, plus each one's parsed
-        result, so a namespace/field-name/realm-slug mismatch is
-        immediately visible instead of silently degrading to "no data" the
-        way a normal application post would (by design - see
-        get_character_equipment()/get_character_specializations()'s
-        docstrings). Never raises.
-        """
-        namespace = _profile_namespace(self.region)
-        lines = [
-            f"**Diagnosing character {character_name}** (realm_slug={realm_slug}, "
-            f"region={self.region}, namespace={namespace})"
-        ]
-
-        try:
-            token = await self._get_token()
-            lines.append(f"✅ OAuth token acquired ({token[:8]}...)")
-        except Exception as e:
-            lines.append(f"❌ OAuth token request failed: {e!r}")
-            return "\n".join(lines)
-
-        headers = {"Authorization": f"Bearer {token}"}
-        base = _api_base(self.region)
-        params = {"namespace": namespace, "locale": "en_US"}
-        slug = character_name.lower()
-
-        try:
-            async with aiohttp.ClientSession(trust_env=True) as session:
-                async with session.get(
-                    f"{base}/profile/wow/character/{realm_slug}/{slug}/equipment",
-                    params=params, headers=headers,
-                ) as resp:
-                    body = await resp.text()
-                    lines.append(f"Equipment endpoint: HTTP {resp.status}\n```\n{body[:1500]}\n```")
-
-                async with session.get(
-                    f"{base}/profile/wow/character/{realm_slug}/{slug}/specializations",
-                    params=params, headers=headers,
-                ) as resp:
-                    body = await resp.text()
-                    # Wider cap than every other diagnostic dump in this file
-                    # (deliberately, not an oversight) - a live check (see
-                    # get_character_specializations()'s docstring) showed
-                    # this endpoint's body getting cut off
-                    # mid-JSON at 1500 chars, before ever reaching a second
-                    # talent group or any field that might identify which of
-                    # the 3 trees each talent belongs to (the still-unsolved
-                    # part of the "31/10/20" split - see _bucket_talent_
-                    # points' docstring). The outer per-message chunking in
-                    # cogs/apply.py's apply_test_blizzard already splits
-                    # whatever this returns across multiple Discord messages,
-                    # so there's no length concern on that end.
-                    lines.append(f"Specializations endpoint: HTTP {resp.status}\n```\n{body[:6000]}\n```")
-        except Exception as e:
-            lines.append(f"❌ Request failed: {e!r}")
-            return "\n".join(lines)
-
-        try:
-            equipment = await self.get_character_equipment(realm_slug, character_name)
-            lines.append(f"Parsed equipment ({len(equipment)} item(s)): `{equipment}`")
-        except Exception as e:
-            lines.append(f"❌ Equipment parsing raised (this shouldn't happen): {e!r}")
-
-        try:
-            specs = await self.get_character_specializations(realm_slug, character_name)
-            lines.append(f"Parsed specializations: `{specs}`")
-        except Exception as e:
-            lines.append(f"❌ Specialization parsing raised (this shouldn't happen): {e!r}")
-
-        return "\n".join(lines)
-
-    async def diagnose_item(self, item_id: int) -> str:
-        """
-        Step-by-step verbose report for /raidsummary-test-blizzard - unlike
-        get_item()/_fetch() (which fall back to a placeholder on ANY
-        failure, by design, so a raid summary never breaks over one bad
-        item), this surfaces exactly which step failed and the raw
-        response bodies, since NOTHING in this file has been verified
-        against a real Blizzard response yet (see the module docstring).
-        Never raises - any exception is caught and reported as a step
-        result instead, same "always returns something useful" contract
-        as everything else here.
-        """
-        lines = [f"**Diagnosing item {item_id}** (region={self.region}, namespace={_namespace(self.region)})"]
-
-        try:
-            token = await self._get_token()
-            lines.append(f"✅ OAuth token acquired ({token[:8]}...)")
-        except Exception as e:
-            lines.append(f"❌ OAuth token request failed: {e!r}")
-            return "\n".join(lines)
-
-        headers = {"Authorization": f"Bearer {token}"}
-        base = _api_base(self.region)
-        params = {"namespace": _namespace(self.region), "locale": "en_US"}
-
-        try:
-            async with aiohttp.ClientSession(trust_env=True) as session:
-                async with session.get(f"{base}/data/wow/item/{item_id}", params=params, headers=headers) as resp:
-                    item_body = await resp.text()
-                    lines.append(f"Item endpoint: HTTP {resp.status}\n```\n{item_body[:1500]}\n```")
-
-                async with session.get(f"{base}/data/wow/media/item/{item_id}", params=params, headers=headers) as resp:
-                    media_body = await resp.text()
-                    lines.append(f"Item media endpoint: HTTP {resp.status}\n```\n{media_body[:1500]}\n```")
-        except Exception as e:
-            lines.append(f"❌ Request failed: {e!r}")
-            return "\n".join(lines)
-
-        try:
-            result = await self._fetch(item_id)
-            lines.append(f"Parsed result: `{result}`")
-        except Exception as e:
-            lines.append(f"❌ Parsing raised (this shouldn't happen - _fetch never raises normally): {e!r}")
-
-        return "\n".join(lines)
-
-
-# Blizzard's quality.type strings -> config.ITEM_QUALITY_COLORS' int keys
-# (0=poor..5=legendary, in config/game_data.py) - TBC Classic never has
-# artifact(6)/heirloom(7).
-_QUALITY_TYPE_TO_INT = {
-    "POOR": 0, "COMMON": 1, "UNCOMMON": 2, "RARE": 3, "EPIC": 4, "LEGENDARY": 5,
-}
-
-# Icon slugs Blizzard's media endpoint uses as its own generic "no icon
-# assigned" placeholder for spells: WoW's real in-client question-mark
-# icon, returned with a normal HTTP 200 rather than a 404. get_spell_icon()
-# treats any of these as an unresolved lookup (not cached, empty icon_url
-# returned) rather than a real match - see that method's docstring. Not
-# applied to get_item()'s item-media lookup: no evidence item media has
-# this problem, so this stays spell-specific rather than risking a false
-# rejection on a legitimately plain/simple item icon.
-_PLACEHOLDER_SPELL_ICON_SLUGS = {"inv_misc_questionmark"}
-
-
 def _is_resolved(result: dict, item_id: int) -> bool:
     return result.get("icon_slug") is not None and result.get("name") != f"Item #{item_id}"
 
@@ -699,7 +508,7 @@ def _parse_specialization_groups(data: dict) -> list:
     turns up. No spec-name field (e.g. "Fire") was visible in the live
     response checked, though it may simply not have been reached before
     that response got cut off at the diagnostic dump's old length limit
-    (see diagnose_character()) - group.get("name") is checked too as one
+    - group.get("name") is checked too as one
     more plausible spot, cheap to try, unconfirmed either way."""
     groups = data.get("specialization_groups")
     if groups is None:
@@ -743,8 +552,8 @@ def _bucket_talent_points(talents: list):
     above): a live response checked didn't show either field on any
     talent, but that response was also cut off before showing every talent
     in the group, so this isn't proven absent either - see
-    get_character_specializations()'s docstring and diagnose_character()
-    for how to check a fuller response. TBC's 3 talent trees are named
+    get_character_specializations()'s docstring for how to check a fuller
+    response. TBC's 3 talent trees are named
     identically to their matching spec (e.g. the "Arms" tree = the "Arms"
     spec), so a tree's "name" here doubles as the display name with no
     extra mapping needed once/if a real field name is confirmed - see

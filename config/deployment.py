@@ -137,8 +137,7 @@ FEATURE_RAID_LOGS_ENABLED = True
 FEATURE_TIER_RETROSPECTIVE_ENABLED = True
 FEATURE_POLLS_ENABLED = True
 # cogs/audit_log.py: records who ran which command / clicked which button
-# in Discord, for the dashboard's Audit log page and the mod-only /auditlog
-# command. (Dashboard actions are always recorded while the dashboard runs.)
+# in Discord, for the dashboard's Audit log page. (Dashboard actions are always recorded while the dashboard runs.)
 FEATURE_AUDIT_LOG_ENABLED = True
 # cogs/notifications.py: posts alerts (bot restarts and updates, unexpected
 # stops, errors, dashboard changes) to a moderator channel - see the
@@ -163,7 +162,7 @@ FEATURE_WEB_DASHBOARD_ENABLED = _os.environ.get("WEB_DASHBOARD_ENABLED", "").str
 
 # --- Audit log (audit.py, cogs/audit_log.py) ---
 # Every action is stored in the database (crusader.db) for the dashboard's
-# Audit log page and /auditlog, and also written as one line to a
+# Audit log page, and also written as one line to a
 # plain-text file for reading on the server. The file path is relative to
 # wherever the bot is started from, same as applications.json etc.
 AUDIT_LOG_PATH = "audit.log"
@@ -453,13 +452,9 @@ ARCHIVE_CHANNEL_ID = 1337906439066488914
 # approve/deny/reset either, by design.
 APPROVER_ROLE_ID = 1482653670855413822
 
-# Gates the handful of diagnostic/one-time-migration commands accumulated
-# during development: /apply-test-blizzard, /raidsummary-test-blizzard,
-# /raidsummary-test-spell, /raidsummary-refresh-wowhead, /raidsummary-bulk.
-# These dump raw API responses or do a one-shot data migration/import -
-# useful when standing up a new deployment or chasing a Blizzard/Wowhead
-# lookup bug, but noise in the command list day-to-day. Off by default;
-# flip to True when you actually need one of them.
+# Gates one-time tools that are noise in the command list day-to-day:
+# /raidsummary-bulk (a one-shot import of old reports). Off by default.
+# Raw Blizzard answers are in the dashboard's Blizzard API explorer.
 DEBUG_COMMANDS_ENABLED = False
 
 # Armory block (equipped gear + talent build) shown on the /apply review
@@ -474,16 +469,15 @@ DEBUG_COMMANDS_ENABLED = False
 # than good until it's resolved on their end. Item/spell lookups
 # (get_item/get_spell_icon, used throughout raid summaries) are NOT
 # affected by this flag or this bug - those hit a different, unaffected
-# static-classic-{region} endpoint family (confirmed: a real TBC item
-# resolves correctly via /raidsummary-test-blizzard) - only the
+# static-classic-{region} endpoint family (a real TBC item resolves
+# correctly) - only the
 # profile-classic-{region} CHARACTER endpoints (equipment/specializations)
 # have the staleness problem. Flip back to True once Blizzard's forum
 # threads on this (see get_character_specializations()'s docstring in
 # blizzard_client.py) report it fixed, or to spot-check whether a specific
 # character's data happens to be fresh - _compute_armory_block still
 # returns None immediately while this is False, with no API calls made at
-# all. /apply-test-blizzard (moderator diagnostic) ignores this flag on
-# purpose, so it can still be used to check whether the bug's been fixed
+# all. The Blizzard API explorer (Maintenance) shows whether it's fixed
 # without re-enabling the block for every applicant first.
 ARMORY_BLOCK_ENABLED = False
 
@@ -639,7 +633,7 @@ TOP_DISPELLERS_ICON_SPELL_ID = 17201
 # Hardcoded emoji overrides for a handful of the icons above - format
 # "<:emoji_name:emoji_id>" (Discord's own inline-emoji syntax), for an
 # application emoji the moderator has ALREADY manually created (via
-# /add-emoji or Discord's own app-emoji settings), bypassing
+# the Emoji page or Discord's own app-emoji settings), bypassing
 # wowhead.get_spell()/icons.ensure_spell_emoji() entirely for these keys.
 # The first five exist because Wowhead's spell-icon lookup started 403ing
 # under load (see wowhead.py's module docstring) and these are the ones
@@ -649,7 +643,7 @@ TOP_DISPELLERS_ICON_SPELL_ID = 17201
 # three Judgements are overridden for a different reason: Blizzard's
 # spell-media endpoint (via bot.blizzard, tried before falling back to
 # Wowhead) returns a wrong/generic icon for them - see blizzard_client.py's
-# get_spell_icon()/diagnose_spell() docstrings. Keyed by the exact same
+# get_spell_icon() docstring. Keyed by the exact same
 # TRACKED_DEBUFFS/TRACKED_BUFFS name for the tracked-ability entries;
 # TOP_INTERRUPTERS_ICON_EMOJI/TOP_DISPELLERS_ICON_EMOJI are separate plain
 # constants since those two aren't part of this name-keyed dict. See

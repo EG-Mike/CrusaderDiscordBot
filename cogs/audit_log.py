@@ -3,8 +3,7 @@ Audit log, Discord side: records WHO did WHAT with the bot - every slash
 command, context menu, button click, dropdown pick and modal submit - as a
 structured event in audit.py's store (the dashboard's Audit log page reads
 it), mirrored as one line in the plain-text file config.AUDIT_LOG_PATH
-(rotated by size). Mods can pull recent entries into Discord with
-/auditlog.
+(rotated by size).
 
 How it captures everything without touching any other cog: discord.py
 dispatches an "interaction" event for EVERY incoming interaction before
@@ -34,14 +33,11 @@ the dashboard too.
 """
 
 import asyncio
-import io
 import logging
 import os
-from datetime import datetime
 from logging.handlers import RotatingFileHandler
 
 import discord
-from discord import app_commands
 from discord.ext import commands
 
 import audit
@@ -50,8 +46,6 @@ import config
 log = logging.getLogger("wow-apply-bot.audit_log")
 
 MAX_VALUE_LEN = 100       # truncate long option values (free-text fields)
-MAX_LINES_PER_CALL = 500  # hard cap for /auditlog's `lines` option
-INLINE_CHAR_LIMIT = 1900  # above this, /auditlog attaches a file instead
 
 # Discord application command option types (raw API values).
 _OPT_SUB_COMMAND = 1
@@ -245,19 +239,6 @@ def _who_text(user: discord.abc.User) -> str:
     return f"{user.name} ({user.id})"
 
 
-def format_entry(event: dict) -> str:
-    """One compact /auditlog line: time, who, where, what."""
-    when = datetime.strptime(event["created_at"], audit.TIME_FORMAT).strftime("%Y-%m-%d %H:%M")
-    who = event.get("actor_name") or event.get("actor_id") or "?"
-    if event["source"] == "dashboard":
-        where = "dashboard"
-    elif event.get("channel_name") and event.get("channel_id"):
-        where = f"#{event['channel_name']}"
-    else:
-        where = event.get("channel_name") or "?"
-    return f"{when}  {who}  {where}  {event['summary']}"
-
-
 class AuditLogCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -300,19 +281,6 @@ class AuditLogCog(commands.Cog):
             self._handler.close()
             self._handler = None
 
-    # --- permission check ------------------------------------------------
-
-    async def _is_mod(self, guild: discord.Guild, user_id: int) -> bool:
-        member = guild.get_member(user_id)
-        if member is None:
-            try:
-                member = await guild.fetch_member(user_id)
-            except discord.HTTPException:
-                return False
-        if member.guild_permissions.manage_roles:
-            return True
-        return bool(config.MOD_ROLE_ID) and any(role.id == config.MOD_ROLE_ID for role in member.roles)
-
     # --- capture -----------------------------------------------------------
 
     @commands.Cog.listener()
@@ -347,61 +315,6 @@ class AuditLogCog(commands.Cog):
         except Exception:
             # Auditing must never interfere with the actual interaction.
             log.exception("Failed to record audit event")
-
-    # --- reading -----------------------------------------------------------
-
-    @app_commands.command(name="auditlog", description="Show the most recent bot actions (who used which command/button)")
-    @app_commands.describe(
-        lines=f"How many recent entries to show (1-{MAX_LINES_PER_CALL}, default 25)",
-        user="Only show actions by this member",
-    )
-    async def auditlog(
-        self,
-        interaction: discord.Interaction,
-        lines: app_commands.Range[int, 1, MAX_LINES_PER_CALL] = 25,
-        user: discord.User = None,
-    ):
-        if interaction.guild is None or not await self._is_mod(interaction.guild, interaction.user.id):
-            await interaction.response.send_message("Only moderators can view the audit log.", ephemeral=True)
-            return
-
-        # Fetch one extra: the newest entry is normally this very /auditlog
-        # call (recorded a moment ago by on_interaction) - drop it as noise.
-        filters = {"actor_id": user.id} if user else {}
-        events, _ = await asyncio.to_thread(audit.search, filters, limit=lines + 1)
-        if (
-            events
-            and events[0].get("actor_id") == str(interaction.user.id)
-            and events[0]["kind"] == "command"
-            and events[0]["action"] == "/auditlog"
-        ):
-            events = events[1:]
-        events = list(reversed(events[:lines]))  # oldest first, like a log
-
-        scope = f" by {user.mention}" if user else ""
-        if not events:
-            await interaction.response.send_message(f"No audit log entries{scope} yet.", ephemeral=True)
-            return
-
-        body = "\n".join(format_entry(e) for e in events)
-        header = f"Last {len(events)} audit log entr{'y' if len(events) == 1 else 'ies'}{scope} (UTC):"
-        if config.FEATURE_WEB_DASHBOARD_ENABLED:
-            header += "\n-# Search and filter the full history on the dashboard's Audit log page."
-        if len(body) + len(header) + 10 <= INLINE_CHAR_LIMIT:
-            await interaction.response.send_message(
-                f"{header}\n```\n{body}\n```",
-                ephemeral=True,
-                allowed_mentions=discord.AllowedMentions.none(),
-            )
-        else:
-            file = discord.File(io.BytesIO(body.encode("utf-8")), filename="audit_log.txt")
-            await interaction.response.send_message(
-                f"{header}\n(too long to show inline - attached)",
-                file=file,
-                ephemeral=True,
-                allowed_mentions=discord.AllowedMentions.none(),
-            )
-
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(AuditLogCog(bot))
