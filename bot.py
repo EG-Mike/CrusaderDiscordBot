@@ -71,6 +71,7 @@ OPTIONAL_EXTENSIONS = [
     ("cogs.tier_retrospective", config.FEATURE_TIER_RETROSPECTIVE_ENABLED),
     ("cogs.polls", config.FEATURE_POLLS_ENABLED),
     ("cogs.audit_log", config.FEATURE_AUDIT_LOG_ENABLED),
+    ("cogs.notifications", config.FEATURE_NOTIFICATIONS_ENABLED),
     ("cogs.web_dashboard", config.FEATURE_WEB_DASHBOARD_ENABLED),
 ]
 EXTENSIONS = ["cogs.apply"] + [name for name, enabled in OPTIONAL_EXTENSIONS if enabled]

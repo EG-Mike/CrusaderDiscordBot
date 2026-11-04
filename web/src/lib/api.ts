@@ -85,6 +85,8 @@ export interface Setting {
   updated_at: string | null;
   updated_by: string | null;
   pending_restart: boolean;
+  /** Applied to the running bot as soon as it's saved (no restart). */
+  live: boolean;
 }
 
 export interface SettingGroup {

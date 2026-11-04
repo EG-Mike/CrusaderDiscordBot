@@ -131,7 +131,8 @@ export function SettingRow({
       setHistory(null);
       // The setup wizard saves many fields in a row and restarts at the
       // end, so a toast per field would just be noise there.
-      if (!compact) toast("ok", `${setting.label} saved${updated.pending_restart ? ". Restart the bot to apply it." : "."}`);
+      if (!compact)
+        toast("ok", `${setting.label} saved${updated.live ? " and applied." : updated.pending_restart ? ". Restart the bot to apply it." : "."}`);
     } catch (e) {
       setError((e as Error).message);
       setDraft(initialDraft());
@@ -247,6 +248,7 @@ export function SettingRow({
             {badge}
             {setting.overridden && !compact && <Badge tone="gold">Changed</Badge>}
             {setting.pending_restart && !compact && <Badge tone="warn">Pending restart</Badge>}
+            {setting.live && !compact && <Badge tone="ok">Applies immediately</Badge>}
             {setting.default_source === "local" && <Badge tone="info">Local file</Badge>}
             {setting.default_source === "env" && !setting.overridden && <Badge tone="info">From .env</Badge>}
             {ro && (

@@ -133,6 +133,10 @@ FEATURE_POLLS_ENABLED = True
 # in Discord, for the dashboard's Audit log page and the mod-only /auditlog
 # command. (Dashboard actions are always recorded while the dashboard runs.)
 FEATURE_AUDIT_LOG_ENABLED = True
+# cogs/notifications.py: posts alerts (bot restarts and updates, unexpected
+# stops, errors, dashboard changes) to a moderator channel - see the
+# "Notifications" settings below.
+FEATURE_NOTIFICATIONS_ENABLED = True
 
 # cogs/web_dashboard.py: the browser-based management dashboard (see the
 # README's "Web dashboard" section). Off by default - turn it on in
@@ -191,6 +195,33 @@ ROLE_EMOJI_NAMES = {
     "Healer": "Roleicon_healer",
     "DPS": "Roleicon_dps",
 }
+
+# --- Notifications (cogs/notifications.py) ---
+# These apply immediately, no restart needed.
+#
+# Channel the bot posts its notifications in. Leave it empty to use the
+# moderator chat channel (Discord server settings).
+NOTIFICATIONS_CHANNEL_ID = 0
+
+# Say when the bot is back online after a restart or update (which version,
+# why it stopped, how long it was down), when it stopped unexpectedly, and
+# when its Discord connection was down for a while.
+NOTIFY_BOT_STATUS = True
+
+# Report errors from the bot's console: how many and where they came from
+# (the details stay in the dashboard's System log, which only admins see).
+NOTIFY_ERRORS = True
+
+# At most one error report per this many minutes; errors in between are
+# counted into the next report.
+NOTIFY_ERRORS_EVERY_MINUTES = 15
+
+# Report changes made on the dashboard: settings, API keys, setup, restarts
+# and bot message edits. Several changes in a row become one message.
+NOTIFY_DASHBOARD_CHANGES = True
+
+# Report announcements published, edited or deleted from the dashboard.
+NOTIFY_ANNOUNCEMENTS = True
 
 # --- Emoji library (emoji_library.py) ---
 # Where item and spell icons for the bot's emoji are looked up: Blizzard's

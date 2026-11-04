@@ -28,6 +28,15 @@ READ_ONLY = {
     "AUDIT_LOG_PATH": "A file path on the server - change it in config/deployment_local.py.",
 }
 
+# Settings read at the moment they're used (not cached at startup), so a
+# saved value is applied to the running bot straight away - no restart.
+LIVE_PREFIXES = ("NOTIFY_", "NOTIFICATIONS_")
+
+
+def is_live(key: str) -> bool:
+    return key.startswith(LIVE_PREFIXES)
+
+
 LOG_LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 
 ENUMS = {
@@ -79,6 +88,8 @@ GROUPS = [
      lambda k: k.startswith(("TRACKED_", "TOP_", "EXCLUDED_", "PARSE_")) or k in {
          "RAID_TIER_BANNERS", "CLEAR_STATUS_TAG_NAMES", "TIER_TAG_IDS", "RAID_TYPE_TAG_IDS"}),
     ("polls", "Polls", "Defaults for new polls.", lambda k: k.startswith("POLL_")),
+    ("notifications", "Notifications", "Alerts the bot posts in a moderator channel. Changes apply immediately.",
+     lambda k: k.startswith(("NOTIFY_", "NOTIFICATIONS_"))),
     ("system_log", "System log", "Bot starts, stops, updates and console errors, and how long they're kept.",
      lambda k: k.startswith("SYSTEM_LOG_")),
     ("audit", "Audit log", "Who did what with the bot, and how long that history is kept.", lambda k: k.startswith("AUDIT_LOG_")),
@@ -108,6 +119,8 @@ FEATURES = {
                                   "Needs Raid summaries and Attendance."),
     "FEATURE_TIER_RETROSPECTIVE_ENABLED": ("Tier recap", "/tier-recap. Needs Raid summaries."),
     "FEATURE_POLLS_ENABLED": ("Polls", "/poll create and every poll's buttons."),
+    "FEATURE_NOTIFICATIONS_ENABLED": ("Notifications", "Alerts in a moderator channel: restarts, updates, "
+                                                       "unexpected stops, errors and dashboard changes."),
     "FEATURE_AUDIT_LOG_ENABLED": ("Audit log", "Records the commands, buttons and forms members use in Discord, "
                                                 "for the Audit log page and /auditlog."),
     "FEATURE_WEB_DASHBOARD_ENABLED": ("Web dashboard", "This dashboard."),
@@ -119,6 +132,12 @@ LABELS = {
     "GEAR_CHECK_CHANNEL_ID": "Gear-check (apply) channel",
     "ANNOUNCEMENT_SANDBOX_CHANNEL_ID": "Announcement drafts channel",
     "MODERATOR_CHANNEL_ID": "Moderator chat channel",
+    "NOTIFICATIONS_CHANNEL_ID": "Notifications channel",
+    "NOTIFY_ERRORS_EVERY_MINUTES": "Error reports at most every (minutes)",
+    "NOTIFY_BOT_STATUS": "Restarts, updates and outages",
+    "NOTIFY_ERRORS": "Error reports",
+    "NOTIFY_DASHBOARD_CHANGES": "Dashboard changes",
+    "NOTIFY_ANNOUNCEMENTS": "Announcements",
     "RAID_SUMMARY_FORUM_CHANNEL_ID": "Raid summary forum",
     "RAID_LOGS_CHANNEL_ID": "Raid logs channel (WCL webhook)",
     "RAID_LOGS_REPOST_CHANNEL_ID": "Raid logs repost channel",
@@ -307,6 +326,7 @@ def describe(key: str, saved=None) -> dict:
         "updated_at": saved["updated_at"] if saved else None,
         "updated_by": saved["updated_by"] if saved else None,
         "pending_restart": not _same(saved_value, running),
+        "live": is_live(key),
     }
 
 
@@ -358,6 +378,8 @@ def save(key: str, typed_value, changed_by: str) -> dict:
     old = saved["value"] if saved else None
     is_default = _same(typed_value, _file_default(key))
     new = None if is_default else overrides.dumps(typed_value)
+    if is_live(key):
+        setattr(config, key, typed_value)  # applies to the running bot now
     if old == new:
         return describe(key)
     with db.transaction() as conn:

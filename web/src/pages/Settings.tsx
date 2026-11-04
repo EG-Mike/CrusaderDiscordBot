@@ -5,6 +5,7 @@ import { api, type Channel, type Role, type Setting, type SettingGroup } from ".
 import { useLive } from "../lib/live";
 import { SettingRow } from "../components/SettingRow";
 import { Integrations } from "../components/Integrations";
+import { NotificationsPanel } from "../components/NotificationsPanel";
 import { RestartButton } from "../components/Restart";
 import { Button, EmptyState, SectionHeader, Skeleton, cx } from "../components/ui";
 
@@ -182,6 +183,8 @@ export default function SettingsPage() {
               <p className="text-muted">{activeGroup.description}</p>
             </div>
           )}
+
+          {group === "notifications" && !query && filter === "all" && <NotificationsPanel />}
 
           {group === "integrations" && !query && filter === "all" ? (
             <Integrations />

@@ -36,7 +36,7 @@ import config
 import db
 import secret_store
 import system_log
-from webapi import announcements_api, auth, bot_messages_api, common, emoji_api, integrations
+from webapi import announcements_api, auth, bot_messages_api, common, emoji_api, integrations, notifications_api
 from webapi import settings as settings_api
 
 log = logging.getLogger("wow-apply-bot.web")
@@ -755,6 +755,7 @@ def create_app(bot) -> web.Application:
     announcements_api.register(app)
     bot_messages_api.register(app)
     emoji_api.register(app)
+    notifications_api.register(app)
     app.router.add_get("/api/ws", websocket)
     app.router.add_route("*", "/api/{tail:.*}", api_not_found)
 
