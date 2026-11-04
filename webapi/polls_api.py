@@ -5,7 +5,8 @@ Dashboard API for polls (cogs/polls.py).
   GET    /api/polls/{id}            one poll
   POST   /api/polls                 post a new poll in a channel
   POST   /api/polls/{id}/action     {"action": ...}: open_voting, close, reopen_adding, reopen_voting,
-                                    clear_deadline, add_option {text}, remove_options {ids}, toggle {key, value}
+                                    clear_deadline, set_deadline {closes_at, message, announce},
+                                    add_option {text}, remove_options {ids}, toggle {key, value}
   DELETE /api/polls/{id}            delete the poll and its message
 
 Moderator access (moderators can manage every poll, as in Discord). Votes
@@ -23,7 +24,7 @@ WHAT = "polls"
 ACTION_WORDS = {
     "open_voting": "Opened voting on", "close": "Closed", "reopen_adding": "Reopened adding on",
     "reopen_voting": "Reopened voting on", "clear_deadline": "Removed the deadline of",
-    "add_option": "Added an option to", "remove_options": "Removed options from", "toggle": "Changed a setting of",
+    "add_option": "Added an option to", "set_deadline": "Set the closing time of", "remove_options": "Removed options from", "toggle": "Changed a setting of",
 }
 
 

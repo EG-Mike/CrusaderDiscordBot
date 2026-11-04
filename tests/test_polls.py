@@ -52,6 +52,36 @@ class BuildRecordTests(unittest.TestCase):
                 polls.build_record(*args, 1, "Mike", 500)
 
 
+class DeadlineTests(unittest.TestCase):
+    def test_check_deadline(self):
+        import time
+        now = int(time.time())
+        self.assertEqual(polls.check_deadline(now + 3600), now + 3600)
+        for bad in (now - 10, now + 30, now + 31 * 86400, "soon", None):
+            with self.assertRaises(polls.PollError):
+                polls.check_deadline(bad)
+
+    def test_fixed_closing_time_at_creation(self):
+        import time
+        at = int(time.time()) + 7200
+        r = polls.build_record("Guild name?", None, [], {"closes_at": at}, 1, "Mike", 500)
+        self.assertEqual((r["phase"], r["closes_at"]), (polls.PHASE_ADDING, at))  # kept for when voting opens
+        cog = polls.PollsCog.__new__(polls.PollsCog)
+        cog._insert_option(r, "A", 2, "x", as_manager=True)
+        cog._insert_option(r, "B", 2, "x", as_manager=True)
+        cog._phase_change(r, "open_voting")
+        self.assertEqual(r["closes_at"], at)
+
+    def test_announcement_text(self):
+        r = record()
+        r["closes_at"] = 1800000000
+        text = polls.deadline_announcement(r, "Last chance!")
+        self.assertIn("<t:1800000000:R>", text)
+        self.assertTrue(text.endswith("Last chance!"))
+        with self.assertRaises(polls.PollError):
+            polls._clean_message("x" * 600)
+
+
 class RuleTests(unittest.TestCase):
     def setUp(self):
         self.cog = polls.PollsCog.__new__(polls.PollsCog)  # rules only; no Discord needed
@@ -166,6 +196,18 @@ class PollApiTests(DatabaseTestCase, unittest.IsolatedAsyncioTestCase):
                                                                             "value": True})
         self.assertEqual(status, 400)
         self.assertIn("can't be turned back on", body["error"])
+
+        import time
+        at = int(time.time()) + 3600
+        status, poll = await self.call("POST", f"/api/polls/{pid}/action",
+                                       {"action": "set_deadline", "closes_at": at, "message": "Last chance!"})
+        self.assertEqual((status, poll["closes_at"]), (200, at))
+        announced = self.message.reply.call_args.args[0]
+        self.assertIn(f"<t:{at}:R>", announced)
+        self.assertIn("Last chance!", announced)
+        self.assertEqual(self.message.reply.call_args.kwargs["allowed_mentions"].everyone, False)
+        status, body = await self.call("POST", f"/api/polls/{pid}/action", {"action": "set_deadline", "closes_at": 5})
+        self.assertEqual(status, 400)
 
         status, poll = await self.call("POST", f"/api/polls/{pid}/action", {"action": "close"})
         self.assertEqual(poll["phase"], "closed")

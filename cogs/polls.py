@@ -59,6 +59,7 @@ OPTION_MAX_LENGTH = 55
 QUESTION_MAX_LENGTH = 200
 DESCRIPTION_MAX_LENGTH = 400
 MAX_DURATION_SECONDS = 30 * 24 * 3600
+DEADLINE_MESSAGE_MAX_LENGTH = 500
 # Message text budget - Discord caps a Components V2 message's total text at
 # 4000 chars; the option list gets whatever the header/footer leave over.
 TEXT_BUDGET = 3800
@@ -104,6 +105,14 @@ def _plural(n: int, word: str, plural: str = None) -> str:
 def _bar(fraction: float, width: int = 10) -> str:
     filled = round(fraction * width)
     return "█" * filled + "░" * (width - filled)
+
+
+def _clean_message(text) -> str:
+    """An optional deadline message: trimmed, length-checked. Raises PollError."""
+    text = (text or "").strip()
+    if len(text) > DEADLINE_MESSAGE_MAX_LENGTH:
+        raise PollError(f"Keep the message under {DEADLINE_MESSAGE_MAX_LENGTH} characters.")
+    return text
 
 
 def _parse_duration(text: str):
@@ -182,7 +191,10 @@ def build_record(question: str, description, option_texts: list, settings: dict,
     if not members_can_add and len(initial) < 2:
         raise PollError("Give at least 2 options, or let members add their own.")
     duration_seconds = None
-    if settings.get("duration"):
+    closes_at = None
+    if settings.get("closes_at"):
+        closes_at = check_deadline(settings["closes_at"])
+    elif settings.get("duration"):
         duration_seconds = _parse_duration(str(settings["duration"]))
         if duration_seconds is None:
             raise PollError("Couldn't read that duration - use something like 2d, 12h, 1d6h or 90m.")
@@ -209,6 +221,7 @@ def build_record(question: str, description, option_texts: list, settings: dict,
         "allow_vote_change": pick("allow_vote_change", config.POLL_DEFAULT_ALLOW_VOTE_CHANGE),
         "duration": duration_seconds,
     })
+    record["closes_at"] = closes_at  # a fixed time also applies to a poll that starts by collecting options
     if members_can_add and record["collect_first"]:
         record["phase"] = PHASE_ADDING
     else:
@@ -216,6 +229,30 @@ def build_record(question: str, description, option_texts: list, settings: dict,
         if duration_seconds:
             record["closes_at"] = int(time.time()) + duration_seconds
     return record
+
+
+def check_deadline(closes_at) -> int:
+    """A closing time (unix seconds) that's in the future and within the
+    30-day limit. Raises PollError."""
+    try:
+        value = int(closes_at)
+    except (TypeError, ValueError):
+        raise PollError("That closing time isn't valid.") from None
+    now = int(time.time())
+    if value <= now + 60:
+        raise PollError("Pick a closing time at least a minute from now.")
+    if value > now + MAX_DURATION_SECONDS:
+        raise PollError("Polls can run for at most 30 days.")
+    return value
+
+
+def deadline_announcement(record: dict, message=None) -> str:
+    """What the bot posts in the poll's channel when a deadline is set."""
+    ts = record["closes_at"]
+    text = f"⏰ Voting on **{record['question']}** ends <t:{ts}:R> (<t:{ts}:f>)."
+    if message:
+        text += f"\n{message}"
+    return text
 
 
 class AddOptionModal(discord.ui.Modal, title="Add an option"):
@@ -231,6 +268,20 @@ class AddOptionModal(discord.ui.Modal, title="Add an option"):
 
     async def on_submit(self, interaction: discord.Interaction):
         await self.cog._add_option(interaction, self.poll_message, str(self.option), as_manager=self.as_manager)
+
+
+class DeadlineModal(discord.ui.Modal, title="Set when voting closes"):
+    closes_in = discord.ui.TextInput(label="Close in", placeholder="e.g. 2d, 12h, 1d6h or 90m", max_length=20)
+    message = discord.ui.TextInput(label="Message to post with it (optional)", style=discord.TextStyle.paragraph,
+                                   required=False, max_length=DEADLINE_MESSAGE_MAX_LENGTH)
+
+    def __init__(self, cog: "PollsCog", poll_message):
+        super().__init__()
+        self.cog = cog
+        self.poll_message = poll_message
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await self.cog.apply_deadline_from_modal(interaction, self.poll_message, str(self.closes_in), str(self.message))
 
 
 class PollsCog(commands.Cog):
@@ -424,6 +475,8 @@ class PollsCog(commands.Cog):
         chips.append("📢 votes are public" if record["show_voters"] else "🕶️ votes are anonymous")
         if phase == PHASE_VOTING and record["closes_at"]:
             chips.append(f"⏰ closes <t:{record['closes_at']}:R>")
+        elif phase == PHASE_ADDING and record["closes_at"]:
+            chips.append(f"⏰ voting closes <t:{record['closes_at']}:f>")
         elif phase == PHASE_ADDING and record["duration"]:
             chips.append(f"⏰ voting will run for {self._fmt_duration(record['duration'])}")
         return head + "\n-# " + " · ".join(chips)
@@ -918,6 +971,9 @@ class PollsCog(commands.Cog):
                 add("➕ Reopen adding", discord.ButtonStyle.secondary, self._manage_reopen_adding, 0)
         if phase == PHASE_CLOSED:
             add("🗳️ Reopen voting", discord.ButtonStyle.secondary, self._manage_reopen_voting, 0)
+        if phase != PHASE_CLOSED:
+            add("⏰ Change deadline" if record["closes_at"] else "⏰ Set deadline", discord.ButtonStyle.secondary,
+                self._manage_set_deadline, 0)
         if phase == PHASE_VOTING and record["closes_at"]:
             add("⏰ Remove deadline", discord.ButtonStyle.secondary, self._manage_clear_deadline, 0)
 
@@ -974,6 +1030,18 @@ class PollsCog(commands.Cog):
             return None
         record[key] = value
         return None
+
+    def _set_deadline(self, record: dict, closes_at) -> None:
+        """Sets when voting closes, in place. Raises PollError."""
+        if record["phase"] == PHASE_CLOSED:
+            raise PollError("This poll is closed. Reopen voting first.")
+        record["closes_at"] = check_deadline(closes_at)
+
+    async def _announce_deadline(self, message, record: dict, text=None):
+        try:
+            await message.reply(deadline_announcement(record, text), allowed_mentions=NO_PINGS)
+        except discord.HTTPException:
+            log.exception("Failed to announce the deadline of poll %s", message.id)
 
     def _phase_change(self, record: dict, action: str):
         """Open/close/reopen in place; returns an error text when not allowed."""
@@ -1046,6 +1114,31 @@ class PollsCog(commands.Cog):
     async def _manage_clear_deadline(self, interaction, poll_message):
         await self._update_phase(interaction, poll_message, lambda r: self._phase_change(r, "clear_deadline"),
                                  "⏰ Deadline removed - close the poll manually.")
+
+    async def _manage_set_deadline(self, interaction, poll_message):
+        await interaction.response.send_modal(DeadlineModal(self, poll_message))
+
+    async def apply_deadline_from_modal(self, interaction, poll_message, raw_in: str, raw_message: str):
+        seconds = _parse_duration(raw_in or "")
+        if seconds is None:
+            await interaction.response.send_message(
+                "Couldn't read that - use something like 2d, 12h, 1d6h or 90m.", ephemeral=True)
+            return
+        async with self._lock(poll_message.id):
+            record = self._get(poll_message.id)
+            try:
+                if record is None:
+                    raise PollError("This poll no longer exists.")
+                text = _clean_message(raw_message)
+                self._set_deadline(record, int(time.time()) + seconds)
+            except PollError as exc:
+                await interaction.response.send_message(str(exc), ephemeral=True)
+                return
+            self._save(poll_message.id, record)
+            await interaction.response.send_message(
+                f"⏰ Voting closes <t:{record['closes_at']}:R> - announced in the channel.", ephemeral=True)
+            await self._refresh(poll_message)
+            await self._announce_deadline(poll_message, record, text)
 
     async def _manage_add_option(self, interaction, poll_message):
         record = self._get(poll_message.id)
@@ -1171,6 +1264,14 @@ class PollsCog(commands.Cog):
             elif action == "remove_options":
                 ids = {int(i) for i in payload.get("ids") or [] if str(i).isdigit()}
                 error = None if self._drop_options(record, ids) else "Choose options to remove."
+            elif action == "set_deadline":
+                text = _clean_message(payload.get("message"))
+                self._set_deadline(record, payload.get("closes_at"))
+                self._save(message_id, record)
+                await self._refresh(message)
+                if payload.get("announce", True):
+                    await self._announce_deadline(message, record, text)
+                return self.describe(message_id, record)
             elif action == "toggle":
                 key = payload.get("key")
                 error = self._set_toggle(record, key, bool(payload.get("value"))) if key in TOGGLES else "Unknown setting."

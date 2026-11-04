@@ -33,6 +33,93 @@ const DURATIONS = [
   ["7d", "1 week"],
 ] as const;
 
+const DEADLINE_PRESETS = [
+  [3600, "1 hour"],
+  [6 * 3600, "6 hours"],
+  [12 * 3600, "12 hours"],
+  [86400, "1 day"],
+  [2 * 86400, "2 days"],
+  [3 * 86400, "3 days"],
+  [7 * 86400, "1 week"],
+] as const;
+
+/** A <input type="datetime-local"> value -> unix seconds (browser's time zone). */
+function localToUnix(value: string) {
+  const ms = new Date(value).getTime();
+  return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
+}
+
+/** Earliest selectable value for a datetime-local input (now + 5 minutes). */
+function minLocal() {
+  const d = new Date(Date.now() + 5 * 60000 - new Date().getTimezoneOffset() * 60000);
+  return d.toISOString().slice(0, 16);
+}
+
+function DeadlinePanel({ poll, act, busy }: { poll: Poll; act: (action: string, extra?: Record<string, unknown>, ok?: string) => Promise<boolean>; busy: string | null }) {
+  const [mode, setMode] = useState<"in" | "at">("in");
+  const [inSeconds, setInSeconds] = useState(86400);
+  const [at, setAt] = useState("");
+  const [message, setMessage] = useState("");
+  const [announce, setAnnounce] = useState(true);
+  const closesAt = mode === "in" ? Math.floor(Date.now() / 1000) + inSeconds : localToUnix(at);
+
+  const submit = async () => {
+    if (!closesAt) return;
+    const ok = await act("set_deadline", { closes_at: closesAt, message, announce }, announce ? `Deadline set and announced in #${poll.channel_name}` : "Deadline set");
+    if (ok) setMessage("");
+  };
+
+  return (
+    <div className="border-t border-line px-4 py-3 md:px-5">
+      <div className="label mb-1">{poll.closes_at ? "Change the deadline" : "Set a deadline"}</div>
+      {poll.closes_at && (
+        <p className="mb-2 text-xs text-muted">
+          Currently closes {new Date(poll.closes_at * 1000).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
+          {poll.phase === "adding" && " (once voting is open)"}.
+        </p>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        <Segmented label="Deadline type" value={mode} onChange={setMode} options={[["in", "Close in"], ["at", "Close at"]] as const} />
+        {mode === "in" ? (
+          <select className="input h-8 w-auto py-1 text-xs" value={inSeconds} onChange={(e) => setInSeconds(Number(e.target.value))} aria-label="Close in">
+            {DEADLINE_PRESETS.map(([seconds, label]) => (
+              <option key={seconds} value={seconds}>
+                {label}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <input type="datetime-local" className="input h-8 w-auto py-1 text-xs" min={minLocal()} value={at} onChange={(e) => setAt(e.target.value)} aria-label="Close at" />
+        )}
+      </div>
+      <textarea
+        className="input mt-2 text-xs"
+        rows={2}
+        maxLength={500}
+        value={message}
+        onChange={(e) => setMessage(e.target.value)}
+        placeholder="Optional message posted with it, e.g. Last chance to vote for the raid night!"
+        aria-label="Message"
+        disabled={!announce}
+      />
+      <div className="mt-2 flex flex-wrap items-center gap-3">
+        <label className="flex items-center gap-2 text-xs text-muted">
+          <Toggle checked={announce} onChange={setAnnounce} label="Announce in the channel" /> Announce in #{poll.channel_name ?? "the channel"}
+        </label>
+        <Button size="sm" variant="primary" className="ml-auto" onClick={submit} loading={busy === "set_deadline"} disabled={!closesAt}>
+          {poll.closes_at ? "Change deadline" : "Set deadline"}
+        </Button>
+      </div>
+      {announce && closesAt && (
+        <p className="mt-2 rounded-md border border-line bg-bg/50 px-2.5 py-1.5 text-2xs text-muted">
+          The bot posts: ⏰ Voting on <b>{poll.question}</b> ends {new Date(closesAt * 1000).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}.
+          {message.trim() && <span className="block">{message.trim()}</span>}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function deadlineLabel(poll: Poll, now: number) {
   if (poll.phase !== "voting" || !poll.closes_at) return null;
   const minutes = Math.round((poll.closes_at * 1000 - now) / 60000);
@@ -184,6 +271,8 @@ function PollDetail({ poll, onChanged, onDeleted }: { poll: Poll; onChanged: (p:
         </Button>
       </div>
 
+      {poll.phase !== "closed" && <DeadlinePanel poll={poll} act={act} busy={busy} />}
+
       {poll.phase !== "closed" && (
         <div className="border-t border-line px-4 py-3 md:px-5">
           <div className="label mb-2">Options</div>
@@ -322,6 +411,7 @@ function NewPollDialog({ open, onClose, onCreated, defaults, channels }: {
   const [options, setOptions] = useState("");
   const [channelId, setChannelId] = useState("");
   const [duration, setDuration] = useState("");
+  const [closeAt, setCloseAt] = useState("");
   const [settings, setSettings] = useState<Partial<PollSettings>>({});
   const [busy, setBusy] = useState(false);
 
@@ -336,7 +426,8 @@ function NewPollDialog({ open, onClose, onCreated, defaults, channels }: {
   const create = async () => {
     setBusy(true);
     try {
-      const poll = await api.post<Poll>("/api/polls", { question, description, options: optionList, channel_id: channelId, settings: { ...settings, duration } });
+      const timing = duration === "at" ? { closes_at: localToUnix(closeAt) } : { duration };
+      const poll = await api.post<Poll>("/api/polls", { question, description, options: optionList, channel_id: channelId, settings: { ...settings, ...timing } });
       toast("ok", `Poll posted in #${poll.channel_name}`);
       onCreated(poll);
       setQuestion("");
@@ -361,7 +452,7 @@ function NewPollDialog({ open, onClose, onCreated, defaults, channels }: {
           <Button variant="ghost" onClick={onClose} disabled={busy}>
             Cancel
           </Button>
-          <Button variant="primary" onClick={create} loading={busy} disabled={!question.trim() || !channelId || (!settings.members_can_add && optionList.length < 2)}>
+          <Button variant="primary" onClick={create} loading={busy} disabled={!question.trim() || !channelId || (!settings.members_can_add && optionList.length < 2) || (duration === "at" && !closeAt)}>
             Post poll
           </Button>
         </>
@@ -404,7 +495,11 @@ function NewPollDialog({ open, onClose, onCreated, defaults, channels }: {
                     {value ? " after voting opens" : ""}
                   </option>
                 ))}
+                <option value="at">At a date and time…</option>
               </select>
+              {duration === "at" && (
+                <input type="datetime-local" className="input mt-2" min={minLocal()} value={closeAt} onChange={(e) => setCloseAt(e.target.value)} aria-label="Voting closes at" />
+              )}
             </div>
             <div>
               <label className="label mb-1.5 block" htmlFor="poll-v">Votes per member</label>
