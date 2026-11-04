@@ -173,13 +173,23 @@ set in the dashboard.
   Discord-style preview, autosaved drafts shared with `/announce`,
   publish/edit in place, version history, templates). No scheduled
   posting. Plus the Bot messages page (`bot_messages.py`).
-- Phase 3: Applications, Polls.
-- Phase 4: Raid summaries, Raid logs, Attendance, Tier recap, Records.
-  These are the most game-version-dependent areas, so plan them together
-  with the WoW Forever data model.
-- Emoji (brought forward from Phase 5, done): Emoji page with item/spell
-  search and icon reuse, and an emoji picker in the editors.
-- Phase 5: Maintenance tools, public pages, notifications, command palette.
+- Emoji (brought forward, done): Emoji page with item/spell search and
+  icon reuse, and an emoji picker in the editors.
+- Phase 3: Polls, command palette (Ctrl+K: pages, settings, actions),
+  notifications (alerts for crashes, errors, updates and other events),
+  and general maintenance tools (database backup/download, storage info,
+  cache clearing, slash command re-sync, one-off cleanups such as
+  `/announce-fix-legacy-buttons`). Brought forward from the old phase 5:
+  none of them depends on game data.
+- Phase 4: Applications, Raid summaries, Raid logs, Attendance, Tier recap,
+  Records, and the game-data diagnostics (`/apply-test-blizzard`,
+  `/raidsummary-test-*`, `/raidsummary-refresh-cache`). These all depend
+  on TBC-era data sources, so plan them together with the WoW Forever data
+  model rather than polishing what's there.
+- Phase 5: Public pages. Kept last on purpose: the dashboard is only
+  reachable over an SSH tunnel, so these need a hosting/security decision
+  (exposing part of it to the internet, a Viewer level), and what they'd
+  show is mostly Phase 4 data.
 
 Access is moderator-only for now; the permission model (Viewer level,
 public pages) must allow opening it up later.
