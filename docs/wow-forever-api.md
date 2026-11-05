@@ -2,7 +2,7 @@
 
 Blizzard hasn't documented a Forever API. This page collects what is known
 from probing it (community notes by M. Huijskens, checked by the bot's own
-probe on 2026-11-04 before launch). Re-check with
+probe on 2026-11-04 before launch and again after launch on 2026-11-05). Re-check with
 `scripts/probe_blizzard_api.py` (see the end of this page) whenever
 something changes; Blizzard opens things up without notice.
 
@@ -11,8 +11,8 @@ something changes; Blizzard opens things up without notice.
 | Namespace | Status |
 |---|---|
 | `static-forever-{region}` | Open since launch maintenance (Nov 4). An alias: the `battlenet-namespace` response header names the real one (`static-1.60.1_70399-forever-eu`). |
-| `dynamic-forever-{region}` | Open: regions and realms. Connected realms, auctions, PvP and the WoW token are 404. |
-| `profile-forever-{region}` | Open for a player's own account profile (user token). Public character and guild lookups were 404 at launch. |
+| `dynamic-forever-{region}` | Open, but **realms disappeared at launch**: `realm/index`, `realm/{id or slug}` (all the pre-launch ids) are 404 and realm search returns 0 results, in eu and us. Regions still answer. Connected realms, auctions, PvP and the WoW token are 404. |
+| `profile-forever-{region}` | Open for a player's own account profile (user token). Public character and guild lookups were still 404 after launch. |
 
 Regions: `eu`, `us`, `kr`, `tw` on the usual `{region}.api.blizzard.com`
 hosts. Korea had no realms in the index yet.
@@ -25,7 +25,7 @@ How to read a status:
 - **200**: open.
 
 The bot's namespaces, locale and character lookup paths are settings
-(Settings, "Game & Blizzard API"), so a change on Blizzard's side is a
+(Settings, General, Integrations), so a change on Blizzard's side is a
 settings change, not a code change.
 
 ## What answers
@@ -38,10 +38,13 @@ settings change, not a code change.
   mounts, titles, reputations, talent trees, guild crests. Journal
   instances/encounters exist but are empty. Some spells and creatures by id
   are 404.
-- **Dynamic (200)**: `region/index`, `realm/index`, `realm/{slug or id}`.
-  Realm `type` is the ruleset (Normal, PvP, RP, RP-PvP). The index also
-  lists service realms (`...-web`, `-gmss-`, `-partner`, ...) that aren't
-  for players.
+- **Dynamic (200)**: `region/index` (patch_string 1.60.1). Before launch
+  also `realm/index` and `realm/{slug or id}` (26 EU realms such as
+  `camwow-eu5-realm-1-pve`, id 6855); since launch those are 404. Realm
+  `type` was the ruleset (Normal, PvP, RP, RP-PvP), and the index also
+  listed service realms (`...-web`, `-gmss-`, `-partner`, ...). The bot
+  copes without realms: the account profile's protected-character link
+  still carries the realm id.
 - **Account profile (user token, 200)**: `/profile/user/wow` lists the
   player's characters with `name` (first name), `surname`, `id`, class,
   race, gender, faction and `level`. There is **no realm object**: the realm
