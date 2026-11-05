@@ -263,7 +263,7 @@ Every poll carries the footer from `config.POLL_FOOTER`.
 
 | Command | Description |
 |---|---|
-| `/apply <character>` | Apply to the guild with your character name - kicks off the gear-check flow. |
+| `/apply <character>` | Apply to the guild with your character's name and surname - the bot reads the character's gear, enchants and talents from Blizzard (as of the last logout) for the review card. |
 | `/update-application` | Add or update the note/screenshot(s) on your latest pending application. |
 | `/poll create` | Start a poll - fixed options, member-added options, or both (moderator only unless `config.POLL_CREATE_MOD_ONLY = False`). |
 | `/character link <name> [member]` | Link a WoW character (first name and surname) to yourself; moderators can link it to anyone. Your first character becomes your main. |
@@ -277,6 +277,7 @@ Every poll carries the footer from `config.POLL_FOOTER`.
 | Command | Description |
 |---|---|
 | `/announce` | Draft an announcement in the sandbox channel, with Edit/Publish buttons. |
+| `/gearcheck character <name> [public]` | Gear-check any character from Blizzard: item level, gear, enchants, gems, talents and what's missing. Only you see it unless `public`. |
 | `/gearcheck archive` | Move all approved/denied applications to the archive channel. |
 | `/checkattendance run` | Generate/refresh the attendance overview (no cooldown). |
 | `/checkattendance addlog <date> <tier> <link>` | Add a main-raid log to the tracked list. |
@@ -323,7 +324,7 @@ extension list, just flip the flag and restart:
 | `FEATURE_RAID_LOGS_ENABLED` | `cogs/raid_logs.py` | the #logs tagging/auto-Summarize automation (section 11 below) |
 | `FEATURE_TIER_RETROSPECTIVE_ENABLED` | `cogs/tier_retrospective.py` | `/tier-recap` |
 | `FEATURE_POLLS_ENABLED` | `cogs/polls.py` | `/poll create` and every poll's buttons |
-| `FEATURE_ROSTER_ENABLED` | `cogs/roster.py` | the guild roster: syncing with Blizzard and `/character` |
+| `FEATURE_ROSTER_ENABLED` | `cogs/roster.py` | the guild roster: syncing with Blizzard, `/character`, and the roster kept posted in a channel |
 | `FEATURE_LEVELING_ENABLED` | `cogs/leveling.py` | level-up checks, milestone congratulations and `/leaderboard` (needs the roster) |
 | `FEATURE_AUDIT_LOG_ENABLED` | `cogs/audit_log.py` | recording Discord actions in the audit log |
 | `FEATURE_WEB_DASHBOARD_ENABLED` | `cogs/web_dashboard.py` | the web dashboard (**off** by default, see "Web dashboard" below) |

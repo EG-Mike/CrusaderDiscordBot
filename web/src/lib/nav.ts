@@ -16,6 +16,7 @@ import {
   Swords,
   TrendingUp,
   Trophy,
+  UserSearch,
   Users,
   Vote,
   Wrench,
@@ -50,6 +51,7 @@ export const NAV: { group: string; items: NavItem[] }[] = [
     items: [
       { to: "/roster", label: "Guild roster", icon: Users },
       { to: "/leveling", label: "Leveling", icon: TrendingUp },
+      { to: "/lookup", label: "Character lookup", icon: UserSearch },
       { to: "/applications", label: "Applications", icon: ClipboardList, soon: true },
       { to: "/attendance", label: "Attendance", icon: CalendarCheck, soon: true },
     ],

@@ -39,6 +39,7 @@ import bot_messages
 import config
 import icons
 from wcl_client import extract_report_code as _extract_report_code
+from permissions import member_is_moderator
 
 log = logging.getLogger("wow-apply-bot.attendance")
 
@@ -297,7 +298,7 @@ class LogListView(discord.ui.View):
 
     @discord.ui.button(label="Add Log", emoji="➕", style=discord.ButtonStyle.success, custom_id="attendance_addlog_btn")
     async def add_log(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not await self.cog._is_mod(interaction.guild, interaction.user.id):
+        if not await member_is_moderator(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can manage the log list.", ephemeral=True)
             return
 
@@ -313,7 +314,7 @@ class LogListView(discord.ui.View):
 
     @discord.ui.button(label="Remove Log", emoji="➖", style=discord.ButtonStyle.danger, custom_id="attendance_removelog_btn")
     async def remove_log(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not await self.cog._is_mod(interaction.guild, interaction.user.id):
+        if not await member_is_moderator(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can manage the log list.", ephemeral=True)
             return
         await interaction.response.send_modal(RemoveLogModal(self.cog))
@@ -326,7 +327,7 @@ class RosterView(discord.ui.View):
 
     @discord.ui.button(label="Refresh Roster", emoji="🔄", style=discord.ButtonStyle.secondary, custom_id="attendance_refresh_roster_btn")
     async def refresh(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not await self.cog._is_mod(interaction.guild, interaction.user.id):
+        if not await member_is_moderator(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can refresh the roster.", ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
@@ -335,14 +336,14 @@ class RosterView(discord.ui.View):
 
     @discord.ui.button(label="+ Add player", style=discord.ButtonStyle.success, custom_id="attendance_exclude_btn")
     async def add_excluded(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not await self.cog._is_mod(interaction.guild, interaction.user.id):
+        if not await member_is_moderator(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can exclude players.", ephemeral=True)
             return
         await interaction.response.send_modal(ExcludeModal(self.cog))
 
     @discord.ui.button(label="- Remove player", style=discord.ButtonStyle.danger, custom_id="attendance_include_btn")
     async def remove_excluded(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not await self.cog._is_mod(interaction.guild, interaction.user.id):
+        if not await member_is_moderator(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can remove excused players.", ephemeral=True)
             return
         await interaction.response.send_modal(RemoveExcludedModal(self.cog))
@@ -355,7 +356,7 @@ class OverviewView(discord.ui.View):
 
     @discord.ui.button(label="Refresh", emoji="🔄", style=discord.ButtonStyle.secondary, custom_id="attendance_refresh_overview_btn")
     async def refresh(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not await self.cog._is_mod(interaction.guild, interaction.user.id):
+        if not await member_is_moderator(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can refresh the overview.", ephemeral=True)
             return
 
@@ -423,13 +424,6 @@ class AttendanceCog(commands.Cog):
 
     # --- permission check (self-contained, same as other cogs) -----------
 
-    async def _is_mod(self, guild: discord.Guild, user_id: int) -> bool:
-        member = guild.get_member(user_id) or await guild.fetch_member(user_id)
-        if member is None:
-            return False
-        if member.guild_permissions.manage_roles:
-            return True
-        return any(role.id == self.mod_role_id for role in member.roles)
 
     # --- small storage helpers ---------------------------------------
 
@@ -1067,7 +1061,7 @@ class AttendanceCog(commands.Cog):
     @checkattendance_group.command(name="addlog", description="Add a main-raid log to the tracked list")
     @app_commands.describe(date="Date of the raid, e.g. 2026-07-29", tier="Tier/zone, e.g. SSC/TK", link="WCL report link (or bare report code)")
     async def addlog(self, interaction: discord.Interaction, date: str, tier: str, link: str):
-        if not await self._is_mod(interaction.guild, interaction.user.id):
+        if not await member_is_moderator(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can manage the log list.", ephemeral=True)
             return
         confirmation = await self._do_addlog(interaction.guild, date, tier, link)
@@ -1076,7 +1070,7 @@ class AttendanceCog(commands.Cog):
     @checkattendance_group.command(name="removelog", description="Remove a log from the tracked list by its ID")
     @app_commands.describe(id="The #ID shown next to the log in the pinned list")
     async def removelog(self, interaction: discord.Interaction, id: int):
-        if not await self._is_mod(interaction.guild, interaction.user.id):
+        if not await member_is_moderator(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can manage the log list.", ephemeral=True)
             return
         confirmation = await self._do_removelog(interaction.guild, id)
@@ -1085,7 +1079,7 @@ class AttendanceCog(commands.Cog):
     @checkattendance_group.command(name="link", description="Link an alt character to a main, for attendance purposes")
     @app_commands.describe(main="The main character's name", alt="The alt character's name")
     async def link(self, interaction: discord.Interaction, main: str, alt: str):
-        if not await self._is_mod(interaction.guild, interaction.user.id):
+        if not await member_is_moderator(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can link characters.", ephemeral=True)
             return
         links = self._get_alt_links()
@@ -1098,7 +1092,7 @@ class AttendanceCog(commands.Cog):
     @checkattendance_group.command(name="removealt", description="Remove a previously linked alt")
     @app_commands.describe(alt="The alt character's name")
     async def removealt(self, interaction: discord.Interaction, alt: str):
-        if not await self._is_mod(interaction.guild, interaction.user.id):
+        if not await member_is_moderator(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can manage links.", ephemeral=True)
             return
         links = self._get_alt_links()
@@ -1115,7 +1109,7 @@ class AttendanceCog(commands.Cog):
     @checkattendance_group.command(name="setmain", description="Override a member's main character name")
     @app_commands.describe(member="The Discord member", character="Their actual main character name")
     async def setmain(self, interaction: discord.Interaction, member: discord.Member, character: str):
-        if not await self._is_mod(interaction.guild, interaction.user.id):
+        if not await member_is_moderator(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can set main-name overrides.", ephemeral=True)
             return
         overrides = self._get_main_overrides()
@@ -1130,7 +1124,7 @@ class AttendanceCog(commands.Cog):
     @checkattendance_group.command(name="removemain", description="Remove a member's main-name override")
     @app_commands.describe(member="The Discord member")
     async def removemain(self, interaction: discord.Interaction, member: discord.Member):
-        if not await self._is_mod(interaction.guild, interaction.user.id):
+        if not await member_is_moderator(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can manage main-name overrides.", ephemeral=True)
             return
         overrides = self._get_main_overrides()
@@ -1146,7 +1140,7 @@ class AttendanceCog(commands.Cog):
     @checkattendance_group.command(name="links", description="Debug: show a member's resolved main name and linked alts")
     @app_commands.describe(member="The Discord member")
     async def links(self, interaction: discord.Interaction, member: discord.Member):
-        if not await self._is_mod(interaction.guild, interaction.user.id):
+        if not await member_is_moderator(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can view links.", ephemeral=True)
             return
         overrides = self._get_main_overrides()
@@ -1171,7 +1165,7 @@ class AttendanceCog(commands.Cog):
     @app_commands.describe(name="Their main character's name", reason="Why they're excused, e.g. vacation")
     @app_commands.autocomplete(name=_exclude_name_autocomplete)
     async def exclude(self, interaction: discord.Interaction, name: str, reason: str):
-        if not await self._is_mod(interaction.guild, interaction.user.id):
+        if not await member_is_moderator(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can exclude players.", ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
@@ -1181,7 +1175,7 @@ class AttendanceCog(commands.Cog):
     @checkattendance_group.command(name="removeexcluded", description="Remove a player from the excused list by ID")
     @app_commands.describe(id="The #ID shown next to the entry in the Excused Players message")
     async def removeexcluded(self, interaction: discord.Interaction, id: int):
-        if not await self._is_mod(interaction.guild, interaction.user.id):
+        if not await member_is_moderator(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can manage excused players.", ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
@@ -1190,7 +1184,7 @@ class AttendanceCog(commands.Cog):
 
     @checkattendance_group.command(name="run", description="Generate/refresh the attendance overview (no cooldown)")
     async def run(self, interaction: discord.Interaction):
-        if not await self._is_mod(interaction.guild, interaction.user.id):
+        if not await member_is_moderator(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can run attendance checks.", ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True, thinking=True)

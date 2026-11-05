@@ -112,14 +112,30 @@ version or raid tier is a configuration change.
   by Blizzard's icon file ID / icon name) with the items and spells that
   share it; Blizzard API first, Wowhead tooltip only as a fallback. Used by
   the Emoji page, the editor emoji picker and raid summaries.
+- `gear.py`: the gear check: a character's gear (item level, enchants,
+  gems, sets), talents and profile from Blizzard, flags (empty slots,
+  missing enchants, empty sockets) and the guild's minimum level/item
+  level, as plain data plus Discord text. Used by `cogs/apply.py` (the
+  review card, "Refresh gear", `/gearcheck character`) and the dashboard's
+  Character lookup page (`webapi/lookup_api.py`), which also shows
+  professions and the character's place on the roster. Characters on a
+  ruleset that isn't the guild's (`CHARACTER_RULESETS`) are flagged. Item
+  icons: `wow_api.icon_urls` lists fallback addresses, since Blizzard's
+  image server lacks some icons under the Forever path. WarcraftLogs
+  parses on applications are optional (`APPLICATION_WARCRAFTLOGS_ENABLED`)
+  until WarcraftLogs covers Forever.
 - `roster.py`: the guild roster: in-game characters (from the guild's
   Blizzard roster and character profiles), their levels, links to Discord
   members (one main each), specs, and level-up events. Shared by
   `cogs/roster.py` (sync + `/character`), `cogs/leveling.py` (profile
   checks every few minutes, milestone congratulations via the
   "level_milestone" bot message, `/leaderboard`) and
-  `webapi/roster_api.py` (Roster and Leveling pages). `permissions.py`:
-  the shared Discord moderator check for new cogs.
+  `webapi/roster_api.py` (Roster and Leveling pages). The roster is also
+  kept posted in a Discord channel (`GUILD_ROSTER_CHANNEL_ID`; edited only
+  when its content changes; header is the "guild_roster_header" bot
+  message). `permissions.py`:
+  the shared Discord moderator check (`is_moderator(member)`,
+  `member_is_moderator(guild, user_id)`); every cog uses it.
 - `wow_api.py`: Blizzard game data for the configured game version
   (WoW Forever by default): reference data for pickers, a player's
   characters from their Battle.net account, character lookups by name, and
@@ -209,7 +225,11 @@ set in the dashboard.
   Blizzard, `/character` linking, milestone congratulations, leaderboard,
   Roster and Leveling pages. Achievements can reuse `roster_events` once
   Blizzard reliably reports them.
-- Phase 4: Applications, Raid summaries, Raid logs, Attendance, Tier recap,
+- Phase 4 (in progress): applications moved to Blizzard data (gear check
+  with gear, enchants and talents; roster link on approval; WarcraftLogs
+  optional). Next: an Applications dashboard page, then the raid features
+  once WarcraftLogs covers Forever.
+- Phase 4 (remaining): Applications page, Raid summaries, Raid logs, Attendance, Tier recap,
   Records, and the raid cache tools (`/raidsummary-refresh-cache`,
   `/raidsummary-refresh-report`). These all depend
   on TBC-era data sources, so plan them together with the WoW Forever data

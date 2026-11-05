@@ -34,3 +34,15 @@ export function specName(classes: WowClass[], id: number | null) {
   }
   return "";
 }
+
+// Item quality colours, as in the game.
+export const QUALITY_COLORS: Record<string, string> = {
+  POOR: "#9D9D9D",
+  COMMON: "#FFFFFF",
+  UNCOMMON: "#1EFF00",
+  RARE: "#0070DD",
+  EPIC: "#A335EE",
+  LEGENDARY: "#FF8000",
+  ARTIFACT: "#E6CC80",
+  HEIRLOOM: "#00CCFF",
+};

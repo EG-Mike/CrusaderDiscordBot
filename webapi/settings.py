@@ -241,7 +241,7 @@ def validate(key: str, value, guild=None):
     choices = _entry(key).choices
     allowed = [v for v, _ in choices or []]
     if _entry(key).widget == "choice_list":
-        if not typed:
+        if not typed and template:  # a list whose default is empty may be empty too
             raise SettingError(f"{label}: pick at least one")
         if any(v not in allowed for v in typed) or len(set(typed)) != len(typed):
             raise SettingError(f"{label}: pick from the options, each once")

@@ -21,6 +21,7 @@ import MaintenancePage from "./pages/Maintenance";
 import PollsPage from "./pages/Polls";
 import RosterPage from "./pages/Roster";
 import LevelingPage from "./pages/Leveling";
+import LookupPage from "./pages/Lookup";
 import { ToastProvider } from "./components/Toast";
 
 // First visit after install: open the setup wizard once per browser session
@@ -85,6 +86,7 @@ export default function App() {
           <Route path="/polls" element={<PollsPage />} />
           <Route path="/roster" element={<RosterPage />} />
           <Route path="/leveling" element={<LevelingPage />} />
+          <Route path="/lookup" element={<LookupPage />} />
           {soon.map((item) => (
             <Route key={item.to} path={item.to} element={<ComingSoon item={item} />} />
           ))}

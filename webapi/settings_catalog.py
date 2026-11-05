@@ -95,6 +95,11 @@ HIDDEN: Dict[str, str] = {
 LOG_LEVELS = [("DEBUG", "Debug (very detailed)"), ("INFO", "Normal"), ("WARNING", "Warnings and errors"),
               ("ERROR", "Errors only"), ("CRITICAL", "Critical errors only")]
 
+_SLOTS = [("HEAD", "Head"), ("NECK", "Neck"), ("SHOULDER", "Shoulders"), ("BACK", "Back"), ("CHEST", "Chest"),
+          ("WRIST", "Wrists"), ("HANDS", "Hands"), ("WAIST", "Waist"), ("LEGS", "Legs"), ("FEET", "Feet"),
+          ("FINGER_1", "Ring 1"), ("FINGER_2", "Ring 2"), ("TRINKET_1", "Trinket 1"), ("TRINKET_2", "Trinket 2"),
+          ("MAIN_HAND", "Main hand"), ("OFF_HAND", "Off hand"), ("RANGED", "Ranged")]
+
 CATALOG: Dict[str, Entry] = {
     # --- General -------------------------------------------------------------------
     "GUILD_DISPLAY_NAME": Entry(
@@ -104,6 +109,10 @@ CATALOG: Dict[str, Entry] = {
         "guild", "Region", "The region your guild plays in. Used for Blizzard and WarcraftLogs lookups.",
         choices=[("eu", "Europe"), ("us", "Americas & Oceania"), ("kr", "Korea"), ("tw", "Taiwan"),
                  ("cn", "China")]),
+    "CHARACTER_RULESETS": Entry(
+        "guild", "Your ruleset",
+        "Character lookups and applications flag characters on another ruleset. None picked: any ruleset.",
+        widget="choice_list", choices=[(1, "PvP"), (2, "Normal"), (3, "Roleplay"), (15, "Roleplay PvP")]),
     "MOD_ROLE_ID": Entry(
         "discord", "Moderator role",
         "Members with this role can use moderator commands and this dashboard. Members with the Manage Roles "
@@ -158,17 +167,32 @@ CATALOG: Dict[str, Entry] = {
         "Given on approval, matching the main role and class the applicant picked.", widget="role_map"),
     "MAX_SCREENSHOTS": Entry("applications", "Gear screenshots per application",
                              "How many screenshots an applicant can attach (1 to 9)."),
-    "NEW_TIER_LOG_THRESHOLD": Entry(
-        "applications", "Show previous tier below",
-        "If an applicant has fewer full clears of the current tier than this, their previous-tier results are "
-        "shown too.", unit="clears"),
     "ARCHIVE_ENABLED": Entry("applications", "Archive command",
                              "/gearcheck archive moves decided applications to the archive channel."),
     "ARCHIVE_CHANNEL_ID": Entry("applications", "Archive channel", "Where /gearcheck archive moves them."),
-    "ARMORY_BLOCK_ENABLED": Entry(
-        "applications", "Show gear and talents from Blizzard",
-        "Adds the character's equipped gear and talents to the review card. Off while Blizzard's character data "
-        "isn't reliable for this game.", advanced=True),
+    "GEARCHECK_MIN_LEVEL": Entry("applications", "Minimum level",
+                                 "The review card shows whether the applicant meets it. 0: no minimum.",
+                                 unit="level"),
+    "GEARCHECK_MIN_ITEM_LEVEL": Entry("applications", "Minimum item level",
+                                      "Equipped item level the review card checks. 0: no minimum.",
+                                      unit="item level"),
+    "GEARCHECK_ENCHANT_SLOTS": Entry("applications", "Slots that need an enchant",
+                                     "An item in one of these slots without an enchant is flagged.",
+                                     widget="choice_list", choices=_SLOTS),
+    "GEARCHECK_EXPECTED_SLOTS": Entry("applications", "Slots that should be filled",
+                                      "An empty one is flagged.", widget="choice_list", choices=_SLOTS,
+                                      advanced=True),
+    "GEARCHECK_PROFILE_URL": Entry("applications", "Character profile link",
+                                   "A link on the review card, e.g. to the armory. {region} and {slug} (like "
+                                   "eggmike-thewhite) are filled in. Empty: no link.", advanced=True),
+    "APPLICATION_WARCRAFTLOGS_ENABLED": Entry(
+        "applications", "Include WarcraftLogs parses",
+        "Adds per-boss parses for the current and previous tier (Raid tiers) to applications. Turn on once "
+        "WarcraftLogs covers the game version you play."),
+    "NEW_TIER_LOG_THRESHOLD": Entry(
+        "applications", "Show previous tier below",
+        "With WarcraftLogs parses: if an applicant has fewer full clears of the current tier than this, their "
+        "previous-tier results are shown too.", unit="clears", advanced=True),
     "OXM_REGISTER_COMMAND_ID": Entry(
         "applications", "OXM.gg /register command ID",
         "Turns /register in the approval message into a clickable command. Only change it if OXM.gg changes it.",
@@ -276,6 +300,10 @@ CATALOG: Dict[str, Entry] = {
     "GUILD_ROSTER_GUILD": Entry("roster", "Guild name in the game",
                                 "Exactly as in the game, e.g. Encore. Every member and their level is read from "
                                 "Blizzard. Empty: only characters members link themselves are tracked."),
+    "GUILD_ROSTER_CHANNEL_ID": Entry("roster", "Roster channel",
+                                     "The bot keeps the guild roster posted here (class, level, character and "
+                                     "member) and updates it when it changes. Best a channel only the bot can "
+                                     "post in. Empty: not posted."),
     "GUILD_ROSTER_SELF_SERVICE": Entry("roster", "Members link their own characters",
                                        "With /character link. Off: only moderators link characters."),
     "GUILD_ROSTER_REFRESH_MINUTES": Entry("roster", "Read the guild roster every",

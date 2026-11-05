@@ -533,6 +533,8 @@ export interface RosterOverview {
   characters: RosterCharacter[];
   classes: WowClass[];
   rulesets: { id: number; name: string }[];
+  /** The roster posted in Discord (Settings: roster channel), or null when no channel is set. */
+  post: { channel_id: string; channel_name: string; updated: number | null } | null;
 }
 
 export interface LevelEvent {
@@ -558,4 +560,51 @@ export interface LevelingOverview {
   refresh_minutes: number;
   leaderboard: RosterCharacter[];
   events: LevelEvent[];
+}
+
+// --- character lookup (webapi/lookup_api.py) --------------------------------------
+
+export interface GearItem {
+  slot: string;
+  slot_name: string;
+  item_id: number | null;
+  name: string;
+  quality: string | null;
+  item_level: number | null;
+  stats: string[];
+  enchants: string[];
+  sockets: { type: string | null; gem: string | null; text: string | null }[];
+  set: string | null;
+  icon_url: string | null;
+}
+
+export interface CharacterSummary {
+  character: string;
+  slug: string;
+  level: number | null;
+  class_id: number | null;
+  class_name: string;
+  race: string | null;
+  faction: string | null;
+  guild: string | null;
+  ruleset_id: number | null;
+  ruleset: string | null;
+  average_item_level: number | null;
+  equipped_item_level: number | null;
+  last_login: number | null;
+  items: GearItem[];
+  talents: { spec: string; spec_id: number | null; points: number }[];
+  professions: { name: string; skill: number | null; max: number | null; primary: boolean }[];
+  empty_slots: string[];
+  missing_enchants: string[];
+  empty_sockets: number;
+  profile_updated: string | null;
+}
+
+export interface LookupResult {
+  character: CharacterSummary;
+  off_ruleset: boolean;
+  requirement_problems: string[];
+  roster: { on_roster: boolean; in_guild: boolean; is_main: boolean; member: RosterMember | null } | null;
+  warcraftlogs: null;
 }

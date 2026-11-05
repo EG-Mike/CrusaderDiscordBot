@@ -1,20 +1,22 @@
 """
-Guild application feature.
+Guild application feature (the gear check).
 
 Flow:
-  1. /apply character:<name> - bot looks the character up on WarcraftLogs.
-  2. If found, the bot asks the applicant (via ephemeral selects/modal) for
-     their main role, main spec, any other specs they can play, and an
-     optional note - since logs alone can't always tell us this reliably.
-  3. The bot then offers to attach an optional gear screenshot (the
-     applicant replies with an image, or clicks Skip).
-  4. The bot posts a summary embed to the review channel with checkmark/X
-     reactions.
-  5. A moderator reacts to approve (assigns the Fresh role + DMs the
-     applicant) or deny (DMs the applicant).
+  1. /apply character:<name and surname> (or the Start button) - the bot
+     reads the character from Blizzard's API (gear.py): class, level,
+     guild, talents, and the equipped gear with enchants and gems.
+  2. The applicant confirms their main role and spec (the spec with the
+     most talent points is suggested) and any other specs they play.
+  3. An optional note and screenshots, collected by DM.
+  4. The application is posted to the review channel: the gear summary,
+     requirements (Settings: minimum level and item level), and, once
+     WarcraftLogs covers the game (APPLICATION_WARCRAFTLOGS_ENABLED), the
+     applicant's parses. "Refresh gear" re-reads the gear from Blizzard.
+  5. An approver approves (roles, nickname, DM, and the character is linked
+     to the applicant on the guild roster) or denies (DM).
 
-This is the whole feature in one file by design - adding a new, unrelated
-feature later means adding a new cog file, not touching this one.
+Moderators can also gear-check any character without an application:
+/gearcheck character.
 """
 
 import os
@@ -28,7 +30,11 @@ from discord.ext import commands
 
 import bot_messages
 import config
+import gear
 import icons
+import roster
+import wow_api
+from permissions import is_moderator, member_is_moderator
 
 log = logging.getLogger("wow-apply-bot.apply")
 
@@ -50,6 +56,15 @@ NOT_FOUND_TIMEOUT = 180    # waiting for the retry-name/continue-anyway choice
 AMSTERDAM_TZ = ZoneInfo("Europe/Amsterdam")
 
 ARCHIVE_CONFIRMATION_KEY = "archive_confirmation"  # sentinel store key, not a real message id
+GEAR_TEXT_LIMIT = 1800  # the gear list's share of a review card's 4000 characters
+
+
+def _clip(text: str, limit: int) -> str:
+    """Cuts at a line break so an item line isn't split."""
+    if len(text) <= limit:
+        return text
+    cut = text.rfind("\n", 0, limit - 40)
+    return text[:cut if cut > 0 else limit - 40] + "\n-# … more items not shown"
 
 
 def _emoji_for(icon_str):
@@ -63,18 +78,17 @@ def _emoji_for(icon_str):
         return None
 
 
-def _match_known_spec(class_name: str, wcl_spec_name):
+def _match_known_spec(specs, wcl_spec_name):
     """
-    Matches WCL's reported spec name against config.CLASS_SPECS for this
-    class, ignoring spacing/casing differences (e.g. WCL might report
-    "BeastMastery" while we display "Beast Mastery") - returns our
-    canonical display name, or None if there's no confident match rather
-    than guessing.
+    Matches WarcraftLogs' reported spec name against the class's spec names,
+    ignoring spacing/casing differences (e.g. "BeastMastery" vs "Beast
+    Mastery") - returns our display name, or None if there's no confident
+    match rather than guessing.
     """
     if not wcl_spec_name:
         return None
     normalized = wcl_spec_name.replace(" ", "").lower()
-    for s in config.CLASS_SPECS.get(class_name, []):
+    for s in specs:
         if s.replace(" ", "").lower() == normalized:
             return s
     return None
@@ -83,9 +97,10 @@ def _match_known_spec(class_name: str, wcl_spec_name):
 class RoleSpecView(discord.ui.View):
     """View letting the applicant pick their main role, main spec, and any
     other specs they can also play. 'Continue' moves on to the note/screenshot
-    step. Works identically whether sent to a DM channel or a guild channel."""
+    step. Works identically whether sent to a DM channel or a guild channel.
+    `specs`: the class's spec names for the game version (Blizzard's)."""
 
-    def __init__(self, user_id, guild, class_name, suggested_role=None, suggested_spec=None):
+    def __init__(self, user_id, guild, class_name, specs, suggested_role=None, suggested_spec=None):
         super().__init__(timeout=DIALOG_TIMEOUT)
         self.user_id = user_id
         self.guild = guild
@@ -97,8 +112,7 @@ class RoleSpecView(discord.ui.View):
         self.other_specs = []
 
         self.done = asyncio.Event()
-
-        specs = config.CLASS_SPECS.get(class_name, [])
+        self.specs = specs
 
         role_options = config.CLASS_ROLES.get(class_name, config.ROLES)
         self.role_select = discord.ui.Select(
@@ -151,7 +165,7 @@ class RoleSpecView(discord.ui.View):
         spec as both their main and an 'other' choice)."""
         if self.other_spec_select is None:
             return
-        specs = config.CLASS_SPECS.get(self.class_name, [])
+        specs = self.specs
         available = [s for s in specs if s != self.main_spec] or specs
         # Drop the main spec from any already-chosen "other specs" too, in
         # case it just became the main spec.
@@ -237,9 +251,10 @@ class SkipNoteScreenshotView(discord.ui.View):
 
 class CharacterNameModal(discord.ui.Modal, title="Apply to the guild"):
     character_name = discord.ui.TextInput(
-        label="Your exact in-game character name",
+        label="Your character's name and surname",
+        placeholder="e.g. Eggmike Thewhite",
         required=True,
-        max_length=32,
+        max_length=48,
     )
 
     def __init__(self, cog: "ApplyCog"):
@@ -274,7 +289,7 @@ class StartApplicationView(discord.ui.View):
 
 
 class NotFoundView(discord.ui.View):
-    """Shown when a character isn't found on WCL - lets the applicant either
+    """Shown when a character isn't found on Blizzard - lets the applicant either
     correct a typo or confirm the name is right and continue with a
     manual-review application."""
 
@@ -312,7 +327,7 @@ class NotFoundView(discord.ui.View):
 
 
 class ClassSelectView(discord.ui.View):
-    """Shown when continuing without WCL data - there's no logged class to
+    """Shown when continuing without Blizzard data - there's no class to
     infer from, so the applicant picks it manually before the (otherwise
     identical) role/spec dialog can build its spec dropdown."""
 
@@ -375,7 +390,6 @@ class ApplyCog(commands.Cog):
         self.bot = bot
         self.review_channel_id = config.REVIEW_CHANNEL_ID
         self.fresh_role_id = config.FRESH_ROLE_ID
-        self.mod_role_id = config.MOD_ROLE_ID
         self.server_slug = config.SERVER_SLUG
         self.server_region = config.SERVER_REGION
         self.start_view = StartApplicationView(self)
@@ -387,6 +401,7 @@ class ApplyCog(commands.Cog):
         template = self._render_application_view({
             "applicant_id": 0,
             "character_name": "template",
+            "character_slug": "template",
             "status": "pending",
         })
         self.bot.add_view(template)
@@ -429,129 +444,9 @@ class ApplyCog(commands.Cog):
         if role:
             role_icon = icons.resolve_role_icon(guild, role)
             lines.append(f"**Role:** {role_icon} {role}".strip())
-        if level is not None:
-            if level == 70:
-                lines.append("**Level:** 70")
-            else:
-                lines.append(f"**Level:** ⚠️ {level} (manually verify)")
+        lines.append(f"**Level:** {level if level is not None else '? (not found on Blizzard)'}")
         lines.append(f"**Guild:** {guild_name or 'None'}")
         return "\n".join(lines)
-
-    def _format_talent_split(self, class_name, points_by_tree):
-        """
-        Formats a talent group's (tree_name, points) pairs (see
-        blizzard_client._bucket_talent_points) into a "31/10/20"-style
-        string ordered to match config.CLASS_SPECS[class_name] (Arms/Fury/
-        Protection order, etc.) whenever all 3 tree names match a known
-        spec for this class - falls back to whatever order the API gave if
-        they don't (e.g. an unrecognized tree name), so a mismatch degrades
-        to a still-readable split rather than silently dropping data.
-        Returns None if points_by_tree is None (see
-        get_character_specializations()'s docstring - the tree-grouping
-        field this needs may not exist in the real API response).
-        """
-        if not points_by_tree:
-            return None
-        order = config.CLASS_SPECS.get(class_name, [])
-        by_name = dict(points_by_tree)
-        if order and all(name in by_name for name in order):
-            return "/".join(str(by_name[name]) for name in order)
-        return "/".join(str(pts) for _, pts in points_by_tree)
-
-    async def _compute_armory_block(self, class_name: str, character_name: str):
-        """
-        Live Blizzard Armory lookup (equipped gear + talent build) - like
-        _compute_tier_and_boss_blocks, this is the only place these are
-        fetched: once, at posting time, baked into "armory_block" text
-        stored on the application and never re-queried by a later render.
-        Deliberately separate from the applicant-confirmed Class/Spec/Role
-        block (_build_class_block), which stays the source of truth for
-        role-assignment logic - this is purely a cross-check for reviewers
-        showing what the applicant's actual talent build/gear look like
-        right now on Blizzard's own armory.
-
-        Returns None if bot.blizzard isn't configured, if
-        config.ARMORY_BLOCK_ENABLED is False (see that constant's comment -
-        defaulted off due to a confirmed Blizzard-side bug serving stale
-        Classic-Era snapshots for TBC Anniversary-migrated realms;
-        this short-circuits before any API call is made, so flipping it off
-        also means zero extra Blizzard API traffic per application), or if
-        Blizzard has nothing for this character under this realm slug (not
-        found on Blizzard's own realm list, or the character/account has
-        armory data hidden - blizzard_client.py's docstrings cover why this
-        can't tell those cases apart from the API response alone).
-        """
-        if self.bot.blizzard is None or not config.ARMORY_BLOCK_ENABLED:
-            return None
-
-        try:
-            equipment = await self.bot.blizzard.get_character_equipment(self.server_slug, character_name)
-            specializations = await self.bot.blizzard.get_character_specializations(
-                self.server_slug, character_name
-            )
-        except Exception:
-            log.exception("Blizzard armory lookup failed for %s", character_name)
-            return None
-
-        if not equipment and not specializations:
-            return None
-
-        lines = []
-
-        if specializations:
-            spec_lines = []
-            for group in specializations:
-                spec_name = group.get("spec_name")
-                split = self._format_talent_split(class_name, group.get("points_by_tree"))
-                icon = icons.resolve_spec_icon(class_name, spec_name) if spec_name else ""
-                label = f"{icon} {spec_name or 'Unknown spec'}".strip()
-                if split:
-                    label += f" ({split})"
-                elif group.get("total_points"):
-                    label += f" ({group['total_points']} pts)"
-                tag = "Primary" if group.get("is_active") else "Secondary"
-                spec_lines.append(f"**{tag}:** {label}")
-            lines.append("**Talent Build** *(live from Blizzard Armory)*\n" + "\n".join(spec_lines))
-
-        if equipment:
-            gear_lines = []
-            for it in equipment:
-                item_id = it.get("item_id")
-                name = it.get("name") or (f"Item #{item_id}" if item_id else "?")
-                slot = it.get("slot_name") or it.get("slot_type") or "?"
-                icon = ""
-                if item_id:
-                    try:
-                        item_data = await self.bot.blizzard.get_item(item_id)
-                        if item_data.get("icon_url"):
-                            icon = await icons.ensure_item_emoji(self.bot, item_id, item_data["icon_url"])
-                    except Exception:
-                        pass
-                icon_prefix = f"{icon} " if icon else ""
-                gear_lines.append(f"`{slot}` {icon_prefix}{name}")
-
-            if gear_lines:
-                value = "\n".join(gear_lines)
-                if len(value) > 1000:
-                    value = value[:1000] + "\n… (truncated, see full profile)"
-                lines.append("**Equipped Gear** *(live from Blizzard Armory)*\n" + value)
-
-        if lines:
-            # Confirmed live that Blizzard's profile snapshot for a
-            # recently-migrated TBC Anniversary realm can be stale
-            # (returned this character's old Classic
-            # Era gear, not their current TBC loadout) despite a 200 OK
-            # under the correct namespace - nothing this bot can detect or
-            # fix (see get_character_specializations()'s docstring), so
-            # this caveat is shown unconditionally rather than only when
-            # staleness happens to be detectable.
-            lines.append(
-                "-# Reflects Blizzard's last-synced Armory snapshot, which can lag behind "
-                "in-game gear/talents - confirmed stale on some recently-migrated TBC "
-                "Anniversary realms. Cross-check against the applicant's own screenshot."
-            )
-
-        return "\n\n".join(lines) if lines else None
 
     def _build_also_play_block(self, class_name, other_specs) -> str:
         if not other_specs:
@@ -726,7 +621,17 @@ class ApplyCog(commands.Cog):
         ))
         container.add_item(discord.ui.Separator())
 
-        if application.get("armory_block"):
+        gear_text = application.get("gear_text")
+        if gear_text:
+            checked = application.get("gear_checked_at")
+            when = f" · checked <t:{checked}:R>" if checked else ""
+            container.add_item(discord.ui.TextDisplay(
+                f"### Gear\n-# From Blizzard, as of the character's last logout{when}\n{gear_text['overview']}"))
+            container.add_item(discord.ui.TextDisplay(_clip(gear_text["gear"], GEAR_TEXT_LIMIT)))
+            if gear_text.get("flags"):
+                container.add_item(discord.ui.TextDisplay(gear_text["flags"]))
+            container.add_item(discord.ui.Separator())
+        elif application.get("armory_block"):  # applications from before the gear check
             container.add_item(discord.ui.TextDisplay(application["armory_block"]))
             container.add_item(discord.ui.Separator())
 
@@ -742,8 +647,10 @@ class ApplyCog(commands.Cog):
             container.add_item(discord.ui.TextDisplay(application["hidden_block"]))
             container.add_item(discord.ui.Separator())
 
-        if profile_url:
-            container.add_item(discord.ui.TextDisplay(f"**Full profile:** {profile_url}"))
+        links = [f"[Profile]({profile_url})" if profile_url else None,
+                 f"[WarcraftLogs]({application['wcl_url']})" if application.get("wcl_url") else None]
+        if any(links):
+            container.add_item(discord.ui.TextDisplay("**Links:** " + " · ".join(filter(None, links))))
             container.add_item(discord.ui.Separator())
 
         note = application.get("note")
@@ -799,12 +706,31 @@ class ApplyCog(commands.Cog):
         reset_button.callback = self._on_reset_click
         action_row.add_item(reset_button)
 
+        refresh_button = discord.ui.Button(
+            label="Refresh gear",
+            emoji="🛡️",
+            style=discord.ButtonStyle.secondary,
+            custom_id="wow_apply_refresh_gear",
+            disabled=not application.get("character_slug"),
+        )
+        refresh_button.callback = self._on_refresh_gear_click
+        action_row.add_item(refresh_button)
+
         view.add_item(action_row)
 
         return view
 
     async def _refresh_review_message(self, message: discord.Message, application: dict):
         await message.edit(view=self._render_application_view(application, message_id=message.id))
+
+    async def _gear_fields(self, summary) -> dict:
+        """What an application stores about the gear: the summary (data) and
+        its rendered text, so a re-render never needs Blizzard."""
+        if not summary:
+            return {"gear": None, "gear_text": None, "gear_checked_at": None}
+        icons_by_item = await gear.item_icons(self.bot, summary)
+        return {"gear": summary, "gear_text": gear.render_lines(summary, icons_by_item),
+                "gear_checked_at": int(discord.utils.utcnow().timestamp())}
 
     async def _post_application(
         self, interaction, char_data, role, spec, other_specs, note, screenshot_urls
@@ -814,12 +740,14 @@ class ApplyCog(commands.Cog):
             char_data.get("level"), char_data.get("guild_name"),
         )
         also_play_block = self._build_also_play_block(char_data["class_name"], other_specs)
-        tier_block, boss_block, hidden_block = await self._compute_tier_and_boss_blocks(char_data)
-        armory_block = await self._compute_armory_block(char_data["class_name"], char_data["name"])
+        tier_block = boss_block = hidden_block = None
+        if config.APPLICATION_WARCRAFTLOGS_ENABLED and char_data.get("id"):
+            tier_block, boss_block, hidden_block = await self._compute_tier_and_boss_blocks(char_data)
 
         application = {
             "applicant_id": interaction.user.id,
             "character_name": char_data["name"],
+            "character_slug": char_data.get("slug"),
             "status": "pending",
             "class_name": char_data["class_name"],
             "role": role,
@@ -833,9 +761,10 @@ class ApplyCog(commands.Cog):
             "tier_block": tier_block,
             "boss_block": boss_block,
             "hidden_block": hidden_block,
-            "armory_block": armory_block,
             "profile_url": char_data.get("profile_url"),
+            "wcl_url": char_data.get("wcl_url"),
             "screenshot_urls": screenshot_urls or [],
+            **await self._gear_fields(char_data.get("gear")),
         }
 
         review_channel = self.bot.get_channel(self.review_channel_id)
@@ -851,27 +780,8 @@ class ApplyCog(commands.Cog):
         view = self._render_application_view(application)
         message = await review_channel.send(view=view)
 
-        self.bot.store.add(
-            message.id,
-            application["applicant_id"],
-            application["character_name"],
-            status="pending",
-            class_name=char_data["class_name"],
-            role=role,
-            spec=spec,
-            other_specs=other_specs,
-            note=note,
-            class_color=application["class_color"],
-            last_decision=None,
-            class_block=class_block,
-            also_play_block=also_play_block,
-            tier_block=tier_block,
-            boss_block=boss_block,
-            hidden_block=hidden_block,
-            armory_block=armory_block,
-            profile_url=application["profile_url"],
-            screenshot_urls=application["screenshot_urls"],
-        )
+        fields = {k: v for k, v in application.items() if k not in ("applicant_id", "character_name")}
+        self.bot.store.add(message.id, application["applicant_id"], application["character_name"], **fields)
 
         try:
             await interaction.user.send(
@@ -895,32 +805,27 @@ class ApplyCog(commands.Cog):
         except discord.Forbidden:
             return None
 
-    async def _suggest_spec_role(self, char_data):
-        suggested_spec = None
-        if char_data.get("id") and config.CURRENT_TIER.get("zone_id"):
-            try:
-                tier_data = await self.bot.wcl.get_tier_data(
-                    char_data["id"], config.CURRENT_TIER["zone_id"]
-                )
+    async def _suggest_spec_role(self, char_data, specs):
+        """The spec with the most talent points (Blizzard); with WarcraftLogs
+        parses on and no talents spent, the spec logged most this tier."""
+        suggested_spec = (char_data.get("gear") or {}).get("suggested_spec")
+        if suggested_spec not in specs:
+            suggested_spec = None
+        if not suggested_spec and config.APPLICATION_WARCRAFTLOGS_ENABLED and char_data.get("id"):
+            for tier in (config.CURRENT_TIER, config.PREVIOUS_TIER):
+                if suggested_spec or not tier or not tier.get("zone_id"):
+                    continue
+                try:
+                    tier_data = await self.bot.wcl.get_tier_data(char_data["id"], tier["zone_id"])
+                except Exception:
+                    log.exception("Failed to fetch tier data for the spec suggestion")
+                    continue
                 if tier_data:
-                    suggested_spec = _match_known_spec(char_data["class_name"], tier_data.get("primary_spec"))
-            except Exception:
-                log.exception("Failed to fetch current-tier data for spec suggestion")
+                    suggested_spec = _match_known_spec(specs, tier_data.get("primary_spec"))
 
-        if not suggested_spec and char_data.get("id") and config.PREVIOUS_TIER and config.PREVIOUS_TIER.get("zone_id"):
-            try:
-                prev_tier_data = await self.bot.wcl.get_tier_data(
-                    char_data["id"], config.PREVIOUS_TIER["zone_id"]
-                )
-                if prev_tier_data:
-                    suggested_spec = _match_known_spec(char_data["class_name"], prev_tier_data.get("primary_spec"))
-            except Exception:
-                log.exception("Failed to fetch previous-tier data for spec suggestion")
-
-        suggested_role = config.SPEC_DEFAULT_ROLE.get(suggested_spec, "DPS") if suggested_spec else None
+        suggested_role = config.SPEC_DEFAULT_ROLE.get(suggested_spec) if suggested_spec else None
         if suggested_role not in config.CLASS_ROLES.get(char_data["class_name"], config.ROLES):
             suggested_role = None
-
         return suggested_spec, suggested_role
 
     async def _collect_note_screenshot_and_post(
@@ -1003,32 +908,72 @@ class ApplyCog(commands.Cog):
         await interaction.response.defer(ephemeral=True, thinking=True)
         await self._run_application_flow(interaction, character.strip())
 
-    async def _run_application_flow(self, interaction: discord.Interaction, character: str):
+    async def _class_names(self) -> dict:
+        """{class id: name} and {class name: [spec names]} for the game version, from Blizzard."""
         try:
-            char_data = await self.bot.wcl.get_character(character, self.server_slug, self.server_region)
-        except Exception:
-            log.exception("WarcraftLogs lookup failed")
-            await interaction.followup.send(
-                "Something went wrong looking that character up on WarcraftLogs. "
-                "Please try again in a minute, or let a moderator know.",
-                ephemeral=True,
-            )
-            return
+            ref = await wow_api.reference(self.bot)
+        except wow_api.WowApiError:
+            ref = {"classes": []}
+        return ({c["id"]: c["name"] for c in ref.get("classes", [])},
+                {c["name"]: [sp["name"] for sp in c["specs"]] for c in ref.get("classes", [])})
 
-        if char_data is None:
+    def _profile_url(self, character_slug: str):
+        template = (config.GEARCHECK_PROFILE_URL or "").strip()
+        if not template or not character_slug:
+            return None
+        return template.replace("{region}", wow_api.region()).replace("{slug}", character_slug)
+
+    async def _run_application_flow(self, interaction: discord.Interaction, character: str):
+        if getattr(self.bot, "blizzard", None) is None:
             await self._handle_not_found(interaction, character)
             return
-
+        class_names, _ = await self._class_names()
+        try:
+            summary = await gear.fetch(self.bot, wow_api.slug(character), class_names)
+        except gear.GearError:
+            await self._handle_not_found(interaction, character)
+            return
+        except wow_api.WowApiError:
+            log.exception("Blizzard lookup failed")
+            await interaction.followup.send(
+                "Something went wrong looking that character up on Blizzard. Please try again in a minute, or let "
+                "a moderator know.", ephemeral=True)
+            return
+        char_data = {
+            "id": None,  # WarcraftLogs id, when parses are included
+            "name": summary["character"],
+            "slug": summary["slug"],
+            "class_name": summary["class_name"],
+            "level": summary["level"],
+            "guild_name": summary["guild"],
+            "profile_url": self._profile_url(summary["slug"]),
+            "gear": summary,
+        }
+        await self._add_warcraftlogs_id(char_data)
         await self._continue_with_found_character(interaction, char_data)
+
+    async def _add_warcraftlogs_id(self, char_data: dict):
+        """With WarcraftLogs parses on: the character's WarcraftLogs id and
+        profile, for the tier and boss blocks. Never fails the application."""
+        if not config.APPLICATION_WARCRAFTLOGS_ENABLED or getattr(self.bot, "wcl", None) is None:
+            return
+        try:
+            found = await self.bot.wcl.get_character(char_data["name"], self.server_slug, self.server_region)
+        except Exception:
+            log.warning("WarcraftLogs lookup failed for %s", char_data["name"], exc_info=True)
+            return
+        if found:
+            char_data["id"] = found.get("id")
+            char_data["hidden"] = found.get("hidden")
+            char_data["wcl_url"] = found.get("profile_url")
 
     async def _handle_not_found(self, interaction: discord.Interaction, character: str):
         view = NotFoundView(self, interaction.user.id, character)
         await interaction.followup.send(
-            f"I couldn't find **{character}** on fresh.warcraftlogs.com for "
-            f"realm `{self.server_slug}` ({self.server_region}). Double-check the "
-            "spelling/capitalization and try again - or if that's definitely "
-            "correct and you just don't have logs uploaded yet, you can continue "
-            "anyway and a moderator will review manually.",
+            f"I couldn't find **{character}** on Blizzard. Check the spelling: your character's name and "
+            f"surname, e.g. Eggmike Thewhite. Characters can be found from level {roster.PROFILE_MIN_LEVEL}, "
+            "after logging out once. If the name is right, you can continue anyway and a moderator will review "
+            "your application by hand.",
             view=view,
             ephemeral=True,
         )
@@ -1044,13 +989,13 @@ class ApplyCog(commands.Cog):
             # more to do on this one.
             return
 
-        # action == "continue": no WCL data means no known class to build a
-        # spec dropdown from - ask for it manually, then everything else
+        # action == "continue": no Blizzard data means no known class to build
+        # a spec dropdown from - ask for it manually, then everything else
         # (role/spec/note/screenshot) is identical to the found-character
         # flow, just with no pre-filled suggestions.
         class_view = ClassSelectView(interaction.user.id, interaction.guild)
         await interaction.followup.send(
-            "Since there's no WCL data for this character, please select their class:",
+            "Since Blizzard has no data for this character, please select their class:",
             view=class_view,
             ephemeral=True,
         )
@@ -1067,31 +1012,30 @@ class ApplyCog(commands.Cog):
         char_data = {
             "id": None,
             "name": character,
+            "slug": wow_api.slug(character),
             "class_name": class_view.class_name,
             "level": None,
-            "hidden": False,
-            "guild_name": "None",
-            "best_performance_average": None,
-            "median_performance_average": None,
-            "profile_url": (
-                f"https://fresh.warcraftlogs.com/character/{self.server_region}/"
-                f"{self.server_slug}/{character}"
-            ),
+            "guild_name": None,
+            "profile_url": None,
+            "gear": None,
         }
         await self._continue_with_found_character(interaction, char_data)
 
     async def _continue_with_found_character(self, interaction: discord.Interaction, char_data: dict):
-        suggested_spec, suggested_role = await self._suggest_spec_role(char_data)
+        _, class_specs = await self._class_names()
+        specs = class_specs.get(char_data["class_name"]) or config.CLASS_SPECS.get(char_data["class_name"], [])
+        suggested_spec, suggested_role = await self._suggest_spec_role(char_data, specs)
 
         view = RoleSpecView(
             interaction.user.id,
             interaction.guild,
             char_data["class_name"],
+            specs,
             suggested_role=suggested_role,
             suggested_spec=suggested_spec,
         )
         suggestion_note = (
-            " I've pre-selected a role and spec based on your logs - please confirm or change them."
+            " I've pre-selected the spec your talent points are in - please confirm or change it."
             if suggested_spec
             else ""
         )
@@ -1109,7 +1053,7 @@ class ApplyCog(commands.Cog):
         if dm_channel is not None:
             await dm_channel.send(prompt_text, view=view)
             await interaction.followup.send(
-                f"\nThanks! I found useful data on ``{char_data['name']}`` - please check your DMs to continue the process.",
+                f"\nThanks! I found **{char_data['name']}** - please check your DMs to continue.",
                 ephemeral=True,
             )
         else:
@@ -1255,22 +1199,36 @@ class ApplyCog(commands.Cog):
 
     # --- moderator approve/deny/reset --------------------------------------
 
-    async def _is_mod(self, guild, user_id) -> bool:
-        member = guild.get_member(user_id) or await guild.fetch_member(user_id)
-        if member is None:
-            return False
-        if member.guild_permissions.manage_roles:
-            return True
-        return any(role.id == self.mod_role_id for role in member.roles)
 
     async def _is_approver(self, guild, user_id) -> bool:
         """Gate for the Approve/Deny/Reset buttons specifically - see
         config.APPROVER_ROLE_ID's comment for why this is separate from
-        the broader _is_mod check every other action in this cog uses."""
+        the broader moderator check (permissions.py) every other action in this cog uses."""
         member = guild.get_member(user_id) or await guild.fetch_member(user_id)
         if member is None:
             return False
         return any(role.id == config.APPROVER_ROLE_ID for role in member.roles)
+
+    async def _on_refresh_gear_click(self, interaction: discord.Interaction):
+        application = self.bot.store.get(interaction.message.id)
+        if application is None or not application.get("character_slug"):
+            await interaction.response.send_message("Couldn't find this application's character.", ephemeral=True)
+            return
+        if not (is_moderator(interaction.user) or await self._is_approver(interaction.guild, interaction.user.id)):
+            await interaction.response.send_message("Only moderators and approvers can refresh the gear.",
+                                                    ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        class_names, _ = await self._class_names()
+        try:
+            summary = await gear.fetch(self.bot, application["character_slug"], class_names)
+        except (gear.GearError, wow_api.WowApiError) as exc:
+            await interaction.followup.send(f"Couldn't refresh the gear: {exc}", ephemeral=True)
+            return
+        self.bot.store.update(interaction.message.id, **await self._gear_fields(summary))
+        await self._refresh_review_message(interaction.message, self.bot.store.get(interaction.message.id))
+        await interaction.followup.send(
+            "Gear refreshed from Blizzard (as of the character's last logout).", ephemeral=True)
 
     async def _on_reset_click(self, interaction: discord.Interaction):
         application = self.bot.store.get(interaction.message.id)
@@ -1455,6 +1413,8 @@ class ApplyCog(commands.Cog):
                         "Please let them know they've been accepted.)"
                     )
 
+        roster_line = await self._link_on_roster(application)
+
         now = discord.utils.utcnow().astimezone(AMSTERDAM_TZ)
         timestamp_str = now.strftime("%Y-%m-%d %H:%M %Z")
 
@@ -1467,12 +1427,28 @@ class ApplyCog(commands.Cog):
             decision_footer=(
                 f"✅ Approved by {reviewer} • {timestamp_str}\n"
                 f"Role(s) assigned: {assigned_display}{already_display}\n"
-                f"{nickname_line}"
+                f"{nickname_line}" + (f"\n{roster_line}" if roster_line else "")
             ),
         )
 
         updated = self.bot.store.get(message_id)
         await self._refresh_review_message(interaction.message, updated)
+
+    async def _link_on_roster(self, application: dict):
+        """Links the approved character to the applicant on the guild roster
+        (when the roster is on). A line for the decision footer, or None."""
+        if self.bot.get_cog("RosterCog") is None or not application.get("character_slug"):
+            return None
+        try:
+            found = await roster.find_or_add(self.bot, application["character_slug"])
+            await asyncio.to_thread(roster.link, found["slug"], application["applicant_id"],
+                                    by="application approval", as_moderator=False)
+        except roster.RosterError as exc:
+            return f"Guild roster: not linked ({exc})"
+        except Exception:
+            log.exception("Linking %s on the guild roster failed", application["character_slug"])
+            return "Guild roster: not linked (see the System log)"
+        return "Guild roster: character linked to the applicant"
 
     async def _apply_denial(self, interaction: discord.Interaction, message_id: int, reason: str):
         application = self.bot.store.get(message_id)
@@ -1567,18 +1543,55 @@ class ApplyCog(commands.Cog):
         message = await review_channel.send(content=content)
         self.bot.store.set(ARCHIVE_CONFIRMATION_KEY, message_id=message.id)
 
+    @gearcheck_group.command(name="character", description="Gear-check any character from Blizzard (moderators)")
+    @app_commands.describe(name="The character's name and surname, e.g. Eggmike Thewhite",
+                           public="Post it in this channel instead of only showing it to you")
+    async def gearcheck_character(self, interaction: discord.Interaction, name: str, public: bool = False):
+        if not is_moderator(interaction.user):
+            await interaction.response.send_message("Only moderators can gear-check characters.", ephemeral=True)
+            return
+        if getattr(self.bot, "blizzard", None) is None:
+            await interaction.response.send_message(
+                "Blizzard API keys aren't set up (Settings, General, Integrations).", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=not public, thinking=True)
+        class_names, _ = await self._class_names()
+        try:
+            summary = await gear.fetch(self.bot, wow_api.slug(name), class_names)
+        except (gear.GearError, wow_api.WowApiError) as exc:
+            await interaction.followup.send(f"Couldn't gear-check **{name.strip()}**: {exc}", ephemeral=True)
+            return
+        text = gear.render_lines(summary, await gear.item_icons(self.bot, summary))
+        container = discord.ui.Container(accent_color=discord.Color(
+            config.CLASS_COLORS.get(summary["class_name"], 0x2B2D31)))
+        details = " · ".join(filter(None, [f"Level {summary['level']}", summary.get("race"), summary["class_name"],
+                                           summary.get("guild")]))
+        profile_url = self._profile_url(summary["slug"])
+        title = f"[{summary['character']}]({profile_url})" if profile_url else summary["character"]
+        container.add_item(discord.ui.TextDisplay(f"## {title}\n{details}\n-# Gear as of the last logout"))
+        container.add_item(discord.ui.Separator())
+        container.add_item(discord.ui.TextDisplay(text["overview"]))
+        container.add_item(discord.ui.TextDisplay(_clip(text["gear"], 3000)))
+        if text["flags"]:
+            container.add_item(discord.ui.TextDisplay(text["flags"]))
+        view = discord.ui.LayoutView(timeout=None)
+        view.add_item(container)
+        await interaction.followup.send(view=view, ephemeral=not public,
+                                        allowed_mentions=discord.AllowedMentions.none())
+
     @gearcheck_group.command(
         name="archive", description="Move all approved/denied applications to the archive channel"
     )
     async def gearcheck_archive(self, interaction: discord.Interaction):
-        if not await self._is_mod(interaction.guild, interaction.user.id):
+        if not await member_is_moderator(interaction.guild, interaction.user.id):
             await interaction.response.send_message(
                 "Only moderators can archive applications.", ephemeral=True
             )
             return
         if not config.ARCHIVE_ENABLED or not config.ARCHIVE_CHANNEL_ID:
             await interaction.response.send_message(
-                "Archiving isn't enabled - set ARCHIVE_ENABLED/ARCHIVE_CHANNEL_ID in config/deployment.py.",
+                "Archiving isn't set up: turn on the Archive command and pick the archive channel in Settings "
+                "(Features, Applications).",
                 ephemeral=True,
             )
             return

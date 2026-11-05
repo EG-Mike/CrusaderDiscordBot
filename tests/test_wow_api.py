@@ -52,6 +52,15 @@ class WowApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(wow_api.namespace("static"), "static-forever-eu")
         self.assertEqual(wow_api.namespace("profile", "us"), "profile-forever-us")
 
+    def test_icon_fallbacks(self):
+        forever = "https://render.worldofwarcraft.com/forever-eu/icons/56/132790.jpg"
+        self.assertEqual(wow_api.icon_urls(forever), [
+            forever, "https://render.worldofwarcraft.com/eu/icons/56/132790.jpg",
+            "https://render.worldofwarcraft.com/us/icons/56/132790.jpg"])
+        retail = "https://render.worldofwarcraft.com/eu/icons/56/1.jpg"
+        self.assertEqual(wow_api.icon_urls(retail), [retail])  # already the modern game's address
+        self.assertEqual(wow_api.icon_urls(None), [])
+
     def test_parse_account_profile(self):
         [c] = wow_api.parse_account_profile(ACCOUNT_PROFILE)  # nameless entries are skipped
         self.assertEqual((c["name"], c["surname"], c["realm_id"], c["blizzard_id"]), ("Davina", "Asaria", 6855, 716333))

@@ -101,6 +101,7 @@ from discord.ext import commands, tasks
 
 import config
 from cogs.raid_summary import RaidSummaryOptionsView
+from permissions import member_is_moderator
 
 log = logging.getLogger("wow-apply-bot.raidlogs")
 
@@ -188,7 +189,6 @@ def _parse_source_embed(embed: discord.Embed) -> dict:
 class RaidLogsCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.mod_role_id = config.MOD_ROLE_ID
         self.organizer_role_id = config.ORGANIZER_ROLE_ID
 
         source_channel_id = (config.RAID_LOGS_CHANNEL_ID or None)
@@ -222,13 +222,6 @@ class RaidLogsCog(commands.Cog):
 
     # --- permission checks (self-contained, same as other cogs) ----------
 
-    async def _is_mod(self, guild: discord.Guild, user_id: int) -> bool:
-        member = guild.get_member(user_id) or await guild.fetch_member(user_id)
-        if member is None:
-            return False
-        if member.guild_permissions.manage_roles:
-            return True
-        return any(role.id == self.mod_role_id for role in member.roles)
 
     async def _is_organizer(self, guild: discord.Guild, user_id: int) -> bool:
         member = guild.get_member(user_id) or await guild.fetch_member(user_id)
@@ -635,7 +628,7 @@ class RaidLogsCog(commands.Cog):
         if entry is None:
             await interaction.response.send_message("Couldn't find this log's data.", ephemeral=True)
             return
-        if not await self._is_mod(interaction.guild, interaction.user.id):
+        if not await member_is_moderator(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can summarize a raid log.", ephemeral=True)
             return
         if entry.get("summarized"):
@@ -790,7 +783,7 @@ class RaidLogsCog(commands.Cog):
         if not record or record.get("kind") != "raidlog_summary_prompt":
             await interaction.response.send_message("Couldn't find this prompt's data.", ephemeral=True)
             return
-        if not await self._is_mod(interaction.guild, interaction.user.id):
+        if not await member_is_moderator(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can post raid summaries.", ephemeral=True)
             return
 
