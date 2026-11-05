@@ -526,16 +526,13 @@ def delete_template(template_id):
 
 # --- importing records from before the database ------------------------------------------
 
-def import_legacy(records: List[tuple]) -> int:
-    """One-off import of the old announcements store (message ID -> record,
-    see storage.py) into the table. Drafts and the published message they
-    led to become one announcement. Runs once per installation."""
-    if db.get_meta("announcements_imported_at"):
-        return 0
+def _legacy_rows(records: List[tuple]) -> List[tuple]:
+    """Rows for the announcements table from the old announcements store
+    (message ID -> record, see storage.py): drafts and the published message
+    they led to become one announcement."""
     by_key = {str(k): v for k, v in records if isinstance(v, dict)}
     linked_published = set()
     rows = []
-    stamp = _now()
     for key, rec in by_key.items():
         if not rec.get("is_draft"):
             continue
@@ -556,7 +553,21 @@ def import_legacy(records: List[tuple]) -> int:
             continue
         rows.append(("published", rec.get("title"), rec.get("body") or "", str(rec["channel_id"]), key, None,
                      str(rec.get("created_by") or "") or None))
+    return rows
+
+
+def import_legacy(records: List[tuple], *, merge: bool = False) -> int:
+    """Imports the old announcements store into the table. Normally once per
+    installation; with merge (db_tools.py import-old), again from old files,
+    skipping announcements whose message is already known."""
+    if db.get_meta("announcements_imported_at") and not merge:
+        return 0
+    stamp = _now()
+    rows = _legacy_rows(records)
     with db.transaction() as conn:
+        known = {str(v) for r in conn.execute("SELECT message_id, sandbox_message_id FROM announcements").fetchall()
+                 for v in r if v}
+        rows = [r for r in rows if not ({r[4], r[5]} - {None}) & known]
         for status, title, body, channel_id, message_id, sandbox_id, published_by in rows:
             conn.execute(
                 "INSERT INTO announcements (status, title, body, channel_id, message_id, sandbox_message_id, "

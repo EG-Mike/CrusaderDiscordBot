@@ -9,6 +9,13 @@ folder, with the bot STOPPED for `export`/`import`:
                                        STORAGE_BACKEND=sqlite to json
   python db_tools.py backup [file]     consistent copy of the database,
                                        safe while the bot is running
+  python db_tools.py import-old <folder>
+                                       merge JSON files from an older install
+                                       (applications.json, polls.json,
+                                       announcements.json, ...) into the
+                                       database; records the database already
+                                       has are kept as they are. Stop the bot
+                                       first: it keeps these in memory.
 """
 
 import json
@@ -58,6 +65,46 @@ def export(folder="json_export"):
           "remove STORAGE_BACKEND=sqlite from .env, start the bot.")
 
 
+def import_old(folder=None):
+    """Merges every <store>.json in folder into the database. Records whose
+    key the database already has are left alone (the newer bot's version
+    wins); announcements are merged into their own table, skipping messages
+    already known."""
+    if not folder or not os.path.isdir(folder):
+        print("Give the folder with the old JSON files, e.g.: python db_tools.py import-old /data/old")
+        return
+    import announcements
+    from storage import store_name_for_path
+
+    db.connection()  # creates the tables on a fresh database
+    for name in sorted(os.listdir(folder)):
+        if not name.endswith(".json"):
+            continue
+        path = os.path.join(folder, name)
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError) as exc:
+            print(f"{name}: skipped, couldn't read it ({exc})")
+            continue
+        if not isinstance(data, dict):
+            print(f"{name}: skipped, not a store file")
+            continue
+        store = store_name_for_path(path)
+        if store == "announcements":
+            added = announcements.import_legacy(list(data.items()), merge=True)
+            print(f"{name}: {added} announcement(s) added")
+            continue
+        added = 0
+        with db.transaction() as conn:
+            for key, record in data.items():
+                cursor = conn.execute("INSERT OR IGNORE INTO records (store, key, data) VALUES (?, ?, ?)",
+                                      (store, str(key), json.dumps(record)))
+                added += cursor.rowcount
+        print(f"{name}: {added} of {len(data)} record(s) added to {store!r}"
+              + (f" ({len(data) - added} already there)" if added < len(data) else ""))
+
+
 def backup(target=None):
     target = target or f"crusader-backup-{datetime.now():%Y%m%d-%H%M%S}.db"
     db.backup_to(target)
@@ -66,4 +113,5 @@ def backup(target=None):
 
 if __name__ == "__main__":
     command, *args = sys.argv[1:] or ["info"]
-    {"info": info, "export": export, "backup": backup}.get(command, lambda *a: print(__doc__))(*args)
+    commands = {"info": info, "export": export, "backup": backup, "import-old": import_old}
+    commands.get(command, lambda *a: print(__doc__))(*args)

@@ -95,7 +95,8 @@ version or raid tier is a configuration change.
   dashboard-saved values on top, at startup.
 - `storage.py`: key/record stores, JSON files or SQLite
   (`STORAGE_BACKEND`); `db.py`: the shared SQLite database; `db_tools.py`:
-  info/export/backup.
+  info/export/backup, and `import-old` to merge JSON files from an older
+  copy into the database (never overwrites newer records).
 - `audit.py`: the audit trail (structured events in the database,
   mirrored to the `audit.log` text file); written by `cogs/audit_log.py`
   (Discord) and `webapi.server.audit` (dashboard), read by the dashboard.
@@ -133,7 +134,10 @@ version or raid tier is a configuration change.
   `webapi/roster_api.py` (Roster and Leveling pages). The roster is also
   kept posted in a Discord channel (`GUILD_ROSTER_CHANNEL_ID`; edited only
   when its content changes; header is the "guild_roster_header" bot
-  message). `permissions.py`:
+  message; aligned columns with a header row; alts below
+  `GUILD_ROSTER_POST_MIN_LEVEL` left out; persistent "Claim a character" /
+  "My characters" buttons for main/alt self-service). Level milestones
+  found together are grouped into as few messages as fit. `permissions.py`:
   the shared Discord moderator check (`is_moderator(member)`,
   `member_is_moderator(guild, user_id)`); every cog uses it.
 - `wow_api.py`: Blizzard game data for the configured game version

@@ -14,10 +14,17 @@ GUILD_ROSTER_REFRESH_MINUTES. Character profiles, which carry fresher
 levels, are checked by cogs/leveling.py.
 
 With a roster channel set (GUILD_ROSTER_CHANNEL_ID), the bot keeps the
-roster posted there: a header (the "Guild roster header" bot message) and
-one line per character (level, class icon, name, linked member), highest
-level first. Every few minutes it checks whether anything changed and only
-then edits the message(s); a long roster spans several messages.
+roster posted there: a header (the "Guild roster header" bot message), a
+column header row and one row per character (level, class icon, name,
+linked member, "alt" for alts), highest level first. Characters below
+GUILD_ROSTER_POST_MIN_LEVEL are left out unless they're someone's main.
+Every few minutes it checks whether anything changed and only then edits
+the message(s); a long roster spans several messages.
+
+Under the last message are two buttons: "Claim a character" (name and
+surname, main or alt; members may claim several characters, only when
+GUILD_ROSTER_SELF_SERVICE is on) and "My characters" (make one the main or
+an alt, or unlink it). Both answer privately.
 """
 
 import asyncio
@@ -45,6 +52,9 @@ STATUS_META = "roster_last_sync"
 POST_META = "roster_post"         # {"channel_id", "message_ids", "hash", "updated"}
 POST_TEXT_LIMIT = 3800            # per message: Discord allows 4000 characters of text
 POST_CHECK_MINUTES = 2
+POST_LAYOUT = "table-2"           # part of the post's hash: changing the layout updates old posts
+CLAIM_ID = "roster:claim"
+MINE_ID = "roster:mine"
 NO_PINGS = discord.AllowedMentions.none()
 
 
@@ -73,8 +83,12 @@ class RosterCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._sync_lock = asyncio.Lock()
+        self._post_lock = asyncio.Lock()
 
     async def cog_load(self):
+        persistent = discord.ui.LayoutView(timeout=None)  # answers the buttons on posts from before a restart
+        persistent.add_item(ClaimButtons(self, claims=True))
+        self.bot.add_view(persistent)
         self.sync_loop.change_interval(minutes=max(15, int(config.GUILD_ROSTER_REFRESH_MINUTES or 60)))
         self.sync_loop.start()
         self.post_loop.start()
@@ -86,14 +100,22 @@ class RosterCog(commands.Cog):
     # --- the roster posted in Discord ------------------------------------------------------------
 
     def _post_lines(self, rows: List[dict], ref: dict, guild) -> List[str]:
-        lines = []
+        """A header row and one aligned row per character. Discord has no
+        tables, so the level and name columns are padded inline code."""
+        if not rows:
+            return ["-# Nobody on the roster yet."]
+        width = max(len("Character"), *(len(roster.display_name(c)) for c in rows))
+        lines = [f"`Lv` ⚔️ `{'Character':<{width}}` **Discord**"]
         for c in rows:
             name = class_name(ref, c["class_id"])
             icon = icons.resolve_class_icon(guild, name) if name else ""
             member = guild.get_member(c["discord_id"]) if guild and c["discord_id"] else None
-            line = f"`{c['level'] if c['level'] is not None else '?':>2}` {icon} **{roster.display_name(c)}**"
-            lines.append(line.replace("  ", " ") + (f" · {member.mention}" if member else ""))
-        return lines or ["-# Nobody on the roster yet."]
+            who = member.mention if member else "-"
+            if member and not c["is_main"]:
+                who += " · alt"
+            level = c["level"] if c["level"] is not None else "?"
+            lines.append(f"`{level:>2}` {icon or '▫️'} `{roster.display_name(c):<{width}}` {who}")
+        return lines
 
     @staticmethod
     def _chunks(header: str, lines: List[str]) -> List[str]:
@@ -111,6 +133,10 @@ class RosterCog(commands.Cog):
     async def publish_roster(self, *, force: bool = False) -> Optional[str]:
         """Posts or updates the roster in the roster channel when its content
         changed (or force). Returns what happened, for the dashboard."""
+        async with self._post_lock:
+            return await self._publish_roster(force)
+
+    async def _publish_roster(self, force: bool) -> Optional[str]:
         channel_id = int(config.GUILD_ROSTER_CHANNEL_ID or 0)
         if not channel_id:
             return None
@@ -121,16 +147,23 @@ class RosterCog(commands.Cog):
         rows = await asyncio.to_thread(roster.posted_characters)
         lines = self._post_lines(rows, await reference(self.bot), channel.guild)
         template = bot_messages.current("guild_roster_header")["body"]
-        digest = hashlib.sha256("\n".join([template, config.GUILD_ROSTER_GUILD or "", *lines]).encode()).hexdigest()
+        claims = bool(config.GUILD_ROSTER_SELF_SERVICE)
+        digest = hashlib.sha256("\n".join([POST_LAYOUT, str(claims), template, config.GUILD_ROSTER_GUILD or "",
+                                           *lines]).encode()).hexdigest()
         if not force and state.get("hash") == digest and state.get("channel_id") == channel_id:
             return None
         updated = int(time.time())
         header = bot_messages.text("guild_roster_header", guild=config.GUILD_ROSTER_GUILD or channel.guild.name,
                                    count=len(rows), updated=f"<t:{updated}:R>")
         views = []
-        for text in self._chunks(header, lines):
+        chunks = self._chunks(header, lines)
+        for i, text in enumerate(chunks):
             view = discord.ui.LayoutView(timeout=None)
-            view.add_item(discord.ui.Container(discord.ui.TextDisplay(text), accent_color=discord.Color(0xDEAC52)))
+            container = discord.ui.Container(discord.ui.TextDisplay(text), accent_color=discord.Color(0xDEAC52))
+            if i == len(chunks) - 1:
+                container.add_item(discord.ui.Separator())
+                container.add_item(ClaimButtons(self, claims=claims))
+            view.add_item(container)
             views.append(view)
 
         old_ids = state.get("message_ids", [])
@@ -178,6 +211,63 @@ class RosterCog(commands.Cog):
     @post_loop.before_loop
     async def _before_post(self):
         await self.bot.wait_until_ready()
+
+    # --- claiming characters from the posted roster ----------------------------------------------
+
+    def _refresh_post_soon(self):
+        """Updates the posted roster after a claim instead of waiting for the loop."""
+        async def refresh():
+            try:
+                await self.publish_roster()
+            except Exception:
+                log.exception("Updating the posted guild roster failed")
+
+        asyncio.ensure_future(refresh())
+
+    async def claim_button(self, interaction: discord.Interaction):
+        if not config.GUILD_ROSTER_SELF_SERVICE and not is_moderator(interaction.user):
+            return await self._reply(interaction, "Ask a moderator to link your characters.")
+        await interaction.response.send_modal(ClaimModal(self))
+
+    async def claim(self, interaction: discord.Interaction, name: str, role: str):
+        """The claim modal was submitted: link the character to the member as a main or alt."""
+        if not config.GUILD_ROSTER_SELF_SERVICE and not is_moderator(interaction.user):
+            return await self._reply(interaction, "Ask a moderator to link your characters.")
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            found = await roster.find_or_add(self.bot, name)
+            # Claiming is for yourself only: someone else's character needs a moderator.
+            c = await asyncio.to_thread(roster.link, found["slug"], interaction.user.id, by=str(interaction.user),
+                                        as_moderator=False)
+            setter = roster.set_main if role == "main" else roster.set_alt
+            c = await asyncio.to_thread(setter, c["slug"], discord_id=interaction.user.id, as_moderator=False)
+        except (roster.RosterError, wow_api.WowApiError) as exc:
+            return await self._reply(interaction, str(exc))
+        kind = "your main" if c["is_main"] else "an alt"
+        hidden = ""
+        if not c["is_main"] and (c["level"] or 0) < int(config.GUILD_ROSTER_POST_MIN_LEVEL or 0):
+            hidden = f" Alts show on the roster from level {config.GUILD_ROSTER_POST_MIN_LEVEL}."
+        await self._reply(interaction, f"**{roster.display_name(c)}** (level {c['level'] or '?'}) is now linked "
+                                       f"to you as {kind}.{hidden}")
+        self._refresh_post_soon()
+
+    async def mine_button(self, interaction: discord.Interaction):
+        rows = await asyncio.to_thread(roster.characters, discord_id=interaction.user.id)
+        view = MyCharactersView(self, interaction.user.id, rows)
+        await interaction.response.send_message(view.text(), view=view if rows else discord.utils.MISSING,
+                                                ephemeral=True, allowed_mentions=NO_PINGS)
+
+    async def change_own(self, interaction: discord.Interaction, character_slug: str, action: str) -> str:
+        """Main / alt / unlink from "My characters". Returns the outcome text."""
+        functions = {"main": roster.set_main, "alt": roster.set_alt, "unlink": roster.unlink}
+        try:
+            c = await asyncio.to_thread(functions[action], character_slug, discord_id=interaction.user.id,
+                                        as_moderator=False)
+        except roster.RosterError as exc:
+            return str(exc)
+        self._refresh_post_soon()
+        done = {"main": "is now your main", "alt": "is now an alt", "unlink": "is no longer linked to you"}[action]
+        return f"**{roster.display_name(c)}** {done}."
 
     # --- syncing ---------------------------------------------------------------------------------
 
@@ -340,6 +430,102 @@ class RosterCog(commands.Cog):
             lines.append(f"{'⭐ ' if c['is_main'] else '• '}**{roster.display_name(c)}**: {details}")
         plural = "s" if len(rows) != 1 else ""
         await self._reply(interaction, f"{whose} {len(rows)} character{plural}:\n" + "\n".join(lines))
+
+
+class ClaimButtons(discord.ui.ActionRow):
+    """The buttons under the posted roster. Persistent: the custom IDs are
+    fixed and the cog registers them at startup."""
+
+    def __init__(self, cog: "RosterCog", *, claims: bool):
+        super().__init__()
+        self.cog = cog
+        if not claims:
+            self.remove_item(self.claim)
+
+    @discord.ui.button(label="Claim a character", emoji="🙋", style=discord.ButtonStyle.primary, custom_id=CLAIM_ID)
+    async def claim(self, interaction: discord.Interaction, _button: discord.ui.Button):
+        await self.cog.claim_button(interaction)
+
+    @discord.ui.button(label="My characters", emoji="📋", style=discord.ButtonStyle.secondary, custom_id=MINE_ID)
+    async def mine(self, interaction: discord.Interaction, _button: discord.ui.Button):
+        await self.cog.mine_button(interaction)
+
+
+class ClaimModal(discord.ui.Modal, title="Claim a character"):
+    def __init__(self, cog: "RosterCog"):
+        super().__init__(timeout=600)
+        self.cog = cog
+        self.character = discord.ui.TextInput(placeholder="e.g. Eggmike Thewhite", min_length=2, max_length=60)
+        self.role = discord.ui.Select(options=[
+            discord.SelectOption(label="Main", value="main", description="Your main character (one per member)",
+                                 emoji="⭐"),
+            discord.SelectOption(label="Alt", value="alt", description="One of your other characters", emoji="🔹"),
+        ], min_values=1, max_values=1)
+        self.add_item(discord.ui.Label(text="Character name and surname", component=self.character))
+        self.add_item(discord.ui.Label(text="Main or alt?", component=self.role))
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await self.cog.claim(interaction, self.character.value, (self.role.values or ["alt"])[0])
+
+
+class MyCharactersView(discord.ui.View):
+    """The member's characters, privately, with main / alt / unlink."""
+
+    def __init__(self, cog: "RosterCog", user_id: int, rows: List[dict]):
+        super().__init__(timeout=600)
+        self.cog, self.user_id, self.rows = cog, user_id, rows
+        self.selected: Optional[str] = rows[0]["slug"] if len(rows) == 1 else None
+        self.notice = ""
+        self._build()
+
+    def text(self) -> str:
+        if not self.rows:
+            claim = " Claim one with the button under the roster." if config.GUILD_ROSTER_SELF_SERVICE else ""
+            return f"You have no characters linked.{claim}"
+        lines = [f"{'⭐' if c['is_main'] else '🔹'} **{roster.display_name(c)}** · level {c['level'] or '?'}"
+                 f" · {'main' if c['is_main'] else 'alt'}" for c in self.rows]
+        hint = "" if self.selected else "\n-# Pick a character below to change it."
+        notice = f"\n\n{self.notice}" if self.notice else ""
+        return "**Your characters**\n" + "\n".join(lines) + hint + notice
+
+    def _build(self):
+        self.clear_items()
+        if not self.rows:
+            return
+        picker = discord.ui.Select(placeholder="Pick a character", options=[
+            discord.SelectOption(label=roster.display_name(c), value=c["slug"], default=c["slug"] == self.selected,
+                                 description=f"Level {c['level'] or '?'} · {'main' if c['is_main'] else 'alt'}")
+            for c in self.rows[:25]])
+        picker.callback = self._pick
+        self.add_item(picker)
+        current = next((c for c in self.rows if c["slug"] == self.selected), None)
+        for action, label, style in (("main", "Make main", discord.ButtonStyle.primary),
+                                     ("alt", "Make alt", discord.ButtonStyle.secondary),
+                                     ("unlink", "Unlink", discord.ButtonStyle.danger)):
+            button = discord.ui.Button(label=label, style=style, disabled=current is None
+                                       or (action == "main" and current["is_main"])
+                                       or (action == "alt" and not current["is_main"]))
+            button.callback = self._make_action(action)
+            self.add_item(button)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        return interaction.user.id == self.user_id
+
+    async def _pick(self, interaction: discord.Interaction):
+        self.selected = interaction.data.get("values", [None])[0]
+        self.notice = ""
+        self._build()
+        await interaction.response.edit_message(content=self.text(), view=self)
+
+    def _make_action(self, action: str):
+        async def callback(interaction: discord.Interaction):
+            self.notice = await self.cog.change_own(interaction, self.selected, action)
+            self.rows = await asyncio.to_thread(roster.characters, discord_id=self.user_id)
+            if self.selected not in {c["slug"] for c in self.rows}:
+                self.selected = None
+            self._build()
+            await interaction.response.edit_message(content=self.text(), view=self, allowed_mentions=NO_PINGS)
+        return callback
 
 
 async def setup(bot: commands.Bot):

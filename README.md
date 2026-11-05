@@ -270,6 +270,7 @@ Every poll carries the footer from `config.POLL_FOOTER`.
 | `/character unlink <name>` / `/character main <name>` | Unlink a character, or make it your main. |
 | `/character spec <name> <main> [off]` | Set a character's main spec and off spec (offered for its own class). |
 | `/character list [member]` | Your (or a member's) characters, levels and specs. |
+| Roster buttons | Under the posted guild roster: **Claim a character** (name and surname, main or alt; claim as many as you have) and **My characters** (make one your main or an alt, or unlink it). |
 | `/leaderboard [scope] [size]` | The guild's highest-level characters (mains, or everyone). |
 
 ### Moderator only
@@ -812,6 +813,17 @@ That writes the database back out as JSON files in `json_export/` (copy
 them over the originals, remove `STORAGE_BACKEND=sqlite`, restart).
 `python db_tools.py backup` makes a safe copy of the database while the bot
 runs; `python db_tools.py info` shows what's in it.
+
+The JSON import only happens once. To bring in JSON files from an older
+copy of the bot afterwards (e.g. polls, applications and announcements
+that still need managing), stop the bot and run:
+
+```bash
+python db_tools.py import-old <folder with the old .json files>
+```
+
+It adds the records the database doesn't have yet and never overwrites
+newer ones; running it twice adds nothing.
 
 ### Setting up a test environment (recommended before going live)
 

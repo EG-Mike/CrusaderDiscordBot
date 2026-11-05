@@ -7,7 +7,9 @@ Every LEVELING_REFRESH_MINUTES the characters' profiles are checked on
 Blizzard (from level 10; updated when a player logs out), and every
 milestone reached since (LEVELING_MILESTONES) is posted in
 LEVELING_CHANNEL_ID with the "Level milestone" text (bot_messages.py,
-editable on the dashboard). Alts are skipped unless LEVELING_ANNOUNCE_ALTS;
+editable on the dashboard). Milestones found in the same check are grouped:
+one line each, combined into as few messages as fit (after a restart that
+can be many at once). Alts are skipped unless LEVELING_ANNOUNCE_ALTS;
 level-ups older than a day (e.g. the bot was down) aren't announced late.
 
   /leaderboard [scope] [size]    the highest levels in the guild
@@ -15,7 +17,7 @@ level-ups older than a day (e.g. the bot was down) aren't announced late.
 
 import asyncio
 import logging
-from typing import Optional
+from typing import List, Optional, Tuple
 
 import discord
 from discord import app_commands
@@ -29,6 +31,22 @@ from cogs.roster import class_name, reference
 log = logging.getLogger("wow-apply-bot.leveling")
 
 MENTION_MEMBERS_ONLY = discord.AllowedMentions(everyone=False, roles=False, users=True)
+MESSAGE_LIMIT = 2000  # Discord's limit for a message's text
+
+
+def group_lines(lines: List[Tuple[int, str]], limit: int = MESSAGE_LIMIT) -> List[Tuple[List[int], str]]:
+    """(event id, text) pairs combined into messages of at most limit
+    characters: [(event ids, message text)]. A text longer than the limit
+    on its own is cut short."""
+    messages: List[Tuple[List[int], str]] = []
+    for event_id, text in lines:
+        text = text[:limit]
+        if messages and len(messages[-1][1]) + 1 + len(text) <= limit:
+            ids, current = messages[-1]
+            messages[-1] = (ids + [event_id], f"{current}\n{text}")
+        else:
+            messages.append(([event_id], text))
+    return messages
 
 
 class LevelingCog(commands.Cog):
@@ -60,7 +78,7 @@ class LevelingCog(commands.Cog):
             return 0
         channel = self.bot.get_channel(int(config.LEVELING_CHANNEL_ID or 0))
         ref = await reference(self.bot)
-        posted = 0
+        lines = []
         for event in events:
             reason = roster.should_announce(event)
             if reason is None and channel is None:
@@ -69,17 +87,20 @@ class LevelingCog(commands.Cog):
                 await asyncio.to_thread(roster.mark_announced, event["id"], reason)
                 continue
             member = channel.guild.get_member(event["discord_id"]) if event["discord_id"] else None
-            character = roster.display_name(event)
-            text = bot_messages.text(
-                "level_milestone", member=member.mention if member else event["name"], character=character,
-                level=event["new_value"], milestone=event["milestone"], **{"class": class_name(ref, event["class_id"])})
+            lines.append((event["id"], bot_messages.text(
+                "level_milestone", member=member.mention if member else event["name"],
+                character=roster.display_name(event), level=event["new_value"], milestone=event["milestone"],
+                **{"class": class_name(ref, event["class_id"])})))
+        posted = 0
+        for event_ids, text in group_lines(lines):
             try:
                 await channel.send(text, allowed_mentions=MENTION_MEMBERS_ONLY)
             except discord.HTTPException as exc:
-                log.warning("Couldn't post a level milestone in #%s: %s", getattr(channel, "name", "?"), exc)
-                break  # try again next time (until it's a day old)
-            await asyncio.to_thread(roster.mark_announced, event["id"], "announced")
-            posted += 1
+                log.warning("Couldn't post level milestones in #%s: %s", getattr(channel, "name", "?"), exc)
+                break  # try again next time (until they're a day old)
+            for event_id in event_ids:
+                await asyncio.to_thread(roster.mark_announced, event_id, "announced")
+            posted += len(event_ids)
         return posted
 
     @tasks.loop(minutes=5)
