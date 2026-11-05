@@ -18,6 +18,7 @@ import {
   ScrollText,
   Settings2,
   Smile,
+  Users,
   Vote,
   Wrench,
   SquareSlash,
@@ -47,6 +48,7 @@ export const KINDS: Record<AuditKind, { label: string; tone: Tone; icon: LucideI
   emoji: { label: "Emoji", tone: "gold", icon: Smile },
   maintenance: { label: "Maintenance", tone: "warn", icon: Wrench },
   poll: { label: "Poll", tone: "info", icon: Vote },
+  roster: { label: "Roster", tone: "gold", icon: Users },
   audit: { label: "Audit log", tone: "neutral", icon: ScrollText },
   other: { label: "Other", tone: "neutral", icon: Sparkles },
 };

@@ -16,11 +16,11 @@ on:
   push:
     branches:
       - main
-      - claude/kind-bell-m7yoj1
+      - beta
   workflow_dispatch:
 
 env:
-  TEST_BRANCH: claude/kind-bell-m7yoj1
+  TEST_BRANCH: beta
 
 permissions:
   contents: read

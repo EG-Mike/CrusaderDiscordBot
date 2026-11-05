@@ -54,7 +54,8 @@ RANGES = {
     "PARSE_HIGHLIGHT_THRESHOLD": (1, 100),
     "POLL_DEFAULT_MAX_VOTES_PER_MEMBER": (1, 25),
     "POLL_DEFAULT_MAX_ADDS_PER_MEMBER": (1, 25),
-    "LEVELING_REFRESH_MINUTES": (1, 1440),
+    "LEVELING_REFRESH_MINUTES": (2, 1440),
+    "GUILD_ROSTER_REFRESH_MINUTES": (15, 1440),
     "NOTIFY_ERRORS_EVERY_MINUTES": (1, 1440),
 }
 
@@ -352,6 +353,8 @@ def dependency_warnings() -> list:
         warnings.append("Raid logs automation needs the Raid summary feature enabled.")
     if saved.get("FEATURE_RAID_LOGS_ENABLED") and not saved.get("FEATURE_ATTENDANCE_ENABLED"):
         warnings.append("Raid logs automation needs the Attendance feature enabled.")
+    if saved.get("FEATURE_LEVELING_ENABLED") and not saved.get("FEATURE_ROSTER_ENABLED"):
+        warnings.append("Leveling needs the Guild roster feature enabled.")
     if saved.get("FEATURE_TIER_RETROSPECTIVE_ENABLED") and not saved.get("FEATURE_RAID_SUMMARY_ENABLED"):
         warnings.append("Tier recap reads raid summary data and needs the Raid summary feature enabled.")
     return warnings

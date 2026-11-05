@@ -76,30 +76,35 @@ class WowApiTests(unittest.IsolatedAsyncioTestCase):
             ("/data/wow/playable-specialization/256", "static-forever-eu"): {"role": {"type": "HEALER"}},
             ("/data/wow/profession/index", "static-forever-eu"): {"professions": [
                 {"id": 197, "name": "Tailoring"}, {"id": 1, "name": "Test Profession [DNT]"}, {"id": 164, "name": "Blacksmithing"}]},
-            ("/data/wow/realm/index", "dynamic-forever-eu"): {"realms": [{"id": 6855, "slug": "camwow-eu5-realm-1-pve",
-                                                                         "name": "CAMWOW EU5 Realm 1 PvE"}]},
+            ("/data/wow/ruleset/index", "dynamic-forever-eu"): {"rulesets": [{"id": 15}, {"id": 2}]},
+            ("/data/wow/ruleset/2", "dynamic-forever-eu"): {"id": 2, "name": "Normal", "status": {"type": "UP"}},
+            ("/data/wow/ruleset/15", "dynamic-forever-eu"): {"id": 15, "name": "Roleplay PvP"},
         })
         ref = await wow_api.reference(SimpleNamespace(blizzard=fake))
         self.assertEqual(ref["classes"], [{"id": 5, "name": "Priest", "specs": [{"id": 256, "name": "Discipline", "role": "healer"}]}])
         self.assertEqual([p["name"] for p in ref["professions"]], ["Blacksmithing", "Tailoring"])
-        self.assertEqual(wow_api.realm_by_id(ref, 6855)["slug"], "camwow-eu5-realm-1-pve")
+        self.assertEqual(ref["rulesets"], [{"id": 2, "name": "Normal"}, {"id": 15, "name": "Roleplay PvP"}])
         self.assertTrue(any("playable-race" in e for e in ref["errors"]))  # missing parts are reported, not fatal
         calls = len(fake.calls)
         await wow_api.reference(SimpleNamespace(blizzard=fake))
         self.assertEqual(len(fake.calls), calls)  # cached
 
     async def test_lookup_character_tries_paths_in_order(self):
-        fake = FakeBlizzard({("/profile/wow/character/camwow-eu5-realm-1-pve/davina", "profile-forever-eu"): {"level": 20}})
+        fake = FakeBlizzard({("/profile/wow/character/davina", "profile-forever-eu"): {"level": 20}})
         bot = SimpleNamespace(blizzard=fake)
-        with mock.patch.object(config, "CHARACTER_LOOKUP_PATHS", ["/profile/wow/character/{name}-{surname}",
-                                                                 "/profile/wow/character/{realm}/{name}"]):
-            profile = await wow_api.lookup_character(bot, "Davina", "Asaria", "camwow-eu5-realm-1-pve")
+        paths = ["/profile/wow/character/{name}-{surname}", "/profile/wow/character/{realm}/{name}",
+                 "/profile/wow/character/{name}"]
+        with mock.patch.object(config, "CHARACTER_LOOKUP_PATHS", paths), \
+                self.assertLogs("wow-apply-bot.wow_api", "WARNING") as logs:
+            profile = await wow_api.lookup_character(bot, "Davina", "Asaria")
             self.assertEqual(wow_api.profile_level(profile), 20)
+            # Forever has no realms: a {realm} path is skipped with a warning, not filled in or crashed on.
             self.assertEqual([c[0] for c in fake.calls], ["/profile/wow/character/davina-asaria",
-                                                          "/profile/wow/character/camwow-eu5-realm-1-pve/davina"])
+                                                          "/profile/wow/character/davina"])
+            self.assertIn("unknown placeholders realm", logs.output[0])
             fake.calls.clear()
-            self.assertIsNone(await wow_api.lookup_character(bot, "Davina"))  # no surname or realm: nothing to try
-            self.assertEqual(fake.calls, [])
+            await wow_api.lookup_character(bot, "Davina")  # no surname: the {surname} path is skipped
+            self.assertEqual([c[0] for c in fake.calls], ["/profile/wow/character/davina"])
 
     async def test_explore_restrictions(self):
         bot = SimpleNamespace(blizzard=FakeBlizzard({("/data/wow/realm/index", "dynamic-forever-us"): {"realms": []}}))

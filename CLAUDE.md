@@ -57,10 +57,12 @@ version or raid tier is a configuration change.
 - **Test bot**: a separate Discord application in a private test server,
   running as a Docker container on the same VPS (`/opt/crusader-test`,
   see `deploy/test/`). GitHub Actions builds the image on every push
-  (`.github/workflows/docker-image.yml`; tag `test` for the dashboard
-  branch, `latest` for `main`, for **amd64 and arm64**; the VPS is ARM).
+  (`.github/workflows/docker-image.yml`; tag `test` for the `beta` branch, `latest` for `main`, for **amd64 and arm64**; the VPS is ARM).
   The VPS pulls new builds every 5 minutes. **The test environment can be
   changed freely**: breaking changes and rewrites are fine there.
+- **Branches**: work happens on `beta` (the test bot runs it); merging
+  `beta` into `main` releases it to the live bot. Push to `beta`, not to a
+  new branch of your own.
 - The dashboard is reached over an SSH tunnel (PuTTY) at
   http://localhost:8081. It is not exposed to the internet.
 - **Dev bot (cloud sessions)**: Claude Code cloud sessions for this repo
@@ -110,6 +112,14 @@ version or raid tier is a configuration change.
   by Blizzard's icon file ID / icon name) with the items and spells that
   share it; Blizzard API first, Wowhead tooltip only as a fallback. Used by
   the Emoji page, the editor emoji picker and raid summaries.
+- `roster.py`: the guild roster: in-game characters (from the guild's
+  Blizzard roster and character profiles), their levels, links to Discord
+  members (one main each), specs, and level-up events. Shared by
+  `cogs/roster.py` (sync + `/character`), `cogs/leveling.py` (profile
+  checks every few minutes, milestone congratulations via the
+  "level_milestone" bot message, `/leaderboard`) and
+  `webapi/roster_api.py` (Roster and Leveling pages). `permissions.py`:
+  the shared Discord moderator check for new cogs.
 - `wow_api.py`: Blizzard game data for the configured game version
   (WoW Forever by default): reference data for pickers, a player's
   characters from their Battle.net account, character lookups by name, and
@@ -195,6 +205,10 @@ set in the dashboard.
   channel (`cogs/notifications.py`), and maintenance tools
   (`webapi/maintenance_api.py`: backup, retention, compact, caches,
   command re-sync, sessions).
+- Guild roster and Leveling (done, for WoW Forever): roster synced from
+  Blizzard, `/character` linking, milestone congratulations, leaderboard,
+  Roster and Leveling pages. Achievements can reuse `roster_events` once
+  Blizzard reliably reports them.
 - Phase 4: Applications, Raid summaries, Raid logs, Attendance, Tier recap,
   Records, and the raid cache tools (`/raidsummary-refresh-cache`,
   `/raidsummary-refresh-report`). These all depend

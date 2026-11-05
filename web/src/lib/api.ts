@@ -203,6 +203,7 @@ export type AuditKind =
   | "emoji"
   | "maintenance"
   | "poll"
+  | "roster"
   | "audit"
   | "other";
 
@@ -485,4 +486,76 @@ export interface PollList {
   polls: Poll[];
   defaults: Omit<PollSettings, "members_can_add">;
   feature_enabled: boolean;
+}
+
+// --- guild roster & leveling (webapi/roster_api.py) -----------------------------
+
+export interface RosterMember {
+  id: string;
+  name: string;
+  avatar_url: string;
+}
+
+export interface RosterCharacter {
+  slug: string;
+  name: string;
+  surname: string | null;
+  display_name: string;
+  class_id: number | null;
+  race_id: number | null;
+  faction: string | null;
+  level: number | null;
+  ruleset_id: number | null;
+  guild_slug: string | null;
+  guild_rank: number | null;
+  discord_id: string | null;
+  member: RosterMember | null;
+  is_main: boolean;
+  main_spec_id: number | null;
+  off_spec_id: number | null;
+  /** Milliseconds since 1970, from Blizzard. */
+  last_login: number | null;
+  /** 1: Blizzard has a public profile, 0: not (below level 10), null: not checked yet. */
+  profile_found: number | null;
+  updated_at: string;
+}
+
+export interface WowClass {
+  id: number;
+  name: string;
+  specs: { id: number; name: string; role: string | null }[];
+}
+
+export interface RosterOverview {
+  guild_name: string | null;
+  self_service: boolean;
+  last_sync: { at: string; ok: boolean; members?: number | null; message: string | null } | null;
+  characters: RosterCharacter[];
+  classes: WowClass[];
+  rulesets: { id: number; name: string }[];
+}
+
+export interface LevelEvent {
+  id: number;
+  created_at: string;
+  old_level: number | null;
+  new_level: number | null;
+  milestone: number | null;
+  /** "announced", "alt", "too old", "no channel", "no milestone", or null while waiting. */
+  outcome: string | null;
+  announced_at: string | null;
+  slug: string | null;
+  display_name: string;
+  class_id: number | null;
+  member: RosterMember | null;
+}
+
+export interface LevelingOverview {
+  enabled: boolean;
+  channel: { id: string; name: string } | null;
+  milestones: number[];
+  announce_alts: boolean;
+  refresh_minutes: number;
+  leaderboard: RosterCharacter[];
+  events: LevelEvent[];
 }

@@ -12,6 +12,8 @@ Used by:
   - announcements.py: announcements, their version history and templates.
   - bot_messages.py: edited texts of the bot's standard messages.
   - emoji_library.py: the bot's WoW icon emoji and which items/spells use them.
+  - roster.py: in-game characters, their levels and Discord links, and
+    level-up events.
 
 One process-wide connection guarded by a lock: the bot is a single asyncio
 process and every query here is tiny, so a connection pool would be pure
@@ -26,7 +28,7 @@ from threading import RLock
 _LOCK = RLock()
 _CONN = None
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 _SCHEMA = [
     # Generic key -> JSON record store, one "store" per former JSON file
@@ -236,6 +238,58 @@ _SCHEMA = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_emoji_aliases_library ON emoji_aliases(library_id)",
+    # The guild roster (roster.py): in-game characters from Blizzard, per
+    # game version and region, optionally linked to a Discord member.
+    """
+    CREATE TABLE IF NOT EXISTS roster_characters (
+        game               TEXT NOT NULL,
+        region             TEXT NOT NULL,
+        character_id       INTEGER NOT NULL,
+        slug               TEXT NOT NULL,
+        name               TEXT NOT NULL,
+        surname            TEXT,
+        class_id           INTEGER,
+        race_id            INTEGER,
+        faction            TEXT,
+        level              INTEGER,
+        ruleset_id         INTEGER,
+        guild_slug         TEXT,
+        guild_rank         INTEGER,
+        discord_id         INTEGER,
+        is_main            INTEGER NOT NULL DEFAULT 0,
+        linked_by          TEXT,
+        linked_at          TEXT,
+        main_spec_id       INTEGER,
+        off_spec_id        INTEGER,
+        last_login         INTEGER,
+        profile_found      INTEGER,
+        profile_checked_at TEXT,
+        roster_seen_at     TEXT,
+        created_at         TEXT NOT NULL,
+        updated_at         TEXT NOT NULL,
+        PRIMARY KEY (game, region, character_id)
+    )
+    """,
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_roster_slug ON roster_characters(game, region, slug)",
+    "CREATE INDEX IF NOT EXISTS idx_roster_member ON roster_characters(discord_id)",
+    # Changes worth telling people about (roster.py): level-ups now;
+    # achievements can use the same table later (kind).
+    """
+    CREATE TABLE IF NOT EXISTS roster_events (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        game         TEXT NOT NULL,
+        region       TEXT NOT NULL,
+        character_id INTEGER NOT NULL,
+        kind         TEXT NOT NULL,
+        old_value    INTEGER,
+        new_value    INTEGER,
+        milestone    INTEGER,
+        created_at   TEXT NOT NULL,
+        announced_at TEXT,
+        outcome      TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_roster_events_pending ON roster_events(announced_at, milestone)",
     # Web dashboard login sessions. Only a SHA-256 of the cookie token is
     # stored, so a leaked database file can't be replayed as a login.
     """

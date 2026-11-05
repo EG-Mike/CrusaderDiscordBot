@@ -9,11 +9,15 @@ SERVER_REGION), the locale and the character lookup paths.
 
 What WoW Forever's API offered at launch (see docs/wow-forever-api.md):
   - static-forever: classes, specs, races, professions, items, ... (200)
-  - dynamic-forever: regions and realms (200); connected realms 404
+  - dynamic-forever: regions and rulesets (200). Forever has no realms:
+    players pick a ruleset (Normal, PvP, Roleplay, Roleplay PvP), and the
+    realm index that existed before launch is gone (404).
   - profile-forever: a player's own account profile with a user token
     (/profile/user/wow, scope wow.profile) lists their characters with
-    name, surname, class, race, faction and level. Public character and
-    guild lookups by name were still 404.
+    name, surname, class, race, faction and level, at every level.
+    Public character profiles (/profile/wow/character/{first}-{surname},
+    from level 10, updated at logout) and guilds (/data/wow/guild/{slug},
+    whose roster lists every member's level) answer with the app's token.
   A namespace that doesn't exist answers 403; an existing one with nothing
   at that path answers 404.
 """
@@ -21,6 +25,7 @@ What WoW Forever's API offered at launch (see docs/wow-forever-api.md):
 import asyncio
 import logging
 import re
+import string
 import time
 from typing import Dict, List, Optional
 
@@ -65,14 +70,14 @@ def _name(value) -> str:
     return value or ""
 
 
-# --- reference data (classes, specs, races, professions, realms) -----------------------------
+# --- reference data (classes, specs, races, professions, rulesets) ---------------------------
 
 _reference: Dict[str, object] = {"data": None, "at": 0.0, "key": None}
 
 
 async def reference(bot, *, fresh: bool = False) -> dict:
     """{classes: [{id, name, specs: [{id, name, role}]}] (role: tank/healer/dps or None), races, professions,
-    realms: [{id, slug, name}], errors: [...]} for the configured game,
+    rulesets: [{id, name}], errors: [...]} for the configured game,
     cached for a few hours. Parts that fail are listed in `errors` instead
     of failing the whole lookup."""
     key = (namespace("static"), namespace("dynamic"), config.BLIZZARD_LOCALE)
@@ -81,7 +86,7 @@ async def reference(bot, *, fresh: bool = False) -> dict:
         return _reference["data"]
     client = _client(bot)
     errors: List[str] = []
-    data = {"classes": [], "races": [], "professions": [], "realms": [], "errors": errors,
+    data = {"classes": [], "races": [], "professions": [], "rulesets": [], "errors": errors,
             "game": config.GAME_VERSION, "region": region()}
 
     async with aiohttp.ClientSession(trust_env=True, timeout=aiohttp.ClientTimeout(total=20)) as session:
@@ -113,10 +118,11 @@ async def reference(bot, *, fresh: bool = False) -> dict:
             ({"id": p["id"], "name": _name(p.get("name"))} for p in (professions or {}).get("professions", [])
              if "[DNT]" not in _name(p.get("name"))),  # Blizzard's internal test entries
             key=lambda p: p["name"])
-        realms = await get("/data/wow/realm/index", "dynamic")
-        data["realms"] = sorted(
-            ({"id": r["id"], "slug": r.get("slug"), "name": _name(r.get("name"))} for r in (realms or {}).get("realms", [])),
-            key=lambda r: r["name"])
+        rulesets = await get("/data/wow/ruleset/index", "dynamic")
+        ruleset_ids = [r["id"] for r in (rulesets or {}).get("rulesets", []) if "id" in r]
+        details = await asyncio.gather(*(get(f"/data/wow/ruleset/{i}", "dynamic") for i in ruleset_ids))
+        data["rulesets"] = sorted(({"id": i, "name": _name((d or {}).get("name")) or f"Ruleset {i}"}
+                                   for i, d in zip(ruleset_ids, details)), key=lambda r: r["id"])
 
     if errors:
         log.warning("Some Blizzard reference data is unavailable: %s", "; ".join(errors))
@@ -124,16 +130,14 @@ async def reference(bot, *, fresh: bool = False) -> dict:
     return data
 
 
-def realm_by_id(ref: dict, realm_id) -> Optional[dict]:
-    return next((r for r in ref.get("realms", []) if r["id"] == realm_id), None)
-
-
 # --- a player's own account (Battle.net login) --------------------------------------------------
 
 def parse_account_profile(data: dict) -> List[dict]:
     """Characters from /profile/user/wow. WoW Forever characters have a
-    first name and a surname and no realm object; the realm ID is only in
-    the protected-character link ("protected-character/6855-716333")."""
+    first name and a surname and no realm object; the protected-character
+    link still carries an internal realm ID ("protected-character/
+    6855-716333"), kept as realm_id though Forever shows players rulesets,
+    not realms."""
     characters = []
     for account in (data or {}).get("wow_accounts", []):
         for c in account.get("characters", []):
@@ -179,21 +183,90 @@ def _slug(text: str) -> str:
     return re.sub(r"[^a-z0-9-]+", "-", (text or "").lower()).strip("-")
 
 
-async def lookup_character(bot, name: str, surname: Optional[str] = None, realm_slug: Optional[str] = None,
+LOOKUP_FIELDS = {"name", "surname"}
+
+
+async def lookup_character(bot, name: str, surname: Optional[str] = None,
                            session: Optional[aiohttp.ClientSession] = None) -> Optional[dict]:
-    """A character's public profile, trying CHARACTER_LOOKUP_PATHS in order.
-    None when no path answered 200 (expected for WoW Forever until Blizzard
-    opens public lookups)."""
+    """A character's public profile, trying CHARACTER_LOOKUP_PATHS in order
+    ({name} and {surname} are filled in; Forever names are unique per
+    region, so there's no realm). None when no path answered 200, e.g. a
+    character below level 10, which has no public profile."""
     client = _client(bot)
     for template in config.CHARACTER_LOOKUP_PATHS or []:
-        if ("{surname}" in template and not surname) or ("{realm}" in template and not realm_slug):
+        fields = {f for _, f, _, _ in string.Formatter().parse(template) if f}
+        if fields - LOOKUP_FIELDS:
+            log.warning("Character lookup path %r uses unknown placeholders %s - skipped", template,
+                        ", ".join(sorted(fields - LOOKUP_FIELDS)))
             continue
-        path = template.format(name=_slug(name), surname=_slug(surname or ""), realm=_slug(realm_slug or ""))
+        if "surname" in fields and not surname:
+            continue
+        path = template.format(name=_slug(name), surname=_slug(surname or ""))
         status, _headers, body = await client.request(path, namespace("profile"), session=session,
                                                       locale=config.BLIZZARD_LOCALE)
         if status == 200 and body:
             return body
     return None
+
+
+def slug(text: str) -> str:
+    """Blizzard's URL form of a name: "Eggmike Thewhite" -> "eggmike-thewhite"."""
+    return _slug(text)
+
+
+def _id(value) -> Optional[int]:
+    return (value or {}).get("id") if isinstance(value, dict) else None
+
+
+def parse_character(c: dict, *, rank: Optional[int] = None) -> dict:
+    """A character from a guild roster entry or a character profile, as
+    the roster stores it. Missing fields are None (a roster entry has no
+    guild; a profile has no rank)."""
+    guild = c.get("guild") or {}
+    return {
+        "character_id": c.get("id"),
+        "slug": c.get("slug") or _slug(f"{c.get('name', '')}-{c.get('surname') or ''}"),
+        "name": c.get("name"),
+        "surname": c.get("surname") or None,
+        "class_id": _id(c.get("playable_class") or c.get("character_class")),
+        "race_id": _id(c.get("playable_race") or c.get("race")),
+        "faction": ((c.get("faction") or {}).get("type") or "").title() or None,
+        "level": c.get("level") if isinstance(c.get("level"), int) else None,
+        "ruleset_id": _id(c.get("ruleset")),
+        "guild_slug": guild.get("slug") or (_slug(guild["name"]) if guild.get("name") else None),
+        "guild_rank": rank,
+        "last_login": c.get("last_login_timestamp"),
+    }
+
+
+async def guild_roster(bot, guild_name: str, session: Optional[aiohttp.ClientSession] = None) -> Optional[List[dict]]:
+    """Every member of a guild (parse_character, with their rank), at every
+    level. None when Blizzard doesn't know the guild. The roster is a
+    snapshot Blizzard refreshes every few hours."""
+    status, _headers, body = await _client(bot).request(f"/data/wow/guild/{_slug(guild_name)}/roster",
+                                                        namespace("profile"), session=session,
+                                                        locale=config.BLIZZARD_LOCALE)
+    if status == 404:
+        return None
+    if status != 200:
+        raise WowApiError(f"Blizzard answered {status} for the guild roster.")
+    return [{**parse_character(m.get("character") or {}, rank=m.get("rank")),
+             "guild_slug": _slug(guild_name)} for m in (body or {}).get("members", [])]
+
+
+async def character_profile(bot, character_slug: str,
+                            session: Optional[aiohttp.ClientSession] = None) -> Optional[dict]:
+    """One character's profile (parse_character) by its slug, or None when
+    there's none: below level 10, never logged out, or unknown. Updated by
+    Blizzard when the player logs out."""
+    status, _headers, body = await _client(bot).request(f"/profile/wow/character/{character_slug}",
+                                                        namespace("profile"), session=session,
+                                                        locale=config.BLIZZARD_LOCALE)
+    if status == 404:
+        return None
+    if status != 200:
+        raise WowApiError(f"Blizzard answered {status} for character {character_slug}.")
+    return parse_character(body or {})
 
 
 def profile_level(profile: dict) -> Optional[int]:
