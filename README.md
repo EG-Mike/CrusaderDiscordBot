@@ -324,7 +324,7 @@ extension list, just flip the flag and restart:
 | `FEATURE_RAID_LOGS_ENABLED` | `cogs/raid_logs.py` | the #logs tagging/auto-Summarize automation (section 11 below) |
 | `FEATURE_TIER_RETROSPECTIVE_ENABLED` | `cogs/tier_retrospective.py` | `/tier-recap` |
 | `FEATURE_POLLS_ENABLED` | `cogs/polls.py` | `/poll create` and every poll's buttons |
-| `FEATURE_ROSTER_ENABLED` | `cogs/roster.py` | the guild roster: syncing with Blizzard and `/character` |
+| `FEATURE_ROSTER_ENABLED` | `cogs/roster.py` | the guild roster: syncing with Blizzard, `/character`, and the roster kept posted in a channel |
 | `FEATURE_LEVELING_ENABLED` | `cogs/leveling.py` | level-up checks, milestone congratulations and `/leaderboard` (needs the roster) |
 | `FEATURE_AUDIT_LOG_ENABLED` | `cogs/audit_log.py` | recording Discord actions in the audit log |
 | `FEATURE_WEB_DASHBOARD_ENABLED` | `cogs/web_dashboard.py` | the web dashboard (**off** by default, see "Web dashboard" below) |

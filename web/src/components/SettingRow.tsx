@@ -179,7 +179,20 @@ function RoleSetEditor({ value, roles, onChange, disabled }: { value: Record<str
 }
 
 /** An ordered pick from fixed options (e.g. which Blizzard data to search, in order). */
-function ChoiceListEditor({ value, options, onChange, disabled }: { value: Json[]; options: { value: string | number; label: string }[]; onChange: (v: Json[]) => void; disabled?: boolean }) {
+function ChoiceListEditor({
+  value,
+  options,
+  onChange,
+  disabled,
+  allowEmpty,
+}: {
+  value: Json[];
+  options: { value: string | number; label: string }[];
+  onChange: (v: Json[]) => void;
+  disabled?: boolean;
+  /** The list may be empty (its default is), e.g. "any ruleset". */
+  allowEmpty?: boolean;
+}) {
   const label = (v: Json) => options.find((o) => o.value === v)?.label ?? String(v);
   const remaining = options.filter((o) => !value.includes(o.value));
   const moveUp = (i: number) => onChange([...value.slice(0, i - 1), value[i], value[i - 1], ...value.slice(i + 1)]);
@@ -195,13 +208,14 @@ function ChoiceListEditor({ value, options, onChange, disabled }: { value: Json[
                 <ArrowUp className="h-3 w-3" />
               </button>
             )}
-            {value.length > 1 && (
+            {(value.length > 1 || allowEmpty) && (
               <button type="button" onClick={() => onChange(value.filter((x) => x !== v))} disabled={disabled} className="rounded p-0.5 text-faint hover:text-crimson" aria-label={`Remove ${label(v)}`}>
                 <X className="h-3 w-3" />
               </button>
             )}
           </li>
         ))}
+        {value.length === 0 && <li className="text-xs text-faint">None (any)</li>}
       </ol>
       {remaining.length > 0 && (
         <select
@@ -228,7 +242,8 @@ function ChoiceListEditor({ value, options, onChange, disabled }: { value: Json[
 function describeDefault(setting: Setting): string {
   const d = setting.default;
   if ((setting.kind === "role" || setting.kind === "channel") && String(d) === "0") return "not set";
-  if (setting.widget === "choice_list") return (d as Json[]).map((v) => setting.options?.find((o) => o.value === v)?.label ?? String(v)).join(", then ");
+  if (setting.widget === "choice_list")
+    return (d as Json[]).map((v) => setting.options?.find((o) => o.value === v)?.label ?? String(v)).join(", then ") || "none (any)";
   if (setting.options) return setting.options.find((o) => o.value === d)?.label ?? formatValue(d);
   if (setting.widget === "text_list" || setting.widget === "number_list") return (d as Json[]).length ? (d as Json[]).join(", ") : "none";
   if (setting.widget === "role_map" || setting.widget === "role_set") return `${Object.keys(d as object).length} roles`;
@@ -397,7 +412,15 @@ export function SettingRow({
         break;
       }
       if (setting.widget === "choice_list") {
-        control = <ChoiceListEditor value={setting.value as Json[]} options={setting.options ?? []} disabled={saving} onChange={(v) => save(v)} />;
+        control = (
+          <ChoiceListEditor
+            value={setting.value as Json[]}
+            options={setting.options ?? []}
+            disabled={saving}
+            allowEmpty={(setting.default as Json[]).length === 0}
+            onChange={(v) => save(v)}
+          />
+        );
         break;
       }
       if (setting.widget === "role_map") {

@@ -92,6 +92,13 @@ def characters(*, discord_id: Optional[int] = None) -> List[dict]:
     return [dict(r) for r in db.query(sql, params)]
 
 
+def posted_characters() -> List[dict]:
+    """What the roster posted in Discord lists: the guild's members (every
+    linked character when no guild is set), highest level first."""
+    guild = wow_api.slug(config.GUILD_ROSTER_GUILD or "")
+    return [c for c in characters() if (c["guild_slug"] == guild if guild else c["discord_id"])]
+
+
 def leaderboard(limit: int = 10, *, mains_only: bool = False) -> List[dict]:
     """Highest levels first; with mains_only, alts (a member's non-main
     characters) are left out."""

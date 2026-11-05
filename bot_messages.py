@@ -305,6 +305,21 @@ DEFINITIONS: List[Definition] = [
     ),
 ]
 DEFINITIONS.append(Definition(
+    key="guild_roster_header",
+    label="Guild roster header",
+    group="Guild roster",
+    description="The heading of the guild roster the bot keeps posted (Settings, Guild roster: Roster channel).",
+    kind="text",
+    where="At the top of the posted guild roster",
+    default_body="## {guild}\n-# {count} characters · levels update when a player logs out · updated {updated}",
+    variables=[
+        Variable("guild", "The guild's name in the game", "Encore"),
+        Variable("count", "How many characters are listed", "34"),
+        Variable("updated", "When the roster last changed (shown as e.g. \"5 minutes ago\")", "5 minutes ago"),
+    ],
+    feature="FEATURE_ROSTER_ENABLED",
+))
+DEFINITIONS.append(Definition(
     key="level_milestone",
     label="Level milestone",
     group="Leveling",

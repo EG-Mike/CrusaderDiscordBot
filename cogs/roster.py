@@ -12,19 +12,29 @@ live in roster.py, shared with the dashboard's Roster page.
 The guild roster (Settings: guild name) is read every
 GUILD_ROSTER_REFRESH_MINUTES. Character profiles, which carry fresher
 levels, are checked by cogs/leveling.py.
+
+With a roster channel set (GUILD_ROSTER_CHANNEL_ID), the bot keeps the
+roster posted there: a header (the "Guild roster header" bot message) and
+one line per character (level, class icon, name, linked member), highest
+level first. Every few minutes it checks whether anything changed and only
+then edits the message(s); a long roster spans several messages.
 """
 
 import asyncio
+import hashlib
 import json
 import logging
+import time
 from typing import List, Optional
 
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
+import bot_messages
 import config
 import db
+import icons
 import roster
 import wow_api
 from permissions import is_moderator
@@ -32,6 +42,9 @@ from permissions import is_moderator
 log = logging.getLogger("wow-apply-bot.roster")
 
 STATUS_META = "roster_last_sync"
+POST_META = "roster_post"         # {"channel_id", "message_ids", "hash", "updated"}
+POST_TEXT_LIMIT = 3800            # per message: Discord allows 4000 characters of text
+POST_CHECK_MINUTES = 2
 NO_PINGS = discord.AllowedMentions.none()
 
 
@@ -64,9 +77,107 @@ class RosterCog(commands.Cog):
     async def cog_load(self):
         self.sync_loop.change_interval(minutes=max(15, int(config.GUILD_ROSTER_REFRESH_MINUTES or 60)))
         self.sync_loop.start()
+        self.post_loop.start()
 
     async def cog_unload(self):
         self.sync_loop.cancel()
+        self.post_loop.cancel()
+
+    # --- the roster posted in Discord ------------------------------------------------------------
+
+    def _post_lines(self, rows: List[dict], ref: dict, guild) -> List[str]:
+        lines = []
+        for c in rows:
+            name = class_name(ref, c["class_id"])
+            icon = icons.resolve_class_icon(guild, name) if name else ""
+            member = guild.get_member(c["discord_id"]) if guild and c["discord_id"] else None
+            line = f"`{c['level'] if c['level'] is not None else '?':>2}` {icon} **{roster.display_name(c)}**"
+            lines.append(line.replace("  ", " ") + (f" · {member.mention}" if member else ""))
+        return lines or ["-# Nobody on the roster yet."]
+
+    @staticmethod
+    def _chunks(header: str, lines: List[str]) -> List[str]:
+        """The posted text split over messages, each within Discord's limit."""
+        chunks, current = [], header
+        for line in lines:
+            if len(current) + len(line) + 1 > POST_TEXT_LIMIT:
+                chunks.append(current)
+                current = line
+            else:
+                current = f"{current}\n{line}" if current else line
+        chunks.append(current)
+        return chunks
+
+    async def publish_roster(self, *, force: bool = False) -> Optional[str]:
+        """Posts or updates the roster in the roster channel when its content
+        changed (or force). Returns what happened, for the dashboard."""
+        channel_id = int(config.GUILD_ROSTER_CHANNEL_ID or 0)
+        if not channel_id:
+            return None
+        channel = self.bot.get_channel(channel_id)
+        if channel is None:
+            return "The bot can't see the roster channel."
+        state = json.loads(await asyncio.to_thread(db.get_meta, POST_META) or "{}")
+        rows = await asyncio.to_thread(roster.posted_characters)
+        lines = self._post_lines(rows, await reference(self.bot), channel.guild)
+        template = bot_messages.current("guild_roster_header")["body"]
+        digest = hashlib.sha256("\n".join([template, config.GUILD_ROSTER_GUILD or "", *lines]).encode()).hexdigest()
+        if not force and state.get("hash") == digest and state.get("channel_id") == channel_id:
+            return None
+        updated = int(time.time())
+        header = bot_messages.text("guild_roster_header", guild=config.GUILD_ROSTER_GUILD or channel.guild.name,
+                                   count=len(rows), updated=f"<t:{updated}:R>")
+        views = []
+        for text in self._chunks(header, lines):
+            view = discord.ui.LayoutView(timeout=None)
+            view.add_item(discord.ui.Container(discord.ui.TextDisplay(text), accent_color=discord.Color(0xDEAC52)))
+            views.append(view)
+
+        old_ids = state.get("message_ids", [])
+        if state.get("channel_id") != channel_id:
+            await self._delete_posted(state.get("channel_id"), old_ids)
+            old_ids = []
+        try:
+            posted = await self._edit_or_send(channel, views, old_ids)
+        except discord.NotFound:  # someone deleted one of them: post the roster again, in order
+            await self._delete_posted(channel_id, old_ids)
+            posted = await self._edit_or_send(channel, views, [])
+        except discord.HTTPException as exc:
+            log.warning("Couldn't post the guild roster in #%s: %s", channel.name, exc.text or exc.status)
+            return "Discord refused the roster message; check the bot's permissions in the roster channel."
+        await asyncio.to_thread(db.set_meta, POST_META, json.dumps(
+            {"channel_id": channel_id, "message_ids": posted, "hash": digest, "updated": updated}))
+        return f"Posted the roster in #{channel.name}."
+
+    async def _edit_or_send(self, channel, views, old_ids) -> List[int]:
+        posted = []
+        for i, view in enumerate(views):
+            if i < len(old_ids):
+                await channel.get_partial_message(old_ids[i]).edit(view=view, allowed_mentions=NO_PINGS)
+                posted.append(old_ids[i])
+            else:
+                posted.append((await channel.send(view=view, allowed_mentions=NO_PINGS)).id)
+        await self._delete_posted(channel.id, old_ids[len(views):])
+        return posted
+
+    async def _delete_posted(self, channel_id, message_ids):
+        channel = self.bot.get_channel(int(channel_id)) if channel_id else None
+        for message_id in message_ids if channel else []:
+            try:
+                await channel.get_partial_message(message_id).delete()
+            except discord.HTTPException:
+                pass
+
+    @tasks.loop(minutes=POST_CHECK_MINUTES)
+    async def post_loop(self):
+        try:
+            await self.publish_roster()
+        except Exception:
+            log.exception("Updating the posted guild roster failed")
+
+    @post_loop.before_loop
+    async def _before_post(self):
+        await self.bot.wait_until_ready()
 
     # --- syncing ---------------------------------------------------------------------------------
 

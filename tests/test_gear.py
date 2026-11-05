@@ -7,6 +7,7 @@ import config
 import gear
 
 PROFILE = {"name": "Eggmike", "surname": "Thewhite", "level": 60, "character_class": {"id": 5, "name": "Priest"},
+           "ruleset": {"id": 2, "name": "Normal"},
            "race": {"name": "Undead"}, "faction": {"name": "Horde"}, "guild": {"name": "Encore", "slug": "encore"},
            "average_item_level": 62, "equipped_item_level": 60, "last_login_timestamp": 1793870276000}
 
@@ -78,6 +79,32 @@ class GearTests(unittest.TestCase):
         self.assertNotIn("Requirements", text["overview"])
         self.assertIn("**Talents:** none spent", text["overview"])
         self.assertEqual(text["gear"], "No gear equipped.")
+
+
+class ProfessionAndRulesetTests(unittest.TestCase):
+    PROFESSIONS = {"primaries": [{"profession": {"name": "Tailoring"},
+                                  "tiers": [{"skill_points": 63, "max_skill_points": 150}]}],
+                   "secondaries": [{"profession": {"name": "Cooking"},
+                                    "tiers": [{"skill_points": 16, "max_skill_points": 75}]}]}
+
+    def test_professions(self):
+        s = gear.summarise(PROFILE, {"equipped_items": []}, None, professions=self.PROFESSIONS)
+        self.assertEqual(s["professions"], [{"name": "Tailoring", "skill": 63, "max": 150, "primary": True},
+                                            {"name": "Cooking", "skill": 16, "max": 75, "primary": False}])
+        text = gear.render_lines(s)
+        self.assertIn("**Professions:** Tailoring 63/150", text["overview"])  # primaries only
+        self.assertNotIn("Cooking", text["overview"])
+
+    def test_ruleset_flag(self):
+        s = gear.summarise(PROFILE, {"equipped_items": []}, None)
+        self.assertEqual((s["ruleset_id"], s["ruleset"]), (2, "Normal"))
+        with mock.patch.object(config, "CHARACTER_RULESETS", []):
+            self.assertFalse(gear.off_ruleset(s))  # no rulesets set: any is fine
+        with mock.patch.object(config, "CHARACTER_RULESETS", [1]):
+            self.assertTrue(gear.off_ruleset(s))
+            self.assertIn("On the Normal ruleset, not one of the guild's", gear.render_lines(s)["flags"])
+        with mock.patch.object(config, "CHARACTER_RULESETS", [1, 2]):
+            self.assertFalse(gear.off_ruleset(s))
 
 
 if __name__ == "__main__":

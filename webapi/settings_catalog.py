@@ -109,6 +109,10 @@ CATALOG: Dict[str, Entry] = {
         "guild", "Region", "The region your guild plays in. Used for Blizzard and WarcraftLogs lookups.",
         choices=[("eu", "Europe"), ("us", "Americas & Oceania"), ("kr", "Korea"), ("tw", "Taiwan"),
                  ("cn", "China")]),
+    "CHARACTER_RULESETS": Entry(
+        "guild", "Your ruleset",
+        "Character lookups and applications flag characters on another ruleset. None picked: any ruleset.",
+        widget="choice_list", choices=[(1, "PvP"), (2, "Normal"), (3, "Roleplay"), (15, "Roleplay PvP")]),
     "MOD_ROLE_ID": Entry(
         "discord", "Moderator role",
         "Members with this role can use moderator commands and this dashboard. Members with the Manage Roles "
@@ -296,6 +300,10 @@ CATALOG: Dict[str, Entry] = {
     "GUILD_ROSTER_GUILD": Entry("roster", "Guild name in the game",
                                 "Exactly as in the game, e.g. Encore. Every member and their level is read from "
                                 "Blizzard. Empty: only characters members link themselves are tracked."),
+    "GUILD_ROSTER_CHANNEL_ID": Entry("roster", "Roster channel",
+                                     "The bot keeps the guild roster posted here (class, level, character and "
+                                     "member) and updates it when it changes. Best a channel only the bot can "
+                                     "post in. Empty: not posted."),
     "GUILD_ROSTER_SELF_SERVICE": Entry("roster", "Members link their own characters",
                                        "With /character link. Off: only moderators link characters."),
     "GUILD_ROSTER_REFRESH_MINUTES": Entry("roster", "Read the guild roster every",

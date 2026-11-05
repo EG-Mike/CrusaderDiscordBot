@@ -31,6 +31,12 @@ def _env_int(name: str) -> int:
 
 
 # --- Guild identity (webapi/branding.py) ---
+# The rulesets (Blizzard ids: 1 PvP, 2 Normal, 3 Roleplay, 15 Roleplay PvP)
+# the guild plays on. Character lookups and applications flag characters on
+# another ruleset. Empty: any ruleset.
+CHARACTER_RULESETS = []
+
+
 # The guild's name as the dashboard shows it (header, login page). Empty:
 # the Discord server's name. The logo is uploaded in the dashboard and kept
 # next to the database, not here.
@@ -243,6 +249,11 @@ GUILD_ROSTER_REFRESH_MINUTES = 60
 # Members may link their own characters with /character. Off: only
 # moderators link characters (in Discord or on the dashboard).
 GUILD_ROSTER_SELF_SERVICE = True
+
+# Channel where the bot keeps the guild roster posted (class icon, level,
+# character, Discord member), edited whenever it changes. Best a channel
+# only the bot can post in. Empty: not posted.
+GUILD_ROSTER_CHANNEL_ID = 0
 
 # --- Leveling (cogs/leveling.py) ---
 # Channel where level milestones are announced. Empty: no announcements

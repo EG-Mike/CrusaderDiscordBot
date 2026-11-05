@@ -11,6 +11,8 @@ What's flagged:
   - missing enchants (GEARCHECK_ENCHANT_SLOTS),
   - empty gem sockets,
   - requirements: GEARCHECK_MIN_LEVEL and GEARCHECK_MIN_ITEM_LEVEL (0 = none).
+  - a ruleset that isn't one of the guild's (CHARACTER_RULESETS; empty =
+    any), since Forever has rulesets instead of realms.
 Slot lists are settings, since which slots take enchants depends on the
 game version.
 
@@ -21,7 +23,7 @@ item icons from the emoji library when available.
 
 import asyncio
 import logging
-from typing import Awaitable, Callable, Dict, List, Optional
+from typing import Dict, List, Optional
 
 import aiohttp
 
@@ -81,9 +83,29 @@ def parse_talents(data: dict) -> List[dict]:
     return sorted(specs, key=lambda s: -s["points"])
 
 
+def parse_professions(data: Optional[dict]) -> List[dict]:
+    """[{name, skill, max, primary}] from the professions document."""
+    found = []
+    for kind in ("primaries", "secondaries"):
+        for p in (data or {}).get(kind) or []:
+            tiers = p.get("tiers") or []
+            tier = max(tiers, key=lambda t: t.get("max_skill_points") or 0) if tiers else {}
+            found.append({"name": _name((p.get("profession") or {}).get("name")) or "?",
+                          "skill": tier.get("skill_points", p.get("skill_points")),
+                          "max": tier.get("max_skill_points", p.get("max_skill_points")),
+                          "primary": kind == "primaries"})
+    return found
+
+
+def off_ruleset(summary: dict) -> bool:
+    """True when the character plays on a ruleset that isn't one of the guild's."""
+    allowed = [int(r) for r in config.CHARACTER_RULESETS or []]
+    return bool(allowed) and summary.get("ruleset_id") is not None and summary["ruleset_id"] not in allowed
+
+
 def summarise(profile: dict, equipment: dict, specializations: Optional[dict], *,
-              class_name: str = "") -> dict:
-    """Plain-data gear summary from the three Blizzard documents."""
+              class_name: str = "", professions: Optional[dict] = None) -> dict:
+    """Plain-data gear summary from Blizzard's character documents."""
     items = sorted((parse_item(it) for it in (equipment or {}).get("equipped_items") or []),
                    key=lambda i: SLOT_ORDER.index(i["slot"]) if i["slot"] in SLOT_ORDER else len(SLOT_ORDER))
     worn = {i["slot"] for i in items}
@@ -100,6 +122,9 @@ def summarise(profile: dict, equipment: dict, specializations: Optional[dict], *
         "race": _name((profile.get("race") or {}).get("name")) or None,
         "faction": _name((profile.get("faction") or {}).get("name")) or None,
         "guild": _name(guild.get("name")) or None,
+        "ruleset_id": (profile.get("ruleset") or {}).get("id"),
+        "ruleset": _name((profile.get("ruleset") or {}).get("name")) or None,
+        "professions": parse_professions(professions),
         "average_item_level": profile.get("average_item_level"),
         "equipped_item_level": profile.get("equipped_item_level"),
         "last_login": profile.get("last_login_timestamp"),
@@ -134,17 +159,17 @@ async def fetch(bot, character_slug: str, class_names: Optional[Dict[int, str]] 
         try:
             answers = await asyncio.gather(*(
                 client.request(base + sub, namespace, session=session, locale=config.BLIZZARD_LOCALE)
-                for sub in ("", "/equipment", "/specializations")))
+                for sub in ("", "/equipment", "/specializations", "/professions")))
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             raise GearError(f"Couldn't reach Blizzard ({type(exc).__name__}). Try again in a minute.") from None
-    (p_status, p_headers, profile), (e_status, _, equipment), (_s_status, _, specializations) = answers
+    (p_status, p_headers, profile), (e_status, _, equipment), (_s, _, specializations), (_p, _, professions) = answers
     if p_status == 404:
         raise GearError("Blizzard has no profile for this character. Characters can be looked up from level "
                         "10, after logging out once.")
     if p_status != 200 or e_status != 200:
         raise GearError(f"Blizzard answered {p_status if p_status != 200 else e_status}. Try again in a minute.")
     class_id = (profile.get("character_class") or {}).get("id")
-    summary = summarise(profile, equipment, specializations,
+    summary = summarise(profile, equipment, specializations, professions=professions,
                         class_name=(class_names or {}).get(class_id, ""))
     summary["profile_updated"] = p_headers.get("Last-Modified") or p_headers.get("last-modified")
     return summary
@@ -152,7 +177,38 @@ async def fetch(bot, character_slug: str, class_names: Optional[Dict[int, str]] 
 
 # --- rendering ---------------------------------------------------------------------------------------
 
-IconFor = Callable[[dict], Awaitable[str]]
+_ICON_URLS: Dict[int, Optional[str]] = {}  # item id -> icon image (per process; icons don't change)
+
+
+async def item_icon_urls(bot, summary: dict) -> Dict[int, Optional[str]]:
+    """{item id: icon image URL} from Blizzard's item media, for the
+    dashboard. Cached for the life of the process. Never raises."""
+    client = wow_api._client(bot)
+    missing = [i["item_id"] for i in summary.get("items", [])
+               if i.get("item_id") and i["item_id"] not in _ICON_URLS]
+
+    async def one(item_id, session):
+        try:
+            status, _headers, body = await client.request(f"/data/wow/media/item/{item_id}",
+                                                          wow_api.namespace("static"), session=session)
+        except (aiohttp.ClientError, asyncio.TimeoutError):
+            return  # not cached: tried again next time
+        assets = (body or {}).get("assets") or [] if status == 200 else []
+        url = next((a.get("value") for a in assets if a.get("key") == "icon"), None)
+        for candidate in wow_api.icon_urls(url):  # the first address Blizzard's image server serves
+            try:
+                async with session.head(candidate) as resp:
+                    if resp.status == 200:
+                        _ICON_URLS[item_id] = candidate
+                        return
+            except (aiohttp.ClientError, asyncio.TimeoutError):
+                return  # not cached: tried again next time
+        _ICON_URLS[item_id] = None
+
+    if missing:
+        async with aiohttp.ClientSession(trust_env=True, timeout=aiohttp.ClientTimeout(total=15)) as session:
+            await asyncio.gather(*(one(i, session) for i in missing))
+    return {i["item_id"]: _ICON_URLS.get(i["item_id"]) for i in summary.get("items", []) if i.get("item_id")}
 
 
 async def item_icons(bot, summary: dict) -> Dict[int, str]:
@@ -184,6 +240,9 @@ def render_lines(summary: dict, icons: Optional[Dict[int, str]] = None) -> Dict[
                "equipped_item_level") else ""),
         f"**Talents:** {talents}",
     ]
+    trades = [f"{p['name']} {p['skill']}/{p['max']}" for p in summary.get("professions") or [] if p["primary"]]
+    if trades:
+        overview.append("**Professions:** " + " · ".join(trades))
     problems = requirement_problems(summary)
     if config.GEARCHECK_MIN_LEVEL or config.GEARCHECK_MIN_ITEM_LEVEL:
         overview.append("**Requirements:** " + ("✅ met" if not problems else "⚠️ below on " + ", ".join(problems)))
@@ -202,6 +261,8 @@ def render_lines(summary: dict, icons: Optional[Dict[int, str]] = None) -> Dict[
         gear.append(line)
 
     flags = []
+    if off_ruleset(summary):
+        flags.append(f"On the {summary.get('ruleset') or 'another'} ruleset, not one of the guild's")
     if summary.get("empty_slots"):
         flags.append("Empty: " + ", ".join(summary["empty_slots"]))
     if summary.get("missing_enchants"):

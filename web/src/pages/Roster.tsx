@@ -3,7 +3,7 @@
 // specs. Moderators link characters to members here, as in Discord.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Link2, RefreshCw, Search, Star, UserPlus, Users } from "lucide-react";
+import { Hash, Link2, RefreshCw, Search, Send, Star, UserPlus, Users } from "lucide-react";
 import { ApiError, api, type RosterCharacter, type RosterMember, type RosterOverview, type WowClass } from "../lib/api";
 import { useLive } from "../lib/live";
 import { timeAgo } from "../lib/time";
@@ -98,6 +98,12 @@ function CharacterDialog({
         <dd>{c.guild_rank === null ? (c.guild_slug ? "?" : "Not in the guild") : c.guild_rank === 0 ? "Guild master" : `Rank ${c.guild_rank}`}</dd>
         <dt className="text-faint">Last login</dt>
         <dd>{c.last_login ? timeAgo(new Date(c.last_login).toISOString()) : "Unknown"}</dd>
+        <dt className="text-faint">Gear</dt>
+        <dd>
+          <Link to={`/lookup?name=${encodeURIComponent(c.slug)}`} className="text-gold hover:underline">
+            Look up gear and talents
+          </Link>
+        </dd>
       </dl>
 
       <div className="label mb-1.5">Member</div>
@@ -175,6 +181,7 @@ export default function RosterPage() {
   const [view, setView] = useState<View>("all");
   const [open, setOpen] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [posting, setPosting] = useState(false);
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState("");
 
@@ -205,6 +212,19 @@ export default function RosterPage() {
       toast("error", e instanceof ApiError ? e.message : "The sync didn't work");
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const postNow = async () => {
+    setPosting(true);
+    try {
+      const r = await api.post<{ result: string }>("/api/roster/post");
+      toast("ok", r.result);
+      load();
+    } catch (e) {
+      toast("error", e instanceof ApiError ? e.message : "Couldn't post the roster");
+    } finally {
+      setPosting(false);
     }
   };
 
@@ -281,6 +301,32 @@ export default function RosterPage() {
           [0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-[76px]" />)
         )}
       </div>
+
+      {data && (
+        <div className="mb-5 flex flex-wrap items-center gap-2 rounded-xl border border-line bg-surface px-4 py-2.5 text-muted">
+          <Hash className="h-4 w-4 text-faint" />
+          {data.post ? (
+            <>
+              <span className="flex-1">
+                Posted in Discord in <span className="text-fg">#{data.post.channel_name}</span>
+                {data.post.updated ? `, last changed ${timeAgo(new Date(data.post.updated * 1000).toISOString())}` : ", not posted yet"}. It updates by itself
+                when levels or links change.
+              </span>
+              <Button size="sm" icon={<Send className="h-3.5 w-3.5" />} loading={posting} onClick={postNow}>
+                Post in Discord
+              </Button>
+            </>
+          ) : (
+            <span className="flex-1">
+              Not posted in Discord.{" "}
+              <Link to="/settings?group=roster#GUILD_ROSTER_CHANNEL_ID" className="text-gold hover:underline">
+                Pick a roster channel
+              </Link>{" "}
+              to keep it posted there for everyone.
+            </span>
+          )}
+        </div>
+      )}
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <div className="relative min-w-[200px] flex-1">

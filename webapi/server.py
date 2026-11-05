@@ -38,7 +38,7 @@ import secret_store
 import system_log
 from webapi import (
     announcements_api, auth, bot_messages_api, branding_api, common, emoji_api, game_api, integrations,
-    maintenance_api, notifications_api, polls_api, roster_api,
+    lookup_api, maintenance_api, notifications_api, polls_api, roster_api,
 )
 from webapi import settings as settings_api
 
@@ -781,6 +781,7 @@ def create_app(bot) -> web.Application:
     game_api.register(app)
     branding_api.register(app)
     roster_api.register(app)
+    lookup_api.register(app)
     app.router.add_get("/api/ws", websocket)
     app.router.add_route("*", "/api/{tail:.*}", api_not_found)
 

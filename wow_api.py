@@ -269,6 +269,23 @@ async def character_profile(bot, character_slug: str,
     return parse_character(body or {})
 
 
+_RENDER_PATH = re.compile(r"^(https://render\.worldofwarcraft\.com/)([a-z0-9]+-)?([a-z]{2})(/icons/.*)$")
+
+
+def icon_urls(url: Optional[str]) -> List[str]:
+    """An icon's image address plus fallbacks: Blizzard's image server lacks
+    some icons under a game version's path (e.g. forever-eu) that it has
+    under the modern game's (eu), and an icon (its file id) is the same
+    image in every game version."""
+    if not url:
+        return []
+    match = _RENDER_PATH.match(url)
+    if not match or not match[2]:
+        return [url]
+    base, _version, icon_region, rest = match.groups()
+    return [url, f"{base}{icon_region}{rest}", f"{base}us{rest}"]
+
+
 def profile_level(profile: dict) -> Optional[int]:
     level = (profile or {}).get("level")
     return int(level) if isinstance(level, int) else None

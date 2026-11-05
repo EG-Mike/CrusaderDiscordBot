@@ -409,10 +409,21 @@ def _unique_name(base: str, taken: set) -> str:
 
 
 async def _download(url: str) -> bytes:
+    """The image, trying Blizzard's fallback addresses for the icon (wow_api.icon_urls)."""
+    import wow_api
+
+    data, last_error = None, None
     async with aiohttp.ClientSession(trust_env=True, timeout=aiohttp.ClientTimeout(total=15)) as http:
-        async with http.get(url, headers=_BROWSER_HEADERS) as resp:
-            resp.raise_for_status()
-            data = await resp.read()
+        for candidate in wow_api.icon_urls(url) or [url]:
+            try:
+                async with http.get(candidate, headers=_BROWSER_HEADERS) as resp:
+                    resp.raise_for_status()
+                    data = await resp.read()
+                    break
+            except aiohttp.ClientResponseError as exc:
+                last_error = exc
+    if data is None:
+        raise last_error
     if len(data) > 256 * 1024:
         raise EmojiError("The icon image is larger than Discord allows for an emoji (256 KB).")
     return data

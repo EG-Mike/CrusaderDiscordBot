@@ -4,7 +4,8 @@ cogs/leveling.py).
 
   GET  /api/roster                    every character, the class/spec names and how the last sync went
   GET  /api/roster/members?q=         server members matching a name, for the link picker
-  POST /api/roster/sync               read the guild roster and check profiles now
+  POST /api/roster/sync               read the guild roster and check profiles now (and update the posted roster)
+  POST /api/roster/post               post or update the roster in the roster channel now
   POST /api/roster/characters         {"name": "First Surname"}: find a character on Blizzard and add it
   POST /api/roster/characters/{slug}  {"action": "link", "discord_id"} | {"action": "unlink"} | {"action": "main"}
                                       | {"action": "specs", "main_spec_id", "off_spec_id"}
@@ -15,11 +16,13 @@ anyone). Every change is audited.
 """
 
 import asyncio
+import json
 
 import config
+import db
 import roster
 import wow_api
-from cogs.roster import last_sync, reference
+from cogs.roster import POST_META, last_sync, reference
 from webapi import auth
 from webapi.common import (
     BOT_KEY, HUB_KEY, BadRequest, actor_label, audit, error, forbidden_unless, json_response, read_json,
@@ -76,7 +79,31 @@ async def overview(request):
         "characters": [_serialize(c, guild) for c in rows],
         "classes": ref.get("classes", []),
         "rulesets": ref.get("rulesets", []),
+        "post": _post_status(bot),
     })
+
+
+def _post_status(bot):
+    channel = bot.get_channel(int(config.GUILD_ROSTER_CHANNEL_ID or 0))
+    if channel is None:
+        return None
+    state = json.loads(db.get_meta(POST_META) or "{}")
+    posted = state.get("channel_id") == channel.id and state.get("message_ids")
+    return {"channel_id": str(channel.id), "channel_name": channel.name,
+            "updated": state.get("updated") if posted else None}
+
+
+async def post(request):
+    denied = _guard(request)
+    if denied:
+        return denied
+    result = await request.app[BOT_KEY].get_cog("RosterCog").publish_roster(force=True)
+    if result is None:
+        return error("Pick a roster channel first (Settings, Guild roster).", 400)
+    if not result.startswith("Posted"):
+        return error(result, 400)
+    audit(request, "roster", "roster.post", "Posted the guild roster in Discord")
+    return json_response({"result": result, "post": _post_status(request.app[BOT_KEY])})
 
 
 async def members(request):
@@ -105,6 +132,7 @@ async def sync(request):
     result = await bot.get_cog("RosterCog").sync()
     leveling = bot.get_cog("LevelingCog")
     checked = await leveling.check_now() if leveling else None
+    await bot.get_cog("RosterCog").publish_roster()
     status = last_sync() or {}
     audit(request, "roster", "roster.sync", "Synced the guild roster with Blizzard",
           details={"ok": status.get("ok"), "members": status.get("members")})
@@ -213,6 +241,7 @@ def register(app):
     app.router.add_get("/api/roster", overview)
     app.router.add_get("/api/roster/members", members)
     app.router.add_post("/api/roster/sync", sync)
+    app.router.add_post("/api/roster/post", post)
     app.router.add_post("/api/roster/characters", add_character)
     app.router.add_post("/api/roster/characters/{slug}", character_action)
     app.router.add_get("/api/leveling", leveling_overview)

@@ -116,7 +116,12 @@ version or raid tier is a configuration change.
   gems, sets), talents and profile from Blizzard, flags (empty slots,
   missing enchants, empty sockets) and the guild's minimum level/item
   level, as plain data plus Discord text. Used by `cogs/apply.py` (the
-  review card, "Refresh gear", `/gearcheck character`). WarcraftLogs
+  review card, "Refresh gear", `/gearcheck character`) and the dashboard's
+  Character lookup page (`webapi/lookup_api.py`), which also shows
+  professions and the character's place on the roster. Characters on a
+  ruleset that isn't the guild's (`CHARACTER_RULESETS`) are flagged. Item
+  icons: `wow_api.icon_urls` lists fallback addresses, since Blizzard's
+  image server lacks some icons under the Forever path. WarcraftLogs
   parses on applications are optional (`APPLICATION_WARCRAFTLOGS_ENABLED`)
   until WarcraftLogs covers Forever.
 - `roster.py`: the guild roster: in-game characters (from the guild's
@@ -125,7 +130,10 @@ version or raid tier is a configuration change.
   `cogs/roster.py` (sync + `/character`), `cogs/leveling.py` (profile
   checks every few minutes, milestone congratulations via the
   "level_milestone" bot message, `/leaderboard`) and
-  `webapi/roster_api.py` (Roster and Leveling pages). `permissions.py`:
+  `webapi/roster_api.py` (Roster and Leveling pages). The roster is also
+  kept posted in a Discord channel (`GUILD_ROSTER_CHANNEL_ID`; edited only
+  when its content changes; header is the "guild_roster_header" bot
+  message). `permissions.py`:
   the shared Discord moderator check for new cogs.
 - `wow_api.py`: Blizzard game data for the configured game version
   (WoW Forever by default): reference data for pickers, a player's
