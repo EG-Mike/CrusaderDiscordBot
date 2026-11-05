@@ -263,7 +263,7 @@ Every poll carries the footer from `config.POLL_FOOTER`.
 
 | Command | Description |
 |---|---|
-| `/apply <character>` | Apply to the guild with your character name - kicks off the gear-check flow. |
+| `/apply <character>` | Apply to the guild with your character's name and surname - the bot reads the character's gear, enchants and talents from Blizzard (as of the last logout) for the review card. |
 | `/update-application` | Add or update the note/screenshot(s) on your latest pending application. |
 | `/poll create` | Start a poll - fixed options, member-added options, or both (moderator only unless `config.POLL_CREATE_MOD_ONLY = False`). |
 | `/character link <name> [member]` | Link a WoW character (first name and surname) to yourself; moderators can link it to anyone. Your first character becomes your main. |
@@ -277,6 +277,7 @@ Every poll carries the footer from `config.POLL_FOOTER`.
 | Command | Description |
 |---|---|
 | `/announce` | Draft an announcement in the sandbox channel, with Edit/Publish buttons. |
+| `/gearcheck character <name> [public]` | Gear-check any character from Blizzard: item level, gear, enchants, gems, talents and what's missing. Only you see it unless `public`. |
 | `/gearcheck archive` | Move all approved/denied applications to the archive channel. |
 | `/checkattendance run` | Generate/refresh the attendance overview (no cooldown). |
 | `/checkattendance addlog <date> <tier> <link>` | Add a main-raid log to the tracked list. |

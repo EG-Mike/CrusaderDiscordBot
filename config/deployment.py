@@ -293,7 +293,7 @@ NOTIFY_ANNOUNCEMENTS = True
 # automatically). "static-classic" = progression Classic (TBC Anniversary),
 # "static" = the modern game, "static-classic1x" = Classic Era. Put the
 # namespace of the game version the guild plays first.
-EMOJI_BLIZZARD_NAMESPACES = ["static-classic", "static"]
+EMOJI_BLIZZARD_NAMESPACES = ["static-forever", "static-classic", "static"]
 
 # Ask Wowhead's tooltip service when Blizzard can't help: for items/spells
 # Blizzard has no record of (e.g. spells removed from the modern game), and
@@ -465,29 +465,35 @@ APPROVER_ROLE_ID = 1482653670855413822
 # Raw Blizzard answers are in the dashboard's Blizzard API explorer.
 DEBUG_COMMANDS_ENABLED = False
 
-# Armory block (equipped gear + talent build) shown on the /apply review
-# card - see cogs/apply.py's _compute_armory_block. Defaulted OFF:
-# Blizzard's Character Equipment/Specializations endpoints
-# return HTTP 200 for TBC Anniversary-migrated realms, but the DATA itself
-# is a stale Classic-Era snapshot rather than the character's current
-# state - confirmed live against a real character (their old Classic Era
-# gear came back, not their current TBC loadout). That's a Blizzard-side
-# bug, not something this bot can detect or fix, so showing a
-# confidently-wrong gear/spec summary on every application does more harm
-# than good until it's resolved on their end. Item/spell lookups
-# (get_item/get_spell_icon, used throughout raid summaries) are NOT
-# affected by this flag or this bug - those hit a different, unaffected
-# static-classic-{region} endpoint family (a real TBC item resolves
-# correctly) - only the
-# profile-classic-{region} CHARACTER endpoints (equipment/specializations)
-# have the staleness problem. Flip back to True once Blizzard's forum
-# threads on this (see get_character_specializations()'s docstring in
-# blizzard_client.py) report it fixed, or to spot-check whether a specific
-# character's data happens to be fresh - _compute_armory_block still
-# returns None immediately while this is False, with no API calls made at
-# all. The Blizzard API explorer (Maintenance) shows whether it's fixed
-# without re-enabling the block for every applicant first.
-ARMORY_BLOCK_ENABLED = False
+# --- Gear check (gear.py) ---
+# The gear summary on an application (and /gearcheck character) comes from
+# Blizzard's API: gear, enchants, gems, talents and item level as of the
+# character's last logout.
+#
+# Minimum character level and equipped item level for applicants. Shown on
+# the review card as met or not; 0 = no minimum.
+GEARCHECK_MIN_LEVEL = 0
+GEARCHECK_MIN_ITEM_LEVEL = 0
+
+# Slots a geared character fills: an empty one is flagged. Blizzard's slot
+# names (HEAD, NECK, SHOULDER, BACK, CHEST, WRIST, HANDS, WAIST, LEGS,
+# FEET, FINGER_1, FINGER_2, TRINKET_1, TRINKET_2, MAIN_HAND, OFF_HAND,
+# RANGED).
+GEARCHECK_EXPECTED_SLOTS = ["HEAD", "NECK", "SHOULDER", "BACK", "CHEST", "WRIST", "HANDS", "WAIST", "LEGS",
+                            "FEET", "FINGER_1", "FINGER_2", "TRINKET_1", "TRINKET_2", "MAIN_HAND"]
+
+# Slots that should carry an enchant: one without is flagged. Depends on the
+# game version's enchanting, hence a setting.
+GEARCHECK_ENCHANT_SLOTS = ["HEAD", "SHOULDER", "BACK", "CHEST", "WRIST", "HANDS", "LEGS", "FEET", "MAIN_HAND"]
+
+# Link to a character's profile page on the review card, with {region} and
+# {slug} (e.g. eggmike-thewhite) filled in. Empty: no link.
+GEARCHECK_PROFILE_URL = ""
+
+# Include WarcraftLogs parses (per boss, current and previous tier) on
+# applications. Off until WarcraftLogs covers the game version the guild
+# plays; the tier settings (Raid tiers) say which raids count.
+APPLICATION_WARCRAFTLOGS_ENABLED = False
 
 # --- Attendance tracking (Regular-role eligibility) ---
 # Regular role - separate from FRESH_EXEMPT_ROLE_IDS above (that list is

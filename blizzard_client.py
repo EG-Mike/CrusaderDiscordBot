@@ -1,64 +1,22 @@
 """
-Minimal Blizzard Game Data API client for item lookups - resolves an
-itemID (all Gargul's loot export gives us) into a display name, icon, and
-quality, same contract as wowhead.py's WowheadClient.get_item(), so
-cogs/raid_summary.py can use either interchangeably.
+Blizzard Battle.net API client: the app's own token (client credentials,
+cached until it expires) and requests to any game data or profile path
+(`request`), plus item and spell icon lookups used by raid summaries and
+the emoji library (`get_item`, `get_spell_icon`, cached permanently on
+success).
 
-Added after wowhead.py's scraped XML feed turned out to be blocked
-outright for this bot's hosting IP (a WAF/CDN 403 on every request, from
-this host specifically - not something a header/pacing/redirect fix can
-address, since the block is on the IP, not the request shape). Blizzard's
-own Game Data API is the sanctioned, first-party alternative: no scraping,
-no anti-bot concerns, and it's keyed by the game's own real item ID (the
-same ID Gargul exports), so there's no retail-vs-Classic ID-space mismatch
-to get wrong either (see wowhead.py's ITEM_XML_URL comment for that
-issue).
+Game-version specifics (namespaces, locale, what each game offers) live in
+wow_api.py and the settings, not here; docs/wow-forever-api.md describes
+what Blizzard's API answers for WoW Forever.
 
-Docs: https://develop.battle.net/documentation/world-of-warcraft/game-data-apis
-(this sandbox can never reach develop.battle.net or oauth.battle.net /
-*.api.blizzard.com to verify any of this live - built from Blizzard's
-documented OAuth client-credentials flow plus a real, working third-party
-client library's source (lostcol0ny/blizzardapi2 on GitHub) for the exact
-URL/namespace shapes, since Blizzard's own docs site is unreachable from
-here too. The one thing that needs confirming against a REAL response is
-the exact JSON field names below - see get_item()'s docstring and
-raidsummary_test_blizzard_api for how to check that once real credentials
-exist.)
+  - OAuth token: https://oauth.battle.net/oauth/token (client_credentials,
+    HTTP Basic auth with the client id and secret)
+  - API base: https://{region}.api.blizzard.com
+  - Item / item media: /data/wow/item/{id}, /data/wow/media/item/{id} in a
+    static namespace (e.g. static-forever-eu)
 
-- OAuth token URL: https://oauth.battle.net/oauth/token (client_credentials
-  grant, HTTP Basic auth with client_id/client_secret - same flow
-  wcl_client.py already uses for WarcraftLogs, just Blizzard's own
-  endpoint/param shape, confirmed against blizzardapi2's source: grant_type
-  sent as a query param, not a form body).
-- API base: https://{region}.api.blizzard.com (region: us/eu/kr/tw/cn -
-  same SERVER_REGION env var wcl_client.py already reads).
-- Item: GET /data/wow/item/{item_id}?namespace=static-classic-{region}&locale=en_US
-- Item media (icon): GET /data/wow/media/item/{item_id}?namespace=static-classic-{region}&locale=en_US
-  (namespace "static-classic-{region}" is Blizzard's namespace for
-  Classic PROGRESSION realms - i.e. TBC/Cataclysm Classic, confirmed via a
-  Blizzard forum thread on TBC Anniversary/"Fresh" realms specifically
-  moving from "classic1x-{region}" (Classic Era) to this namespace -
-  "static-classic1x-{region}" is Classic ERA instead, for a guild still on
-  original/Era Classic rather than TBC+).
-- Character equipment: GET /profile/wow/character/{realmSlug}/{characterName}/equipment
-  ?namespace=profile-classic-{region}&locale=en_US (see
-  get_character_equipment() - reasonably confirmed shape, a documented
-  Profile API endpoint).
-- Character specializations/talents: GET /profile/wow/character/{realmSlug}/
-  {characterName}/specializations?namespace=profile-classic-{region}&locale=en_US
-  (see get_character_specializations() - the endpoint NAME is confirmed
-  (via a real third-party client library's source), but the exact JSON
-  shape for Classic's freeform talent trees is a best-effort guess, not
-  independently verified - see that method's docstring for the honest
-  caveat and how to check/fix it against a real response with the
-  dashboard's Blizzard API explorer (Maintenance)).
-
-Nothing here ever raises - a failed/unexpected lookup just falls back to a
-plain "Item #<id>" with no icon, same philosophy as wowhead.py/icons.py.
-Only ever used if BLIZZARD_CLIENT_ID/BLIZZARD_CLIENT_SECRET are configured
-(see bot.py) - cogs/raid_summary.py falls back to wowhead.WowheadClient
-automatically otherwise, so this being unset just means the bot behaves
-exactly as it did before this file existed.
+A failed item lookup falls back to a plain "Item #<id>" with no icon and
+is retried next time; nothing here raises for a missing item.
 """
 
 import time
@@ -80,16 +38,6 @@ def _api_base(region: str) -> str:
 
 def _namespace(region: str) -> str:
     return f"static-classic-{region}"
-
-
-def _profile_namespace(region: str) -> str:
-    """Namespace for character PROFILE data (equipment, specializations) -
-    separate from _namespace()'s static game-data namespace above. Same
-    "-classic-" progression-realm segment as static-classic-{region}, just
-    under the "profile" family instead of "static" (documented Blizzard
-    convention: every namespace family - static/dynamic/profile - gets its
-    own namespace string for the same realm type)."""
-    return f"profile-classic-{region}"
 
 
 def _parse_icon_asset(media_data: dict) -> tuple:
@@ -234,13 +182,9 @@ class BlizzardClient:
             )
             return fallback
 
-        # Field names below are the DOCUMENTED Game Data API item/item-media
-        # response shape - not independently re-verified against a live
-        # response (see the module docstring: this sandbox can't reach
-        # api.blizzard.com either). If names/icons come back wrong or
-        # missing once real credentials exist, dump the raw item_data/
-        # media_data here first (e.g. via raidsummary_test_blizzard_api)
-        # rather than guessing at another field name blind.
+        # Game Data API item/item-media fields (checked live). If names or
+        # icons look wrong for a game version, compare with the raw answer
+        # in the Blizzard API explorer (Maintenance) first.
         name = item_data.get("name") or f"Item #{item_id}"
         quality_type = ((item_data.get("quality") or {}).get("type") or "").upper()
         quality = _QUALITY_TYPE_TO_INT.get(quality_type)
@@ -327,259 +271,5 @@ class BlizzardClient:
             self._cache.set(cache_key, **result)
         return result
 
-    async def get_character_equipment(self, realm_slug: str, character_name: str) -> list:
-        """
-        Returns a list of equipped items via Blizzard's Character Equipment
-        Summary endpoint: GET /profile/wow/character/{realmSlug}/
-        {characterName}/equipment, namespace profile-classic-{region} (see
-        _profile_namespace) - [{"slot_type", "slot_name", "item_id", "name",
-        "quality"}, ...], quality as an int matching get_item()'s
-        _QUALITY_TYPE_TO_INT convention. realm_slug needs Blizzard's own
-        slug format (lowercase, spaces->hyphens) - callers reuse whatever
-        realm slug they already have for WCL (ApplyCog.server_slug), which
-        should match for an official Fresh/Anniversary realm (WCL mirrors
-        Blizzard's own slug for those), but this is NOT independently
-        confirmed live - same caveat as the rest of this file (see the
-        module docstring). character_name is lowercased before the request
-        per Blizzard's documented convention for profile character
-        endpoints specifically (case-sensitive elsewhere).
-
-        Never raises - returns [] on any failure: missing token, a 404
-        (character not found under this realm/namespace), or a 403 (some
-        profile sub-resources are "Protected" and may need the character
-        OWNER's own OAuth consent rather than just app client-credentials,
-        or may be gated by an in-game armory-visibility toggle - either
-        looks identical to this method, logged but not distinguished
-        further). The Blizzard API explorer (Maintenance) shows exactly
-        which case applies for a given character.
-        """
-        fallback = []
-        try:
-            token = await self._get_token()
-        except Exception:
-            log.warning("Couldn't get a Blizzard API token - no equipment data for %s", character_name, exc_info=True)
-            return fallback
-
-        headers = {"Authorization": f"Bearer {token}"}
-        base = _api_base(self.region)
-        namespace = _profile_namespace(self.region)
-        params = {"namespace": namespace, "locale": "en_US"}
-        slug = character_name.lower()
-
-        try:
-            async with aiohttp.ClientSession(trust_env=True) as session:
-                async with session.get(
-                    f"{base}/profile/wow/character/{realm_slug}/{slug}/equipment",
-                    params=params, headers=headers,
-                ) as resp:
-                    if resp.status in (403, 404):
-                        log.warning(
-                            "Blizzard API returned %s for %s's equipment (namespace %s) - "
-                            "no gear summary available (not found, privacy-protected, or "
-                            "wrong realm slug/namespace)",
-                            resp.status, character_name, namespace,
-                        )
-                        return fallback
-                    resp.raise_for_status()
-                    data = await resp.json()
-        except Exception:
-            log.warning("Blizzard API equipment lookup failed for %s", character_name, exc_info=True)
-            return fallback
-
-        items = []
-        for entry in data.get("equipped_items") or []:
-            item_ref = entry.get("item") or {}
-            slot = entry.get("slot") or {}
-            quality_type = ((entry.get("quality") or {}).get("type") or "").upper()
-            items.append({
-                "slot_type": slot.get("type"),
-                "slot_name": slot.get("name"),
-                "item_id": item_ref.get("id"),
-                "name": entry.get("name"),
-                "quality": _QUALITY_TYPE_TO_INT.get(quality_type),
-            })
-        return items
-
-    async def get_character_specializations(self, realm_slug: str, character_name: str) -> list:
-        """
-        Best-effort talent build lookup via Blizzard's Character
-        Specializations endpoint: GET /profile/wow/character/{realmSlug}/
-        {characterName}/specializations, namespace profile-classic-{region}.
-        The endpoint name is "specializations", NOT "statistics" -
-        .../statistics is a real but unrelated endpoint (raw combat-derived
-        counter stats, not talents). Returns one entry per talent group -
-        TWO entries for a dual-specced Classic character, one for a
-        single-spec character:
-            {"is_active": bool, "spec_name": str|None,
-             "points_by_tree": [(tree_name, points), ...] | None,
-             "total_points": int}
-
-        Confirmed against a real response (see
-        _parse_specialization_groups()' docstring for the exact shape):
-        the endpoint exists, returns HTTP 200 under profile-classic-
-        {region}, and the real per-talent point field is "talent_rank",
-        nested at group["specializations"][*]["talents"] - both were
-        originally guessed wrong (as "spent_points" directly under
-        group["talents"]).
-
-        STILL UNCONFIRMED: no spec-name (e.g. "Fire") or tree-grouping
-        field was visible in the response checked, so "spec_name" and the
-        "31/10/20" split ("points_by_tree") may come back None/empty even
-        though total_points is now correctly computed - but that response
-        was also cut off (Discord's/this diagnostic's length limits) before
-        showing every talent in the group, so a tree/name field further in
-        isn't ruled out either. If Blizzard genuinely never includes tree
-        membership per talent, getting the 31/10/20 split would need a
-        separate static talent-id -> tree lookup table (not attempted
-        here - see _bucket_talent_points' docstring). Use the Blizzard API
-        explorer (Maintenance) to check a full response and adjust
-        _parse_specialization_groups/_bucket_talent_points if a real field
-        turns up.
-
-        SEPARATELY (not something this method can detect or work around):
-        Blizzard's profile API for these transitioned TBC Anniversary
-        realms has a live, reported bug where the returned data (gear here
-        too, not just talents) can be a stale Classic-Era snapshot rather
-        than the character's current state - confirmed against a real
-        character whose returned gear was their old Classic Era loadout,
-        not their current TBC gear. Nothing server-side or
-        client-side here can force a refresh; this is purely a caveat for
-        callers to surface to the user (see cogs/apply.py's
-        _compute_armory_block, which appends a note about this to the
-        rendered block).
-
-        Never raises - returns [] on any failure (token, 403/404 - see
-        get_character_equipment()'s docstring for what those can mean).
-        """
-        fallback = []
-        try:
-            token = await self._get_token()
-        except Exception:
-            log.warning("Couldn't get a Blizzard API token - no spec data for %s", character_name, exc_info=True)
-            return fallback
-
-        headers = {"Authorization": f"Bearer {token}"}
-        base = _api_base(self.region)
-        namespace = _profile_namespace(self.region)
-        params = {"namespace": namespace, "locale": "en_US"}
-        slug = character_name.lower()
-
-        try:
-            async with aiohttp.ClientSession(trust_env=True) as session:
-                async with session.get(
-                    f"{base}/profile/wow/character/{realm_slug}/{slug}/specializations",
-                    params=params, headers=headers,
-                ) as resp:
-                    if resp.status in (403, 404):
-                        log.warning(
-                            "Blizzard API returned %s for %s's specializations (namespace %s) - "
-                            "no talent build data available",
-                            resp.status, character_name, namespace,
-                        )
-                        return fallback
-                    resp.raise_for_status()
-                    data = await resp.json()
-        except Exception:
-            log.warning("Blizzard API specializations lookup failed for %s", character_name, exc_info=True)
-            return fallback
-
-        return _parse_specialization_groups(data)
-
 def _is_resolved(result: dict, item_id: int) -> bool:
     return result.get("icon_slug") is not None and result.get("name") != f"Item #{item_id}"
-
-
-def _parse_specialization_groups(data: dict) -> list:
-    """See get_character_specializations()'s docstring for the honesty
-    caveat this whole function operates under. Tries the plausible
-    "specialization_groups" key first (a dual-spec-shaped list, each with
-    its own is_active flag) - falls back to treating the whole payload as
-    one implicit group if that key isn't present, so a single-spec
-    response still parses into something instead of an empty list.
-
-    Confirmed against a real response (see get_character_
-    specializations()'s docstring): each group's talents are NOT directly
-    under group["talents"] as originally guessed - they're one level
-    deeper, under group["specializations"][*]["talents"] ("specializations"
-    here is an unrelated wrapper list, seemingly schema reuse from retail's
-    endpoint where that word means something else; classic responses seen
-    so far only ever have exactly one entry in it). Both shapes are
-    checked, so this keeps working if a differently-shaped response ever
-    turns up. No spec-name field (e.g. "Fire") was visible in the live
-    response checked, though it may simply not have been reached before
-    that response got cut off at the diagnostic dump's old length limit
-    - group.get("name") is checked too as one
-    more plausible spot, cheap to try, unconfirmed either way."""
-    groups = data.get("specialization_groups")
-    if groups is None:
-        groups = [data] if (data.get("talents") or data.get("specializations") or data.get("talent_specialization")) else []
-
-    result = []
-    for group in groups:
-        spec_info = group.get("talent_specialization") or group.get("specialization") or {}
-        spec_name = spec_info.get("name") or group.get("name")
-
-        talents = list(group.get("talents") or [])
-        for spec_entry in group.get("specializations") or []:
-            talents.extend(spec_entry.get("talents") or [])
-            if spec_name is None:
-                nested_spec = spec_entry.get("specialization") or spec_entry.get("talent_specialization") or {}
-                spec_name = nested_spec.get("name") or spec_entry.get("name")
-
-        # Real per-talent point field is "talent_rank" (confirmed live) -
-        # "spent_points" was the original guess, kept as a fallback in case
-        # a differently-shaped response ever uses it instead.
-        total_points = sum((t.get("talent_rank") or t.get("spent_points") or 0) for t in talents)
-        points_by_tree = _bucket_talent_points(talents)
-
-        result.append({
-            "is_active": bool(group.get("is_active", len(groups) == 1)),
-            "spec_name": spec_name,
-            "points_by_tree": points_by_tree,
-            "total_points": total_points,
-        })
-    return result
-
-
-def _bucket_talent_points(talents: list):
-    """Best-effort grouping of a talent-group's per-talent points into
-    per-TREE totals (the "31/10/20" split) - returns a list of (tree_name,
-    points) tuples in first-seen order, or None if none of the talent
-    entries carry a tree-identifying field this recognizes. Checked field
-    names, in order: "talent_tree" (dict with a "name") then "tree" (dict
-    or plain string) - still guesses, NOT confirmed (unlike the
-    talents-location/talent_rank fixes in _parse_specialization_groups
-    above): a live response checked didn't show either field on any
-    talent, but that response was also cut off before showing every talent
-    in the group, so this isn't proven absent either - see
-    get_character_specializations()'s docstring for how to check a fuller
-    response. TBC's 3 talent trees are named
-    identically to their matching spec (e.g. the "Arms" tree = the "Arms"
-    spec), so a tree's "name" here doubles as the display name with no
-    extra mapping needed once/if a real field name is confirmed - see
-    _format_talent_split in cogs/apply.py for how the 3 totals get ordered
-    to match config.CLASS_SPECS."""
-    buckets = {}
-    order = []
-    found_any_tree_field = False
-
-    for t in talents:
-        tree = t.get("talent_tree") or t.get("tree")
-        if isinstance(tree, dict):
-            tree_name = tree.get("name")
-        elif isinstance(tree, str):
-            tree_name = tree
-        else:
-            tree_name = None
-
-        if tree_name is None:
-            continue
-        found_any_tree_field = True
-        if tree_name not in buckets:
-            buckets[tree_name] = 0
-            order.append(tree_name)
-        buckets[tree_name] += t.get("talent_rank") or t.get("spent_points") or 0
-
-    if not found_any_tree_field:
-        return None
-    return [(name, buckets[name]) for name in order]

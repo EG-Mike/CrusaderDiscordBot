@@ -112,6 +112,13 @@ version or raid tier is a configuration change.
   by Blizzard's icon file ID / icon name) with the items and spells that
   share it; Blizzard API first, Wowhead tooltip only as a fallback. Used by
   the Emoji page, the editor emoji picker and raid summaries.
+- `gear.py`: the gear check: a character's gear (item level, enchants,
+  gems, sets), talents and profile from Blizzard, flags (empty slots,
+  missing enchants, empty sockets) and the guild's minimum level/item
+  level, as plain data plus Discord text. Used by `cogs/apply.py` (the
+  review card, "Refresh gear", `/gearcheck character`). WarcraftLogs
+  parses on applications are optional (`APPLICATION_WARCRAFTLOGS_ENABLED`)
+  until WarcraftLogs covers Forever.
 - `roster.py`: the guild roster: in-game characters (from the guild's
   Blizzard roster and character profiles), their levels, links to Discord
   members (one main each), specs, and level-up events. Shared by
@@ -209,7 +216,11 @@ set in the dashboard.
   Blizzard, `/character` linking, milestone congratulations, leaderboard,
   Roster and Leveling pages. Achievements can reuse `roster_events` once
   Blizzard reliably reports them.
-- Phase 4: Applications, Raid summaries, Raid logs, Attendance, Tier recap,
+- Phase 4 (in progress): applications moved to Blizzard data (gear check
+  with gear, enchants and talents; roster link on approval; WarcraftLogs
+  optional). Next: an Applications dashboard page, then the raid features
+  once WarcraftLogs covers Forever.
+- Phase 4 (remaining): Applications page, Raid summaries, Raid logs, Attendance, Tier recap,
   Records, and the raid cache tools (`/raidsummary-refresh-cache`,
   `/raidsummary-refresh-report`). These all depend
   on TBC-era data sources, so plan them together with the WoW Forever data
