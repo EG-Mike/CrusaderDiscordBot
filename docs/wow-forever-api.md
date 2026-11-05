@@ -73,6 +73,22 @@ settings change, not a code change.
 Forever names look unique per region (first name + surname), which is why
 character links carry no realm.
 
+**Likely reason public lookups are 404: the level-10 rule.** In the modern
+game's API (and the official Armory), a character's public profile only
+exists from level 10, after it has logged out at that level, and it drops
+off after long inactivity. All characters checked so far were below 10, so
+the 404s may simply be this rather than lookups being closed. The account
+profile (user token) lists characters of every level.
+
+Test character for checks: **Eggmike Thewhite**, EU, PvP ruleset (id 1).
+On 2026-11-05 every lookup variant (`{first}-{surname}`, first name only,
+with `pvp` or `1` in front, the pre-launch realm slugs, eu and us) was 404
+while it was below level 10. Re-check once it's level 10+ and logged out:
+
+```bash
+python scripts/probe_blizzard_api.py --region eu --character "Eggmike Thewhite"
+```
+
 ## What the bot does with it
 
 - `wow_api.py` reads reference data (classes, specs, races, professions,
