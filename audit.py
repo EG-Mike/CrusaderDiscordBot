@@ -63,6 +63,7 @@ KINDS = {
     "emoji": "Emoji",
     "maintenance": "Maintenance",
     "poll": "Poll",
+    "roster": "Roster",
     "audit": "Audit log",
     "other": "Other",
 }

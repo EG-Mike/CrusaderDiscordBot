@@ -14,7 +14,9 @@ import {
   Settings,
   Smile,
   Swords,
+  TrendingUp,
   Trophy,
+  Users,
   Vote,
   Wrench,
   type LucideIcon,
@@ -46,6 +48,8 @@ export const NAV: { group: string; items: NavItem[] }[] = [
   {
     group: "Members",
     items: [
+      { to: "/roster", label: "Guild roster", icon: Users },
+      { to: "/leveling", label: "Leveling", icon: TrendingUp },
       { to: "/applications", label: "Applications", icon: ClipboardList, soon: true },
       { to: "/attendance", label: "Attendance", icon: CalendarCheck, soon: true },
     ],

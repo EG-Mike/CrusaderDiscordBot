@@ -266,6 +266,11 @@ Every poll carries the footer from `config.POLL_FOOTER`.
 | `/apply <character>` | Apply to the guild with your character name - kicks off the gear-check flow. |
 | `/update-application` | Add or update the note/screenshot(s) on your latest pending application. |
 | `/poll create` | Start a poll - fixed options, member-added options, or both (moderator only unless `config.POLL_CREATE_MOD_ONLY = False`). |
+| `/character link <name> [member]` | Link a WoW character (first name and surname) to yourself; moderators can link it to anyone. Your first character becomes your main. |
+| `/character unlink <name>` / `/character main <name>` | Unlink a character, or make it your main. |
+| `/character spec <name> <main> [off]` | Set a character's main spec and off spec (offered for its own class). |
+| `/character list [member]` | Your (or a member's) characters, levels and specs. |
+| `/leaderboard [scope] [size]` | The guild's highest-level characters (mains, or everyone). |
 
 ### Moderator only
 
@@ -318,6 +323,8 @@ extension list, just flip the flag and restart:
 | `FEATURE_RAID_LOGS_ENABLED` | `cogs/raid_logs.py` | the #logs tagging/auto-Summarize automation (section 11 below) |
 | `FEATURE_TIER_RETROSPECTIVE_ENABLED` | `cogs/tier_retrospective.py` | `/tier-recap` |
 | `FEATURE_POLLS_ENABLED` | `cogs/polls.py` | `/poll create` and every poll's buttons |
+| `FEATURE_ROSTER_ENABLED` | `cogs/roster.py` | the guild roster: syncing with Blizzard and `/character` |
+| `FEATURE_LEVELING_ENABLED` | `cogs/leveling.py` | level-up checks, milestone congratulations and `/leaderboard` (needs the roster) |
 | `FEATURE_AUDIT_LOG_ENABLED` | `cogs/audit_log.py` | recording Discord actions in the audit log |
 | `FEATURE_WEB_DASHBOARD_ENABLED` | `cogs/web_dashboard.py` | the web dashboard (**off** by default, see "Web dashboard" below) |
 

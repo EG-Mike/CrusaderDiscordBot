@@ -209,6 +209,66 @@ async def lookup_character(bot, name: str, surname: Optional[str] = None,
     return None
 
 
+def slug(text: str) -> str:
+    """Blizzard's URL form of a name: "Eggmike Thewhite" -> "eggmike-thewhite"."""
+    return _slug(text)
+
+
+def _id(value) -> Optional[int]:
+    return (value or {}).get("id") if isinstance(value, dict) else None
+
+
+def parse_character(c: dict, *, rank: Optional[int] = None) -> dict:
+    """A character from a guild roster entry or a character profile, as
+    the roster stores it. Missing fields are None (a roster entry has no
+    guild; a profile has no rank)."""
+    guild = c.get("guild") or {}
+    return {
+        "character_id": c.get("id"),
+        "slug": c.get("slug") or _slug(f"{c.get('name', '')}-{c.get('surname') or ''}"),
+        "name": c.get("name"),
+        "surname": c.get("surname") or None,
+        "class_id": _id(c.get("playable_class") or c.get("character_class")),
+        "race_id": _id(c.get("playable_race") or c.get("race")),
+        "faction": ((c.get("faction") or {}).get("type") or "").title() or None,
+        "level": c.get("level") if isinstance(c.get("level"), int) else None,
+        "ruleset_id": _id(c.get("ruleset")),
+        "guild_slug": guild.get("slug") or (_slug(guild["name"]) if guild.get("name") else None),
+        "guild_rank": rank,
+        "last_login": c.get("last_login_timestamp"),
+    }
+
+
+async def guild_roster(bot, guild_name: str, session: Optional[aiohttp.ClientSession] = None) -> Optional[List[dict]]:
+    """Every member of a guild (parse_character, with their rank), at every
+    level. None when Blizzard doesn't know the guild. The roster is a
+    snapshot Blizzard refreshes every few hours."""
+    status, _headers, body = await _client(bot).request(f"/data/wow/guild/{_slug(guild_name)}/roster",
+                                                        namespace("profile"), session=session,
+                                                        locale=config.BLIZZARD_LOCALE)
+    if status == 404:
+        return None
+    if status != 200:
+        raise WowApiError(f"Blizzard answered {status} for the guild roster.")
+    return [{**parse_character(m.get("character") or {}, rank=m.get("rank")),
+             "guild_slug": _slug(guild_name)} for m in (body or {}).get("members", [])]
+
+
+async def character_profile(bot, character_slug: str,
+                            session: Optional[aiohttp.ClientSession] = None) -> Optional[dict]:
+    """One character's profile (parse_character) by its slug, or None when
+    there's none: below level 10, never logged out, or unknown. Updated by
+    Blizzard when the player logs out."""
+    status, _headers, body = await _client(bot).request(f"/profile/wow/character/{character_slug}",
+                                                        namespace("profile"), session=session,
+                                                        locale=config.BLIZZARD_LOCALE)
+    if status == 404:
+        return None
+    if status != 200:
+        raise WowApiError(f"Blizzard answered {status} for character {character_slug}.")
+    return parse_character(body or {})
+
+
 def profile_level(profile: dict) -> Optional[int]:
     level = (profile or {}).get("level")
     return int(level) if isinstance(level, int) else None

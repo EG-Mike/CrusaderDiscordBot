@@ -294,6 +294,25 @@ DEFINITIONS: List[Definition] = [
         feature="FEATURE_ATTENDANCE_ENABLED",
     ),
 ]
+DEFINITIONS.append(Definition(
+    key="level_milestone",
+    label="Level milestone",
+    group="Leveling",
+    description="Posted when a character reaches one of the level milestones (Settings, Leveling).",
+    kind="text",
+    where="Posted in the leveling channel",
+    default_body="🎉 Congratulations {member}! **{character}** just reached level **{level}**!",
+    variables=[
+        Variable("member", "The member (a mention), or the character's first name when nobody has linked it yet",
+                 "@Eggmike"),
+        Variable("character", "The character's name and surname", "Eggmike Thewhite"),
+        Variable("level", "The character's new level", "20"),
+        Variable("class", "The character's class", "Priest"),
+        Variable("milestone", "The milestone reached (the same as the level, unless several were passed at once)",
+                 "20"),
+    ],
+    feature="FEATURE_LEVELING_ENABLED",
+))
 BY_KEY: Dict[str, Definition] = {d.key: d for d in DEFINITIONS}
 
 

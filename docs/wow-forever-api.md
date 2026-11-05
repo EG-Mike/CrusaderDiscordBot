@@ -106,11 +106,17 @@ python scripts/probe_blizzard_api.py --region eu --character "Eggmike Thewhite"
 ## What the bot does with it
 
 - `wow_api.py` reads reference data (classes, specs, races, professions,
-  rulesets) for the dashboard pickers, parses the account profile, and tries
-  `CHARACTER_LOOKUP_PATHS` in order for public lookups.
-- Members link characters by logging in with Battle.net (scope
-  `wow.profile`). That is the only way to read levels until public lookups
-  open; user tokens last about 24 hours and have no refresh token.
+  rulesets) for the dashboard pickers, guild rosters and character
+  profiles, and parses the account profile.
+- The guild roster (`roster.py`, `cogs/roster.py`) reads the configured
+  guild's roster every hour (every member, every level), and members link
+  characters to themselves with `/character link`.
+- Leveling (`cogs/leveling.py`) checks the profiles of characters from
+  level 10 every few minutes (recently active ones every time, idle ones
+  every few hours), so a level-up shows up minutes after the player logs
+  out, and congratulates milestones in a channel.
+- Logging in with Battle.net (account profile, scope `wow.profile`) isn't
+  used yet: user tokens last about 24 hours and have no refresh token.
 - The Maintenance page has a Blizzard API explorer for one-off requests.
 
 ## Probing it yourself

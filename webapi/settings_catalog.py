@@ -273,20 +273,25 @@ CATALOG: Dict[str, Entry] = {
     "POLL_FOOTER": Entry("polls", "Footer", "Small print under every poll. Empty: none."),
 
     # --- Guild roster -------------------------------------------------------------------------------------
-    "GUILD_ROSTER_SELF_SERVICE": Entry("roster", "Members manage their own characters",
-                                       "Off: only moderators (and Battle.net verification) add characters."),
-    "GUILD_ROSTER_KEEP_BATTLENET_LOGIN": Entry(
-        "roster", "Keep Battle.net logins for level updates",
-        "After a member verifies with Battle.net, keep the (read-only, encrypted) login while it's valid, about a "
-        "day, so their levels keep updating."),
+    "GUILD_ROSTER_GUILD": Entry("roster", "Guild name in the game",
+                                "Exactly as in the game, e.g. Encore. Every member and their level is read from "
+                                "Blizzard. Empty: only characters members link themselves are tracked."),
+    "GUILD_ROSTER_SELF_SERVICE": Entry("roster", "Members link their own characters",
+                                       "With /character link. Off: only moderators link characters."),
+    "GUILD_ROSTER_REFRESH_MINUTES": Entry("roster", "Read the guild roster every",
+                                          "Blizzard refreshes the roster every few hours itself.", unit="minutes",
+                                          advanced=True),
 
     # --- Leveling ----------------------------------------------------------------------------------------
     "LEVELING_CHANNEL_ID": Entry("leveling", "Announcement channel",
                                  "Where milestones are announced. Empty: no announcements."),
     "LEVELING_MILESTONES": Entry("leveling", "Milestones", "Levels that get an announcement.",
                                  widget="number_list"),
-    "LEVELING_ANNOUNCE_ALTS": Entry("leveling", "Announce alts too", "Off: mains only."),
-    "LEVELING_REFRESH_MINUTES": Entry("leveling", "Check for new levels every", unit="minutes"),
+    "LEVELING_ANNOUNCE_ALTS": Entry("leveling", "Announce alts too",
+                                    "Off: only a member's main, and characters nobody has linked yet."),
+    "LEVELING_REFRESH_MINUTES": Entry("leveling", "Check for new levels every",
+                                      "Blizzard updates a character when the player logs out, so a level-up shows up "
+                                      "this long after logging out at most.", unit="minutes"),
 
     # --- Notifications ---------------------------------------------------------------------------------
     "NOTIFICATIONS_CHANNEL_ID": Entry("notifications", "Channel", "Empty: the moderator channel."),

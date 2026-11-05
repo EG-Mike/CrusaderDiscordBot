@@ -143,8 +143,8 @@ FEATURE_AUDIT_LOG_ENABLED = True
 # stops, errors, dashboard changes) to a moderator channel - see the
 # "Notifications" settings below.
 FEATURE_NOTIFICATIONS_ENABLED = True
-# cogs/roster.py: the guild roster - in-game characters linked to Discord
-# members (/character), including "verify with Battle.net".
+# cogs/roster.py: the guild roster - in-game characters (read from
+# Blizzard) linked to Discord members (/character).
 FEATURE_ROSTER_ENABLED = True
 # cogs/leveling.py: leveling leaderboard and level milestone announcements.
 # Needs the roster.
@@ -231,15 +231,18 @@ BLIZZARD_LOCALE = "en_GB"
 CHARACTER_LOOKUP_PATHS = ["/profile/wow/character/{name}-{surname}"]
 
 # --- Guild roster (roster.py, cogs/roster.py) ---
-# Members may add and edit their own characters with /character. Off: only
-# moderators (and "verify with Battle.net") add characters.
-GUILD_ROSTER_SELF_SERVICE = True
+# The guild's in-game name, as Blizzard's API knows it (e.g. "Encore").
+# Its roster (every member and their level) is read from Blizzard. Empty:
+# only characters members link themselves are tracked.
+GUILD_ROSTER_GUILD = ""
 
-# Keep a member's Battle.net login (encrypted, read-only access to their
-# character list, valid for about a day) after they verify, so their
-# characters' levels keep updating until it expires. Off: characters are
-# only updated when they verify again.
-GUILD_ROSTER_KEEP_BATTLENET_LOGIN = True
+# How often (minutes) the guild roster is read from Blizzard. Blizzard
+# itself refreshes it every few hours, so more often gains little.
+GUILD_ROSTER_REFRESH_MINUTES = 60
+
+# Members may link their own characters with /character. Off: only
+# moderators link characters (in Discord or on the dashboard).
+GUILD_ROSTER_SELF_SERVICE = True
 
 # --- Leveling (cogs/leveling.py) ---
 # Channel where level milestones are announced. Empty: no announcements
@@ -249,11 +252,15 @@ LEVELING_CHANNEL_ID = 0
 # Levels that get an announcement when a character reaches them.
 LEVELING_MILESTONES = [10, 20, 30, 40, 50, 60]
 
-# Also announce milestones for alts (off: mains only).
+# Also announce milestones for alts (off: only mains, and characters not
+# linked to a member yet).
 LEVELING_ANNOUNCE_ALTS = False
 
-# How often (minutes) the bot checks Blizzard for new levels.
-LEVELING_REFRESH_MINUTES = 10
+# How often (minutes) the bot checks each character's profile for a new
+# level. Blizzard updates a profile when the player logs out, so this is
+# how soon after logging out a level-up is noticed. Characters below level
+# 10 have no profile: their levels come from the guild roster.
+LEVELING_REFRESH_MINUTES = 5
 
 # --- Notifications (cogs/notifications.py) ---
 # Channel the bot posts its notifications in. Leave it empty to use the
