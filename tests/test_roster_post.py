@@ -60,6 +60,7 @@ class RosterPostTests(DatabaseTestCase, unittest.IsolatedAsyncioTestCase):
             p.start()
         self.cog = roster_cog.RosterCog.__new__(roster_cog.RosterCog)
         self.cog.bot = SimpleNamespace(get_channel=lambda cid: self.channel if cid == 700 else None)
+        self.cog._post_lock = roster_cog.asyncio.Lock()
 
     def tearDown(self):
         for p in self._patches:
@@ -73,7 +74,9 @@ class RosterPostTests(DatabaseTestCase, unittest.IsolatedAsyncioTestCase):
         text = text_of(self.channel.sent[0])
         self.assertIn("## Encore", text)
         self.assertIn("2 characters", text)
-        self.assertIn("`15` <:priest:1> **Eggmike Thewhite** · <@111>", text)
+        self.assertIn("`Lv` ⚔️ `Character       ` **Discord**", text)  # column headers
+        self.assertIn("`15` <:priest:1> `Eggmike Thewhite` <@111>", text)
+        self.assertIn("`12` <:priest:1> `Jaina Proud     ` -", text)  # padded to the longest name
         self.assertLess(text.index("Eggmike"), text.index("Jaina"))  # highest level first
         self.assertIsNone(await self.cog.publish_roster())  # nothing changed: no edit
         self.assertEqual(self.channel.edited, [])
@@ -81,6 +84,27 @@ class RosterPostTests(DatabaseTestCase, unittest.IsolatedAsyncioTestCase):
         await self.cog.publish_roster()
         self.assertEqual(self.channel.edited, [9001])  # edited in place
         self.assertEqual(len(self.channel.sent), 1)
+
+    async def test_claim_buttons_on_the_last_message(self):
+        roster.store_roster([char(1, 15)], "encore")
+        with mock.patch.object(config, "GUILD_ROSTER_SELF_SERVICE", True):
+            await self.cog.publish_roster()
+        ids = [getattr(i, "custom_id", None) for i in self.channel.sent[0].walk_children()]
+        self.assertIn(roster_cog.CLAIM_ID, ids)
+        self.assertIn(roster_cog.MINE_ID, ids)
+        with mock.patch.object(config, "GUILD_ROSTER_SELF_SERVICE", False):
+            await self.cog.publish_roster()  # the setting changed: the post is edited, without "Claim"
+        self.assertEqual(self.channel.edited, [9001])
+
+    async def test_low_level_alts_are_left_out(self):
+        roster.store_roster([char(1, 15), char(2, 8, name="Jaina", surname="Proud"),
+                             char(3, 5, name="Low", surname="Main"), char(4, 7, name="Not", surname="Linked")], "encore")
+        roster.link("eggmike-thewhite", 111, by="Mike", as_moderator=True)
+        roster.link("jaina-proud", 111, by="Mike", as_moderator=True)  # an alt below 10
+        roster.link("low-main", 222, by="Mike", as_moderator=True)     # a main below 10
+        with mock.patch.object(config, "GUILD_ROSTER_POST_MIN_LEVEL", 10):
+            names = [c["slug"] for c in roster.posted_characters()]
+        self.assertEqual(names, ["eggmike-thewhite", "low-main"])
 
     async def test_deleted_message_is_posted_again(self):
         roster.store_roster([char(1, 15)], "encore")
@@ -99,6 +123,71 @@ class RosterPostTests(DatabaseTestCase, unittest.IsolatedAsyncioTestCase):
         with mock.patch.object(config, "GUILD_ROSTER_CHANNEL_ID", 0):
             self.assertIsNone(await self.cog.publish_roster())
         self.assertEqual(self.channel.sent, [])
+
+
+
+
+class ClaimTests(DatabaseTestCase, unittest.IsolatedAsyncioTestCase):
+    """The "Claim a character" and "My characters" buttons."""
+
+    def setUp(self):
+        super().setUp()
+        self._config = mock.patch.multiple(config, GAME_VERSION="forever", SERVER_REGION="eu",
+                                           GUILD_ROSTER_GUILD="Encore", GUILD_ROSTER_CHANNEL_ID=0,
+                                           GUILD_ROSTER_SELF_SERVICE=True, GUILD_ROSTER_POST_MIN_LEVEL=10)
+        self._config.start()
+        self.cog = roster_cog.RosterCog.__new__(roster_cog.RosterCog)
+        self.cog.bot = SimpleNamespace(get_channel=lambda cid: None)
+        self.cog._post_lock = roster_cog.asyncio.Lock()
+        roster.store_roster([char(1, 15), char(2, 8, name="Jaina", surname="Proud")], "encore")
+
+    def tearDown(self):
+        self._config.stop()
+        super().tearDown()
+
+    def interaction(self, user_id=111):
+        replies = []
+        response = SimpleNamespace(is_done=lambda: True, defer=mock.AsyncMock())
+        followup = SimpleNamespace(send=mock.AsyncMock(side_effect=lambda text, **kw: replies.append(text)))
+        user = SimpleNamespace(id=user_id, guild_permissions=SimpleNamespace(administrator=False,
+                                                                             manage_guild=False), roles=[])
+        user.__str__ = lambda self: "Member"
+        return SimpleNamespace(user=user, response=response, followup=followup), replies
+
+    async def test_claim_main_then_alt(self):
+        interaction, replies = self.interaction()
+        await self.cog.claim(interaction, "Eggmike Thewhite", "main")
+        self.assertIn("as your main", replies[-1])
+        await self.cog.claim(interaction, "Jaina Proud", "alt")
+        self.assertIn("as an alt", replies[-1])
+        self.assertIn("from level 10", replies[-1])  # a low alt isn't on the posted roster
+        mine = {c["slug"]: c["is_main"] for c in roster.characters(discord_id=111)}
+        self.assertEqual(mine, {"eggmike-thewhite": 1, "jaina-proud": 0})
+
+    async def test_cannot_claim_someone_elses_character(self):
+        roster.link("eggmike-thewhite", 222, by="Mod", as_moderator=True)
+        interaction, replies = self.interaction()
+        await self.cog.claim(interaction, "Eggmike Thewhite", "main")
+        self.assertIn("already linked to someone else", replies[-1])
+        self.assertEqual(roster.get("eggmike-thewhite")["discord_id"], 222)
+
+    async def test_claiming_needs_self_service(self):
+        interaction, replies = self.interaction()
+        with mock.patch.object(config, "GUILD_ROSTER_SELF_SERVICE", False), \
+                mock.patch.object(roster_cog, "is_moderator", lambda m: False):
+            await self.cog.claim(interaction, "Eggmike Thewhite", "main")
+        self.assertIn("Ask a moderator", replies[-1])
+        self.assertIsNone(roster.get("eggmike-thewhite")["discord_id"])
+
+    async def test_my_characters_actions(self):
+        roster.link("eggmike-thewhite", 111, by="Mike", as_moderator=False)
+        roster.link("jaina-proud", 111, by="Mike", as_moderator=False)
+        interaction, _ = self.interaction()
+        self.assertIn("is now your main", await self.cog.change_own(interaction, "jaina-proud", "main"))
+        self.assertEqual(roster.get("eggmike-thewhite")["is_main"], 0)
+        self.assertIn("isn't yours", await self.cog.change_own(self.interaction(222)[0], "jaina-proud", "unlink"))
+        self.assertIn("no longer linked", await self.cog.change_own(interaction, "jaina-proud", "unlink"))
+        self.assertEqual(roster.get("eggmike-thewhite")["is_main"], 1)  # the other one became the main
 
 
 if __name__ == "__main__":

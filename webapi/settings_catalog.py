@@ -304,8 +304,11 @@ CATALOG: Dict[str, Entry] = {
                                      "The bot keeps the guild roster posted here (class, level, character and "
                                      "member) and updates it when it changes. Best a channel only the bot can "
                                      "post in. Empty: not posted."),
+    "GUILD_ROSTER_POST_MIN_LEVEL": Entry("roster", "List characters from level",
+                                         "The posted roster leaves out lower characters, except members' mains.",
+                                         unit="level"),
     "GUILD_ROSTER_SELF_SERVICE": Entry("roster", "Members link their own characters",
-                                       "With /character link. Off: only moderators link characters."),
+                                       "With the Claim button under the posted roster, or /character link. Off: only moderators link characters."),
     "GUILD_ROSTER_REFRESH_MINUTES": Entry("roster", "Read the guild roster every",
                                           "Blizzard refreshes the roster every few hours itself.", unit="minutes",
                                           advanced=True),

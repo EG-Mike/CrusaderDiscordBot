@@ -250,6 +250,10 @@ GUILD_ROSTER_REFRESH_MINUTES = 60
 # moderators link characters (in Discord or on the dashboard).
 GUILD_ROSTER_SELF_SERVICE = True
 
+# The posted roster lists characters from this level, plus every member's
+# main whatever its level.
+GUILD_ROSTER_POST_MIN_LEVEL = 10
+
 # Channel where the bot keeps the guild roster posted (class icon, level,
 # character, Discord member), edited whenever it changes. Best a channel
 # only the bot can post in. Empty: not posted.

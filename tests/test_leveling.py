@@ -65,6 +65,20 @@ class AnnounceTests(DatabaseTestCase, unittest.IsolatedAsyncioTestCase):
         self.assertIn("Congratulations Nobody! **Nobody Linked**", self.sent[0][0])
         self.assertEqual({e["outcome"] for e in roster.recent_events()}, {"announced", "alt"})
 
+    async def test_milestones_are_grouped(self):
+        names = [("Aa", "One"), ("Bb", "Two"), ("Cc", "Three"), ("Dd", "Four")]
+        roster.store_roster([char(i, 9, name=n, surname=s) for i, (n, s) in enumerate(names, start=1)], "encore")
+        roster.store_roster([char(i, 10, name=n, surname=s) for i, (n, s) in enumerate(names, start=1)], "encore")
+        self.assertEqual(await self.cog.announce_pending(), 4)
+        self.assertEqual(len(self.sent), 1)  # one message, a line each
+        self.assertEqual(self.sent[0][0].count("\n"), 3)
+        self.assertEqual({e["outcome"] for e in roster.recent_events()}, {"announced"})
+
+    def test_group_lines_respects_the_limit(self):
+        groups = leveling.group_lines([(i, "x" * 600) for i in range(5)], limit=2000)
+        self.assertEqual([ids for ids, _ in groups], [[0, 1, 2], [3, 4]])
+        self.assertTrue(all(len(text) <= 2000 for _, text in groups))
+
     async def test_failed_post_is_retried(self):
         roster.store_roster([char(1, 9)], "encore")
         roster.store_roster([char(1, 10)], "encore")

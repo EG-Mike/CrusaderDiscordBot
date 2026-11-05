@@ -94,9 +94,12 @@ def characters(*, discord_id: Optional[int] = None) -> List[dict]:
 
 def posted_characters() -> List[dict]:
     """What the roster posted in Discord lists: the guild's members (every
-    linked character when no guild is set), highest level first."""
+    linked character when no guild is set) from GUILD_ROSTER_POST_MIN_LEVEL,
+    plus mains of any level, highest level first."""
     guild = wow_api.slug(config.GUILD_ROSTER_GUILD or "")
-    return [c for c in characters() if (c["guild_slug"] == guild if guild else c["discord_id"])]
+    min_level = int(config.GUILD_ROSTER_POST_MIN_LEVEL or 0)
+    return [c for c in characters() if (c["guild_slug"] == guild if guild else c["discord_id"])
+            and ((c["level"] or 0) >= min_level or c["is_main"])]
 
 
 def leaderboard(limit: int = 10, *, mains_only: bool = False) -> List[dict]:
@@ -326,6 +329,19 @@ def set_main(character_slug: str, *, discord_id: int, as_moderator: bool) -> dic
         conn.execute("UPDATE roster_characters SET is_main = 1, updated_at = ? "
                      "WHERE game = ? AND region = ? AND character_id = ?",
                      (timestamp(), game, region, c["character_id"]))
+    return get(character_slug)
+
+
+def set_alt(character_slug: str, *, discord_id: int, as_moderator: bool) -> dict:
+    """Marks a linked character as an alt (not the member's main)."""
+    c = get(character_slug)
+    if c is None or not c["discord_id"]:
+        raise RosterError("Link the character to a member first.")
+    if c["discord_id"] != int(discord_id) and not as_moderator:
+        raise RosterError(f"{display_name(c)} isn't yours.")
+    game, region = _scope()
+    db.execute("UPDATE roster_characters SET is_main = 0, updated_at = ? WHERE game = ? AND region = ? "
+               "AND character_id = ?", (timestamp(), game, region, c["character_id"]))
     return get(character_slug)
 
 
