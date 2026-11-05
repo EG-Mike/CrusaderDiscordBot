@@ -16,10 +16,10 @@ Inside the test container:
 Options:
   --region eu|us|kr|tw   API region (default: SERVER_REGION, else eu)
   --character "First Surname" or "First"   (repeatable) characters to look up
-  --realm SLUG           realm slug for lookups that need one
+  --realm SLUG           also try realm-style paths with this slug (Forever has
+                         rulesets instead of realms, so this is only for
+                         checking whether Blizzard ever adds them back)
   --guild NAME           (repeatable) guilds to look up
-  --all-realms           also try every player realm for characters and guilds
-                         (many requests; use when a realm-based path is expected)
   --login                log in with Battle.net (authorization code flow) to
                          read /profile/user/wow; prints a link, you paste back
                          the address you land on
@@ -67,8 +67,7 @@ REGIONS = ("eu", "us", "kr", "tw")
 LOCALES = {"eu": "en_GB", "us": "en_US", "kr": "ko_KR", "tw": "zh_TW"}
 KEEP_HEADERS = ("battlenet-namespace", "battlenet-schema", "battlenet-schema-revision", "last-modified",
                 "cache-control")
-LINKS_PER_ANSWER = 2  # a sample of each kind of linked document, not all 26 realms
-SERVICE_REALM = re.compile(r"-(web|gmss|partner|account|log|csi)(-\d+)?$")
+LINKS_PER_ANSWER = 2  # a sample of each kind of linked document, not all of them
 
 # Game data worth knowing about for the roster, leveling and raid features.
 STATIC_PATHS = [
@@ -81,7 +80,8 @@ STATIC_PATHS = [
     "/data/wow/media/playable-class/1",
 ]
 DYNAMIC_PATHS = [
-    "/data/wow/region/index", "/data/wow/realm/index", "/data/wow/connected-realm/index",
+    "/data/wow/region/index", "/data/wow/ruleset/index", "/data/wow/realm/index",
+    "/data/wow/connected-realm/index",
     "/data/wow/mythic-keystone/index", "/data/wow/pvp-season/index", "/data/wow/token/index",
     "/data/wow/auctions/commodities",
 ]
@@ -246,9 +246,9 @@ async def versions(http: aiohttp.ClientSession) -> dict:
     return {r.get("Region", "?"): r.get("VersionsName", "?") for r in rows} or {"raw": text[:500]}
 
 
-def player_realms(result: dict) -> List[dict]:
-    realms = (result.get("body") or {}).get("realms", []) if result["status"] == 200 else []
-    return [r for r in realms if r.get("slug") and not SERVICE_REALM.search(r["slug"])]
+def ruleset_ids(result: dict) -> List[int]:
+    rulesets = (result.get("body") or {}).get("rulesets", []) if result["status"] == 200 else []
+    return [r["id"] for r in rulesets if "id" in r]
 
 
 async def run(args) -> dict:
@@ -279,25 +279,29 @@ async def run(args) -> dict:
         await probe.get("/data/wow/realm/index", f"dynamic-bogus-{region}", section="namespaces")
 
         print("\nDynamic data:")
-        realm_index = None
+        ruleset_index = None
         for path in DYNAMIC_PATHS:
             result = await probe.get(path, ns["dynamic"], section="dynamic")
-            if path == "/data/wow/realm/index":
-                realm_index = result
-        realms = player_realms(realm_index or {"status": 0})
-        if realms:
-            first = realms[0]
-            await probe.get(f"/data/wow/realm/{first['slug']}", ns["dynamic"], section="dynamic")
-            await probe.get(f"/data/wow/connected-realm/{first['id']}", ns["dynamic"], section="dynamic")
-        print(f"  ({len(realms)} player realms)")
+            if path == "/data/wow/ruleset/index":
+                ruleset_index = result
+        rulesets = ruleset_ids(ruleset_index or {"status": 0})
+        for ruleset_id in rulesets:  # name and status (up/down) of each
+            await probe.get(f"/data/wow/ruleset/{ruleset_id}", ns["dynamic"], section="dynamic")
+        if rulesets:  # one ruleset's auction houses, as a sample
+            houses = await probe.get(f"/data/wow/ruleset/{rulesets[0]}/auctions/index", ns["dynamic"],
+                                     section="dynamic")
+            first_house = next(iter((houses.get("body") or {}).get("auctions", [])), None)
+            if first_house:
+                house = f"/data/wow/ruleset/{rulesets[0]}/auctions/{first_house['id']}"
+                await probe.get(house, ns["dynamic"], section="dynamic")
+                await probe.get(house + "/commodities", ns["dynamic"], section="dynamic")
+        print(f"  ({len(rulesets)} rulesets)")
 
         print("\nStatic data:")
         for path in STATIC_PATHS:
             await probe.get(path, ns["static"], section="static")
 
         realm_slugs = [slug(args.realm)] if args.realm else []
-        if args.all_realms:
-            realm_slugs += [r["slug"] for r in realms if r["slug"] not in realm_slugs]
 
         characters_found = []
         if args.character:
@@ -311,7 +315,7 @@ async def run(args) -> dict:
                 candidates.append(f"/profile/wow/character/{realm_slug}/{first}-{surname}" if surname else None)
                 candidates.append(f"/profile/wow/character/{realm_slug}/{first}")
             for path in filter(None, candidates):
-                result = await probe.get(path, ns["profile"], section="characters", quiet=len(realm_slugs) > 3)
+                result = await probe.get(path, ns["profile"], section="characters")
                 if result["status"] == 200:
                     characters_found.append(path)
                     break
@@ -322,9 +326,9 @@ async def run(args) -> dict:
         if args.guild:
             print("\nGuilds:")
         for name in args.guild or []:
-            for realm_slug in realm_slugs or [None]:
+            for realm_slug in [None] + realm_slugs:
                 path = f"/data/wow/guild/{realm_slug}/{slug(name)}" if realm_slug else f"/data/wow/guild/{slug(name)}"
-                result = await probe.get(path, ns["profile"], section="guilds", quiet=len(realm_slugs) > 3)
+                result = await probe.get(path, ns["profile"], section="guilds")
                 if result["status"] == 200:
                     for sub in GUILD_SUBPATHS[1:]:
                         await probe.get(path + sub, ns["profile"], section="guilds")
@@ -397,7 +401,6 @@ def main():
     parser.add_argument("--character", action="append", help='"First Surname" (repeatable)')
     parser.add_argument("--realm")
     parser.add_argument("--guild", action="append")
-    parser.add_argument("--all-realms", action="store_true")
     parser.add_argument("--login", action="store_true")
     parser.add_argument("--redirect-uri", default=None)
     parser.add_argument("--user-token")

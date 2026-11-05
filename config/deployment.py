@@ -215,7 +215,8 @@ GAME_VERSION = "forever"
 
 # Blizzard API namespaces for that game (the region is added automatically,
 # e.g. "static-forever" becomes "static-forever-eu"). Static = game data
-# (classes, items), dynamic = realms, profile = characters and accounts.
+# (classes, items), dynamic = rulesets and auction houses (Forever has no
+# realms), profile = characters and accounts.
 BLIZZARD_STATIC_NAMESPACE = "static-forever"
 BLIZZARD_DYNAMIC_NAMESPACE = "dynamic-forever"
 BLIZZARD_PROFILE_NAMESPACE = "profile-forever"
@@ -224,10 +225,11 @@ BLIZZARD_PROFILE_NAMESPACE = "profile-forever"
 BLIZZARD_LOCALE = "en_GB"
 
 # How to look a character up by name, tried in order until one answers.
-# {name}, {surname} and {realm} (the realm's slug) are filled in. Public
-# character lookups for WoW Forever weren't open yet at launch; the System
-# log and the API explorer (Maintenance) show what Blizzard answers.
-CHARACTER_LOOKUP_PATHS = ["/profile/wow/character/{name}-{surname}", "/profile/wow/character/{realm}/{name}"]
+# {name} and {surname} are filled in (Forever names are unique per region,
+# so there's no realm). Public character lookups for WoW Forever weren't
+# open yet after launch; the API explorer (Maintenance) shows what
+# Blizzard answers.
+CHARACTER_LOOKUP_PATHS = ["/profile/wow/character/{name}-{surname}"]
 
 # --- Guild roster (roster.py, cogs/roster.py) ---
 # Members may add and edit their own characters with /character. Off: only

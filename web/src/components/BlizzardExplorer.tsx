@@ -35,9 +35,9 @@ type Kind = "static" | "dynamic" | "profile" | "custom";
 
 // Starting points: what the bot uses, and what to check once Blizzard opens more.
 const PRESETS: { label: string; kind: Exclude<Kind, "custom">; path: string }[] = [
-  { label: "Realms", kind: "dynamic", path: "/data/wow/realm/index" },
+  { label: "Rulesets", kind: "dynamic", path: "/data/wow/ruleset/index" },
   { label: "Region", kind: "dynamic", path: "/data/wow/region/index" },
-  { label: "Connected realms", kind: "dynamic", path: "/data/wow/connected-realm/index" },
+  { label: "Auction houses", kind: "dynamic", path: "/data/wow/ruleset/2/auctions/index" },
   { label: "Classes", kind: "static", path: "/data/wow/playable-class/index" },
   { label: "Specs", kind: "static", path: "/data/wow/playable-specialization/index" },
   { label: "Races", kind: "static", path: "/data/wow/playable-race/index" },
@@ -45,8 +45,7 @@ const PRESETS: { label: string; kind: Exclude<Kind, "custom">; path: string }[] 
   { label: "Raids (journal)", kind: "static", path: "/data/wow/journal-instance/index" },
   { label: "Achievements", kind: "static", path: "/data/wow/achievement/index" },
   { label: "Character", kind: "profile", path: "/profile/wow/character/first-surname" },
-  { label: "Character (realm)", kind: "profile", path: "/profile/wow/character/realm-slug/first-surname" },
-  { label: "Guild", kind: "profile", path: "/data/wow/guild/realm-slug/guild-name" },
+  { label: "Guild", kind: "profile", path: "/data/wow/guild/guild-name" },
 ];
 
 const tone = (status: number) => (status === 200 ? "ok" : status === 404 ? "warn" : "crimson");
@@ -56,7 +55,7 @@ export default function BlizzardExplorer() {
   const [region, setRegion] = useState("");
   const [kind, setKind] = useState<Kind>("dynamic");
   const [custom, setCustom] = useState("");
-  const [path, setPath] = useState("/data/wow/realm/index");
+  const [path, setPath] = useState("/data/wow/ruleset/index");
   const [busy, setBusy] = useState(false);
   const [answer, setAnswer] = useState<Answer | null>(null);
   const [failure, setFailure] = useState<string | null>(null);

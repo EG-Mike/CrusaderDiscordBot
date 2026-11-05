@@ -304,20 +304,21 @@ CATALOG: Dict[str, Entry] = {
     # --- Blizzard ------------------------------------------------------------------------------------
     "GAME_VERSION": Entry("blizzard", "Game", "Characters are kept per game, so switching keeps them apart.",
                           choices=[("forever", "WoW Forever")], advanced=True),
-    "BLIZZARD_LOCALE": Entry("blizzard", "Language", "Language of names from Blizzard (classes, items, realms).",
+    "BLIZZARD_LOCALE": Entry("blizzard", "Language", "Language of names from Blizzard (classes, items, rulesets).",
                              choices=[("en_GB", "English (UK)"), ("en_US", "English (US)"), ("de_DE", "German"),
                                       ("fr_FR", "French"), ("es_ES", "Spanish"), ("it_IT", "Italian"),
                                       ("pt_BR", "Portuguese"), ("ru_RU", "Russian")]),
     "BLIZZARD_STATIC_NAMESPACE": Entry("blizzard", "Game data namespace",
                                        "For classes, specs and items. The region is added automatically.",
                                        advanced=True),
-    "BLIZZARD_DYNAMIC_NAMESPACE": Entry("blizzard", "Realm namespace", "For realms. The region is added "
-                                                                       "automatically.", advanced=True),
+    "BLIZZARD_DYNAMIC_NAMESPACE": Entry("blizzard", "Ruleset namespace",
+                                        "For rulesets and auction houses. The region is added automatically.",
+                                        advanced=True),
     "BLIZZARD_PROFILE_NAMESPACE": Entry("blizzard", "Character namespace", "For characters and accounts. The region "
                                                                            "is added automatically.", advanced=True),
     "CHARACTER_LOOKUP_PATHS": Entry(
         "blizzard", "Character lookup paths",
-        "Tried in order until one answers; {name}, {surname} and {realm} are filled in. Try paths in the "
+        "Tried in order until one answers; {name} and {surname} are filled in. Try paths in the "
         "Blizzard API explorer (Maintenance) first.", widget="text_list", advanced=True),
 
     # --- WarcraftLogs --------------------------------------------------------------------------------------

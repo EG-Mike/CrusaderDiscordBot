@@ -1,10 +1,10 @@
 """
 Dashboard API for Blizzard game data (wow_api.py).
 
-  GET  /api/game/reference          classes/specs, races, professions, realms for pickers
+  GET  /api/game/reference          classes/specs, races, professions, rulesets for pickers
                                     (moderators; ?fresh=1 skips the cache, admins)
   POST /api/game/explore            one raw Blizzard API request for debugging (admins):
-                                    {"path": "/data/wow/realm/index", "namespace": "dynamic-forever-eu",
+                                    {"path": "/data/wow/ruleset/index", "namespace": "dynamic-forever-eu",
                                      "region": "eu"}
 
 The explorer uses the app's own token only (never a member's Battle.net
