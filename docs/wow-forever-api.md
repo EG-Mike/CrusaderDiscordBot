@@ -12,7 +12,7 @@ something changes; Blizzard opens things up without notice.
 |---|---|
 | `static-forever-{region}` | Open since launch maintenance (Nov 4). An alias: the `battlenet-namespace` response header names the real one (`static-1.60.1_70399-forever-eu`). |
 | `dynamic-forever-{region}` | Open. **Forever has rulesets instead of realms**: since launch `ruleset/index` and `ruleset/{id}` answer, while `realm/index`, `realm/{id or slug}`, connected realms and realm search are gone (404 / empty). Auction houses hang off rulesets. Regions still answer; PvP and the WoW token are 404. |
-| `profile-forever-{region}` | Open for a player's own account profile (user token). Public character and guild lookups were still 404 after launch. |
+| `profile-forever-{region}` | Open: public character profiles (from level 10) and guilds by name, with the app's own token, plus a player's own account profile (user token). |
 
 Regions: `eu`, `us`, `kr`, `tw` on the usual `{region}.api.blizzard.com`
 hosts.
@@ -65,25 +65,39 @@ settings change, not a code change.
   (`/profile/user/wow/protected-character/6855-716333` = realm 6855,
   character 716333). Characters appear only after logging into the game and
   out again; an account without Forever characters answers 404.
-- **Not yet (404)**: `/profile/wow/character/{first}-{surname}` (the link
-  the account profile itself gives), guilds (`/data/wow/guild/{name}`,
-  and the retail-style `/data/wow/guild/{realm}/{name}`), protected
-  characters and collections.
+- **Characters (profile, 200 from level 10)**: `/profile/wow/character/{first}-{surname}`
+  (lowercase, e.g. `eggmike-thewhite`; no realm or ruleset in the path).
+  The profile has `level`, `experience`, `surname`, class, race, faction,
+  `ruleset` ({id, name}), `guild` (with its `slug`), `last_login_timestamp`
+  and item level. It's updated **when the player logs out** (`last-modified`
+  is the logout time), not live. Sub-documents that answer: `status`,
+  `equipment`, `specializations`, `professions`, `statistics`,
+  `achievements`, `appearance`, `titles`, `reputations`, `collections`,
+  `pvp-summary`, `encounters` (+ `/raids`), `quests/completed`.
+  `character-media` and `hunter-pets` are 404.
+- **Guilds (profile, 200)**: `/data/wow/guild/{slug}` (the slug from a
+  character's `guild`, e.g. `encore`; no realm or ruleset in the path), with
+  `ruleset`, `member_count` and `faction`. `/roster` lists **every member,
+  including those below level 10**, each with `name`, `surname`, `slug`,
+  `level`, class, race and guild `rank` (0 = guild master). The roster is a
+  periodic snapshot (`cache-control: max-age=10800`, i.e. up to 3 hours old),
+  so per-character profiles are fresher. `/activity` and `/achievements`
+  answer too.
+- **Not yet (404)**: protected characters, `character-media`.
 
 Forever names look unique per region (first name + surname), which is why
 character links carry no realm.
 
-**Likely reason public lookups are 404: the level-10 rule.** In the modern
-game's API (and the official Armory), a character's public profile only
-exists from level 10, after it has logged out at that level, and it drops
-off after long inactivity. All characters checked so far were below 10, so
-the 404s may simply be this rather than lookups being closed. The account
-profile (user token) lists characters of every level.
+**The level-10 rule.** As in the modern game's API (and the official
+Armory), a character's public profile only exists from level 10, after it
+has logged out at that level (and it drops off after long inactivity).
+Below that, lookups are 404; the guild roster and the account profile
+(user token) still list those characters with their level.
 
-Test character for checks: **Eggmike Thewhite**, EU, PvP ruleset (id 1).
-On 2026-11-05 every lookup variant (`{first}-{surname}`, first name only,
-with `pvp` or `1` in front, the pre-launch realm slugs, eu and us) was 404
-while it was below level 10. Re-check once it's level 10+ and logged out:
+Test character for checks: **Eggmike Thewhite**, EU, PvP ruleset (id 1),
+guild Encore. On 2026-11-05 every lookup was 404 while it was below level
+10; at level 15, after logging out, `/profile/wow/character/eggmike-thewhite`
+answered with level 15 and the guild. To re-check:
 
 ```bash
 python scripts/probe_blizzard_api.py --region eu --character "Eggmike Thewhite"
@@ -93,7 +107,7 @@ python scripts/probe_blizzard_api.py --region eu --character "Eggmike Thewhite"
 
 - `wow_api.py` reads reference data (classes, specs, races, professions,
   rulesets) for the dashboard pickers, parses the account profile, and tries
-  `CHARACTER_LOOKUP_PATHS` in order for public lookups (none answer yet).
+  `CHARACTER_LOOKUP_PATHS` in order for public lookups.
 - Members link characters by logging in with Battle.net (scope
   `wow.profile`). That is the only way to read levels until public lookups
   open; user tokens last about 24 hours and have no refresh token.

@@ -14,8 +14,10 @@ What WoW Forever's API offered at launch (see docs/wow-forever-api.md):
     realm index that existed before launch is gone (404).
   - profile-forever: a player's own account profile with a user token
     (/profile/user/wow, scope wow.profile) lists their characters with
-    name, surname, class, race, faction and level. Public character and
-    guild lookups by name were still 404.
+    name, surname, class, race, faction and level, at every level.
+    Public character profiles (/profile/wow/character/{first}-{surname},
+    from level 10, updated at logout) and guilds (/data/wow/guild/{slug},
+    whose roster lists every member's level) answer with the app's token.
   A namespace that doesn't exist answers 403; an existing one with nothing
   at that path answers 404.
 """
@@ -188,8 +190,8 @@ async def lookup_character(bot, name: str, surname: Optional[str] = None,
                            session: Optional[aiohttp.ClientSession] = None) -> Optional[dict]:
     """A character's public profile, trying CHARACTER_LOOKUP_PATHS in order
     ({name} and {surname} are filled in; Forever names are unique per
-    region, so there's no realm). None when no path answered 200 (expected
-    for WoW Forever until Blizzard opens public lookups)."""
+    region, so there's no realm). None when no path answered 200, e.g. a
+    character below level 10, which has no public profile."""
     client = _client(bot)
     for template in config.CHARACTER_LOOKUP_PATHS or []:
         fields = {f for _, f, _, _ in string.Formatter().parse(template) if f}

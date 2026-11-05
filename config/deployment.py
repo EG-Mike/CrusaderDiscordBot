@@ -226,9 +226,8 @@ BLIZZARD_LOCALE = "en_GB"
 
 # How to look a character up by name, tried in order until one answers.
 # {name} and {surname} are filled in (Forever names are unique per region,
-# so there's no realm). Public character lookups for WoW Forever weren't
-# open yet after launch; the API explorer (Maintenance) shows what
-# Blizzard answers.
+# so there's no realm). Characters can be looked up from level 10; the
+# API explorer (Maintenance) shows what Blizzard answers.
 CHARACTER_LOOKUP_PATHS = ["/profile/wow/character/{name}-{surname}"]
 
 # --- Guild roster (roster.py, cogs/roster.py) ---
