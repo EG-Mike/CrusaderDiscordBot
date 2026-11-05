@@ -32,6 +32,7 @@ from discord.ext import commands
 
 import announcements as service
 import config
+from permissions import member_is_moderator
 from storage import ApplicationStore
 
 log = logging.getLogger("wow-apply-bot.announcements")
@@ -105,21 +106,9 @@ class AnnouncementsCog(commands.Cog):
 
     # --- permission check ------------------------------------------------
 
-    async def _is_mod(self, guild: discord.Guild, user_id: int) -> bool:
-        if guild is None:
-            return False
-        member = guild.get_member(user_id)
-        if member is None:
-            try:
-                member = await guild.fetch_member(user_id)
-            except discord.HTTPException:
-                return False
-        if member.guild_permissions.manage_roles:
-            return True
-        return bool(config.MOD_ROLE_ID) and any(role.id == config.MOD_ROLE_ID for role in member.roles)
 
     async def _refuse_non_mod(self, interaction: discord.Interaction, what: str) -> bool:
-        if await self._is_mod(interaction.guild, interaction.user.id):
+        if await member_is_moderator(interaction.guild, interaction.user.id):
             return False
         await interaction.response.send_message(f"Only moderators can {what}.", ephemeral=True)
         return True

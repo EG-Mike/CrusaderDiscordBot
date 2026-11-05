@@ -76,6 +76,7 @@ from discord.ext import commands
 import config
 import icons
 from storage import ApplicationStore
+from permissions import member_is_moderator
 
 log = logging.getLogger("wow-apply-bot.tier_retrospective")
 
@@ -183,7 +184,6 @@ class TierRetrospectiveModal(discord.ui.Modal, title="Retrospective Note"):
 class TierRetrospectiveCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.mod_role_id = config.MOD_ROLE_ID
         self.sandbox_channel_id = (config.ANNOUNCEMENT_SANDBOX_CHANNEL_ID or None)
         # Own dedicated store, same "one small file per subsystem" reasoning
         # raid_summary.py's own split from applications.json used.
@@ -191,13 +191,6 @@ class TierRetrospectiveCog(commands.Cog):
 
     # --- permission check (self-contained, same as other cogs) -----------
 
-    async def _is_mod(self, guild: discord.Guild, user_id: int) -> bool:
-        member = guild.get_member(user_id) or await guild.fetch_member(user_id)
-        if member is None:
-            return False
-        if member.guild_permissions.manage_roles:
-            return True
-        return any(role.id == self.mod_role_id for role in member.roles)
 
     # --- aggregation ---------------------------------------------------
 
@@ -783,7 +776,7 @@ class TierRetrospectiveCog(commands.Cog):
         ],
     )
     async def tier_retrospective(self, interaction: discord.Interaction, tier: str):
-        if not await self._is_mod(interaction.guild, interaction.user.id):
+        if not await member_is_moderator(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can draft a tier retrospective.", ephemeral=True)
             return
         if not self.sandbox_channel_id:
@@ -840,7 +833,7 @@ class TierRetrospectiveCog(commands.Cog):
     # --- editing / regenerating the draft ---------------------------------
 
     async def _on_note_click(self, interaction: discord.Interaction):
-        if not await self._is_mod(interaction.guild, interaction.user.id):
+        if not await member_is_moderator(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can edit this.", ephemeral=True)
             return
         record = self.store.get(interaction.message.id)
@@ -909,7 +902,7 @@ class TierRetrospectiveCog(commands.Cog):
         await interaction.followup.send("Updated.", ephemeral=True)
 
     async def _on_regenerate_click(self, interaction: discord.Interaction):
-        if not await self._is_mod(interaction.guild, interaction.user.id):
+        if not await member_is_moderator(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can regenerate this.", ephemeral=True)
             return
         record = self.store.get(interaction.message.id)
@@ -977,7 +970,7 @@ class TierRetrospectiveCog(commands.Cog):
     # --- publishing --------------------------------------------------------
 
     async def _on_publish_click(self, interaction: discord.Interaction):
-        if not await self._is_mod(interaction.guild, interaction.user.id):
+        if not await member_is_moderator(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can publish this.", ephemeral=True)
             return
         record = self.store.get(interaction.message.id)

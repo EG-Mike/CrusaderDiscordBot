@@ -34,7 +34,7 @@ import gear
 import icons
 import roster
 import wow_api
-from permissions import is_moderator
+from permissions import is_moderator, member_is_moderator
 
 log = logging.getLogger("wow-apply-bot.apply")
 
@@ -390,7 +390,6 @@ class ApplyCog(commands.Cog):
         self.bot = bot
         self.review_channel_id = config.REVIEW_CHANNEL_ID
         self.fresh_role_id = config.FRESH_ROLE_ID
-        self.mod_role_id = config.MOD_ROLE_ID
         self.server_slug = config.SERVER_SLUG
         self.server_region = config.SERVER_REGION
         self.start_view = StartApplicationView(self)
@@ -1200,18 +1199,11 @@ class ApplyCog(commands.Cog):
 
     # --- moderator approve/deny/reset --------------------------------------
 
-    async def _is_mod(self, guild, user_id) -> bool:
-        member = guild.get_member(user_id) or await guild.fetch_member(user_id)
-        if member is None:
-            return False
-        if member.guild_permissions.manage_roles:
-            return True
-        return any(role.id == self.mod_role_id for role in member.roles)
 
     async def _is_approver(self, guild, user_id) -> bool:
         """Gate for the Approve/Deny/Reset buttons specifically - see
         config.APPROVER_ROLE_ID's comment for why this is separate from
-        the broader _is_mod check every other action in this cog uses."""
+        the broader moderator check (permissions.py) every other action in this cog uses."""
         member = guild.get_member(user_id) or await guild.fetch_member(user_id)
         if member is None:
             return False
@@ -1591,7 +1583,7 @@ class ApplyCog(commands.Cog):
         name="archive", description="Move all approved/denied applications to the archive channel"
     )
     async def gearcheck_archive(self, interaction: discord.Interaction):
-        if not await self._is_mod(interaction.guild, interaction.user.id):
+        if not await member_is_moderator(interaction.guild, interaction.user.id):
             await interaction.response.send_message(
                 "Only moderators can archive applications.", ephemeral=True
             )

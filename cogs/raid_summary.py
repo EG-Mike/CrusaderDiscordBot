@@ -182,6 +182,7 @@ import gargul_loot
 import wowhead
 from wcl_client import extract_report_code as _extract_report_code
 from storage import ApplicationStore
+from permissions import member_is_moderator
 
 log = logging.getLogger("wow-apply-bot.raidsummary")
 
@@ -635,7 +636,6 @@ class RaidSummaryCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.forum_channel_id = config.RAID_SUMMARY_FORUM_CHANNEL_ID
-        self.mod_role_id = config.MOD_ROLE_ID
         self.server_slug = config.SERVER_SLUG
         self.server_region = config.SERVER_REGION
         self.guild_name = (config.GUILD_NAME or None)  # optional - enables the guild-rank section
@@ -676,13 +676,6 @@ class RaidSummaryCog(commands.Cog):
 
     # --- permission check (self-contained, same as other cogs) -----------
 
-    async def _is_mod(self, guild: discord.Guild, user_id: int) -> bool:
-        member = guild.get_member(user_id) or await guild.fetch_member(user_id)
-        if member is None:
-            return False
-        if member.guild_permissions.manage_roles:
-            return True
-        return any(role.id == self.mod_role_id for role in member.roles)
 
     # --- kill/clear-time/parse records -------------------------------------
 
@@ -1826,7 +1819,7 @@ class RaidSummaryCog(commands.Cog):
 
     @app_commands.command(name="raidsummary", description="Post a raid summary to the raid-summary forum (moderator only)")
     async def raidsummary(self, interaction: discord.Interaction):
-        if not await self._is_mod(interaction.guild, interaction.user.id):
+        if not await member_is_moderator(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can post raid summaries.", ephemeral=True)
             return
 
@@ -2404,7 +2397,7 @@ class RaidSummaryCog(commands.Cog):
         ],
     )
     async def raidsummary_bulk(self, interaction: discord.Interaction, tier: str, raid_type: str, reports: str):
-        if not await self._is_mod(interaction.guild, interaction.user.id):
+        if not await member_is_moderator(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can bulk-import raid summaries.", ephemeral=True)
             return
         if not config.DEBUG_COMMANDS_ENABLED:
@@ -2504,7 +2497,7 @@ class RaidSummaryCog(commands.Cog):
         ],
     )
     async def raidsummary_refresh_cache(self, interaction: discord.Interaction, tier: str):
-        if not await self._is_mod(interaction.guild, interaction.user.id):
+        if not await member_is_moderator(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can refresh the report cache.", ephemeral=True)
             return
 
@@ -2547,7 +2540,7 @@ class RaidSummaryCog(commands.Cog):
         report WAS still live at fetch time from an older build of this bot
         that didn't have that guard, and got cached wrong regardless.
         """
-        if not await self._is_mod(interaction.guild, interaction.user.id):
+        if not await member_is_moderator(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can refresh a report's cache.", ephemeral=True)
             return
 
@@ -2598,7 +2591,7 @@ class RaidSummaryCog(commands.Cog):
         _recent_summary_entries) so a moderator doesn't need to go dig up a
         report code/link they may not have handy.
         """
-        if not await self._is_mod(interaction.guild, interaction.user.id):
+        if not await member_is_moderator(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can regenerate a raid summary.", ephemeral=True)
             return
 
@@ -2778,7 +2771,7 @@ class RaidSummaryCog(commands.Cog):
     )
     async def raidsummary_merge_weeks(self, interaction: discord.Interaction, tier: str, reports: str,
                                        reconstruct_post: bool = True):
-        if not await self._is_mod(interaction.guild, interaction.user.id):
+        if not await member_is_moderator(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can merge raid weeks.", ephemeral=True)
             return
 
@@ -3134,7 +3127,7 @@ class RaidSummaryCog(commands.Cog):
         return True
 
     async def _on_edit_click(self, interaction: discord.Interaction):
-        if not await self._is_mod(interaction.guild, interaction.user.id):
+        if not await member_is_moderator(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can edit raid summaries.", ephemeral=True)
             return
         record = self.store.get(interaction.message.id)
@@ -3162,7 +3155,7 @@ class RaidSummaryCog(commands.Cog):
             await interaction.followup.send("Summary updated.", ephemeral=True)
 
     async def _on_add_loot_click(self, interaction: discord.Interaction):
-        if not await self._is_mod(interaction.guild, interaction.user.id):
+        if not await member_is_moderator(interaction.guild, interaction.user.id):
             await interaction.response.send_message("Only moderators can add loot.", ephemeral=True)
             return
         record = self.store.get(interaction.message.id)

@@ -134,7 +134,8 @@ version or raid tier is a configuration change.
   kept posted in a Discord channel (`GUILD_ROSTER_CHANNEL_ID`; edited only
   when its content changes; header is the "guild_roster_header" bot
   message). `permissions.py`:
-  the shared Discord moderator check for new cogs.
+  the shared Discord moderator check (`is_moderator(member)`,
+  `member_is_moderator(guild, user_id)`); every cog uses it.
 - `wow_api.py`: Blizzard game data for the configured game version
   (WoW Forever by default): reference data for pickers, a player's
   characters from their Battle.net account, character lookups by name, and

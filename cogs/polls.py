@@ -49,6 +49,7 @@ from discord.ext import commands, tasks
 
 import config
 from storage import ApplicationStore
+from permissions import is_moderator
 
 log = logging.getLogger("wow-apply-bot.polls")
 
@@ -289,7 +290,6 @@ class PollsCog(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.mod_role_id = config.MOD_ROLE_ID
         self.store = ApplicationStore(path="polls.json")
         # One lock per poll message: serializes "mutate record + re-render
         # message" so two near-simultaneous votes can't have their message
@@ -315,15 +315,8 @@ class PollsCog(commands.Cog):
     def _save(self, message_id: int, record: dict):
         self.store.set(message_id, **record)
 
-    def _is_mod(self, member) -> bool:
-        if not isinstance(member, discord.Member):
-            return False
-        if member.guild_permissions.manage_roles:
-            return True
-        return any(role.id == self.mod_role_id for role in member.roles)
-
     def _can_manage(self, member, record: dict) -> bool:
-        return self._is_mod(member) or member.id == record.get("created_by")
+        return is_moderator(member) or member.id == record.get("created_by")
 
     async def _get_or_complain(self, interaction: discord.Interaction):
         record = self._get(interaction.message.id) if interaction.message else None
@@ -614,7 +607,7 @@ class PollsCog(commands.Cog):
         allow_vote_change: bool = None,
         duration: str = None,
     ):
-        if config.POLL_CREATE_MOD_ONLY and not self._is_mod(interaction.user):
+        if config.POLL_CREATE_MOD_ONLY and not is_moderator(interaction.user):
             await interaction.response.send_message("Only moderators can create polls.", ephemeral=True)
             return
         if interaction.channel is None or interaction.guild is None:
