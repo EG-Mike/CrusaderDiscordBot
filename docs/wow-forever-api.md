@@ -75,6 +75,19 @@ settings change, not a code change.
   `achievements`, `appearance`, `titles`, `reputations`, `collections`,
   `pvp-summary`, `encounters` (+ `/raids`), `quests/completed`.
   `character-media` and `hunter-pets` are 404.
+- **Gear (profile, 200, checked 2026-11-05)**: `.../character/{slug}/equipment`
+  lists `equipped_items`, each with `slot`, `item.id`, `name`, `quality`,
+  `level` (item level), `item_class`/`item_subclass`, `stats` (display
+  strings such as "+3 Intellect"), `armor`, `weapon`, `requirements`,
+  `binding`, `durability`, `bonus_list` and a `media` link. `enchantments`,
+  `sockets` and `set` follow the retail format when an item has them (not
+  seen yet on low-level gear). The profile itself has `average_item_level`
+  and `equipped_item_level`. `/data/wow/media/item/{id}` (static) gives the
+  icon URL and its `file_data_id`, which the Emoji library keys on.
+  `.../specializations` lists every spec with its talents and ranks (TBC-style
+  talent trees: `spent_points` per spec, `is_active` per group);
+  `.../statistics` the character sheet (stats, crit, spell power, armor,
+  resistances); `.../professions` skill points and known recipes.
 - **Guilds (profile, 200)**: `/data/wow/guild/{slug}` (the slug from a
   character's `guild`, e.g. `encore`; no realm or ruleset in the path), with
   `ruleset`, `member_count` and `faction`. `/roster` lists **every member,
