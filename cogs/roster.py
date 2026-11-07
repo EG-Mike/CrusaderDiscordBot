@@ -252,10 +252,13 @@ class RosterCog(commands.Cog):
         self._refresh_post_soon()
 
     async def mine_button(self, interaction: discord.Interaction):
+        # Acknowledge first: Discord drops an interaction that isn't answered
+        # within 3 seconds, and the database read can wait behind other work.
+        await interaction.response.defer(ephemeral=True, thinking=True)
         rows = await asyncio.to_thread(roster.characters, discord_id=interaction.user.id)
         view = MyCharactersView(self, interaction.user.id, rows)
-        await interaction.response.send_message(view.text(), view=view if rows else discord.utils.MISSING,
-                                                ephemeral=True, allowed_mentions=NO_PINGS)
+        await interaction.followup.send(view.text(), view=view if rows else discord.utils.MISSING,
+                                        ephemeral=True, allowed_mentions=NO_PINGS)
 
     async def change_own(self, interaction: discord.Interaction, character_slug: str, action: str) -> str:
         """Main / alt / unlink from "My characters". Returns the outcome text."""
@@ -519,12 +522,13 @@ class MyCharactersView(discord.ui.View):
 
     def _make_action(self, action: str):
         async def callback(interaction: discord.Interaction):
+            await interaction.response.defer()  # within Discord's 3 seconds; the message is edited below
             self.notice = await self.cog.change_own(interaction, self.selected, action)
             self.rows = await asyncio.to_thread(roster.characters, discord_id=self.user_id)
             if self.selected not in {c["slug"] for c in self.rows}:
                 self.selected = None
             self._build()
-            await interaction.response.edit_message(content=self.text(), view=self, allowed_mentions=NO_PINGS)
+            await interaction.edit_original_response(content=self.text(), view=self, allowed_mentions=NO_PINGS)
         return callback
 
 
