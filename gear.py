@@ -143,13 +143,14 @@ def parse_talents(data: dict) -> List[dict]:
 
 
 def parse_professions(data: Optional[dict]) -> List[dict]:
-    """[{name, skill, max, primary}] from the professions document."""
+    """[{id, name, skill, max, primary}] from the professions document."""
     found = []
     for kind in ("primaries", "secondaries"):
         for p in (data or {}).get(kind) or []:
             tiers = p.get("tiers") or []
             tier = max(tiers, key=lambda t: t.get("max_skill_points") or 0) if tiers else {}
-            found.append({"name": _name((p.get("profession") or {}).get("name")) or "?",
+            found.append({"id": (p.get("profession") or {}).get("id"),
+                          "name": _name((p.get("profession") or {}).get("name")) or "?",
                           "skill": tier.get("skill_points", p.get("skill_points")),
                           "max": tier.get("max_skill_points", p.get("max_skill_points")),
                           "primary": kind == "primaries"})
@@ -246,6 +247,14 @@ def summarise(profile: dict, equipment: dict, specializations: Optional[dict], *
         "missing_enchants": [i["slot_name"] for i in items if i["slot"] in enchant_slots and not i["enchants"]],
         "empty_sockets": sum(1 for i in items for s in i["sockets"] if not s["gem"]),
     }
+
+
+def item_url(item_id) -> Optional[str]:
+    """The item's page (ITEM_LINK_URL), or None when names shouldn't link."""
+    template = (config.ITEM_LINK_URL or "").strip()
+    if not template or not item_id or not template.startswith("https://"):
+        return None
+    return template.replace("{id}", str(int(item_id)))
 
 
 def requirement_problems(summary: dict) -> List[str]:
@@ -370,7 +379,9 @@ def render_lines(summary: dict, icons: Optional[Dict[int, str]] = None, role: Op
             continue
         mark = icons.get(item.get("item_id")) or QUALITY_MARKS.get(item.get("quality") or "", "▫️")
         extras = item["enchants"] + [s["gem"] or f"empty {s['type'] or 'socket'}" for s in item["sockets"]]
-        line = f"{mark} **{item['name']}** `{item.get('item_level') or '?'}` · {item['slot_name']}"
+        url = item_url(item.get("item_id"))
+        name = f"[{item['name']}]({url})" if url else item["name"]
+        line = f"{mark} **{name}** `{item.get('item_level') or '?'}` · {item['slot_name']}"
         if item.get("set"):
             line += f" · {item['set']}"
         if extras:

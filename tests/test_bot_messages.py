@@ -95,6 +95,24 @@ class SyncPinnedTests(DatabaseTestCase, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(existing.edit.call_args.kwargs["embed"].title, "New title")
         channel.send.assert_not_called()
 
+    async def test_old_marker_and_button_label_are_updated_in_place(self):
+        old = bm.embed("gear_check_explainer")
+        old.set_footer(text="gear-check-explainer")  # pinned before the rename
+        existing = pinned_message(old)
+        existing.components = [SimpleNamespace(children=[SimpleNamespace(label="Start Gear-Check procedure")])]
+        view = SimpleNamespace(children=[SimpleNamespace(label="Start application")])
+        channel, _ = pinned_channel([existing])
+        self.assertIn("Updated", await bm.sync_pinned(channel, "gear_check_explainer", view=view))
+        self.assertEqual(existing.edit.call_args.kwargs["embed"].footer.text, "application-explainer")
+        self.assertIs(existing.edit.call_args.kwargs["view"], view)
+        channel.send.assert_not_called()
+
+        existing.embeds = [bm.embed("gear_check_explainer")]
+        existing.components = [SimpleNamespace(children=[SimpleNamespace(label="Start application")])]
+        existing.edit.reset_mock()
+        self.assertIn("up to date", await bm.sync_pinned(channel, "gear_check_explainer", view=view))
+        existing.edit.assert_not_called()
+
     async def test_missing_message_is_posted_and_pinned(self):
         channel, posted = pinned_channel([])
         seen = []

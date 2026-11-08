@@ -122,12 +122,15 @@ version or raid tier is a configuration change.
   on the apply cog, called by the card's buttons and the dashboard alike;
   only approvers (`APPROVER_ROLE_ID`, dashboard level "approver") decide.
   The applicant enters "First Surname" in one field; the main spec is
-  suggested from talent points, plus an optional offspec.
+  suggested from talent points, plus an optional offspec. Item names link
+  to `ITEM_LINK_URL` (Wowhead's Forever pages by default). Approval links
+  the character on the roster, or leaves a pending link
+  (`roster.remember_link`) when Blizzard doesn't know it yet.
 - `gear.py`: the gear check: a character's gear (item level, enchants,
   gems, sets), talents and profile from Blizzard, flags (empty slots,
   missing enchants, empty sockets) and the guild's minimum level/item
   level, as plain data plus Discord text. Used by `cogs/apply.py` (the
-  review card, "Refresh gear", `/gearcheck character`) and the dashboard's
+  review card, "Refresh from Blizzard", `/lookup`) and the dashboard's
   Character lookup page (`webapi/lookup_api.py`), which also shows
   professions and the character's place on the roster. Character
   statistics (`parse_stats`; `stat_highlights` per role on the card,
@@ -149,7 +152,11 @@ version or raid tier is a configuration change.
   message; aligned columns with a header row; alts below
   `GUILD_ROSTER_POST_MIN_LEVEL` left out; persistent "Claim a character" /
   "My characters" buttons for main/alt self-service). Level milestones
-  found together are grouped into as few messages as fit. `permissions.py`:
+  found together are grouped into as few messages as fit. Primary
+  professions (`roster.professions`) are read after a logout and shown on
+  the posted roster with profession emoji (`emoji_library` kind
+  "profession"; `GUILD_ROSTER_POST_PROFESSIONS`). Columns added to existing
+  tables go in `db._ADDED_COLUMNS`. `permissions.py`:
   the shared Discord moderator check (`is_moderator(member)`,
   `member_is_moderator(guild, user_id)`); every cog uses it.
 - `wow_api.py`: Blizzard game data for the configured game version

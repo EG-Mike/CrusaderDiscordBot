@@ -576,6 +576,8 @@ export interface GearItem {
   sockets: { type: string | null; gem: string | null; text: string | null }[];
   set: string | null;
   icon_url: string | null;
+  /** The item's page (Settings: Item link), or null. */
+  url?: string | null;
 }
 
 export interface CharacterSummary {

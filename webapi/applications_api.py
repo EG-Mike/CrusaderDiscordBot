@@ -6,7 +6,7 @@ Dashboard API for applications (cogs/apply.py, applications.py).
   POST /api/applications/{id}/approve         approve (approvers)
   POST /api/applications/{id}/deny            {"reason": optional, reviewers only} (approvers)
   POST /api/applications/{id}/reset           back to pending (approvers)
-  POST /api/applications/{id}/refresh-gear    read the gear from Blizzard again (moderators)
+  POST /api/applications/{id}/refresh-gear    read the character from Blizzard again (moderators)
   POST /api/applications/archive              move decided cards to the archive channel (moderators)
 
 Moderators see applications (as they can in the review channel); only

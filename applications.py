@@ -183,7 +183,8 @@ def public_detail(store, guild, message_id: int, record: dict, *,
     gear_data = None
     if summary:
         gear_data = {**summary,
-                     "items": [{**i, "icon_url": icon_urls.get(i.get("item_id"))} for i in summary.get("items", [])],
+                     "items": [{**i, "icon_url": icon_urls.get(i.get("item_id")), "url": gear.item_url(i.get("item_id"))}
+                               for i in summary.get("items", [])],
                      "stat_highlights": gear.stat_highlights(summary.get("stats") or {}, record.get("role")),
                      "stat_groups": gear.stat_groups(summary.get("stats") or {})}
     decision = dict(record.get("decision") or {})

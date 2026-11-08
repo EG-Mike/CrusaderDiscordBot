@@ -34,12 +34,13 @@ moderator-driven announcement system.
    WarcraftLogs covers WoW Forever (Settings, Applications).
 5. **Approve** / **Deny** / **Reset** work on the card *and* on the
    dashboard, for members with the approver role only (checked by the bot,
-   in both places). **Refresh gear** (moderators and approvers) reads the
-   gear again, e.g. after they logged out in their raid gear.
+   in both places). **Refresh from Blizzard** (moderators and approvers)
+   reads the character again, e.g. after they levelled up.
 6. **Approve**: the "Fresh" role (unless they already hold an exempt role),
    their class and role roles, their nickname set to the character name,
    the character linked to them on the guild roster with main spec and
-   offspec, and the approval DM. **Deny**: an optional reason only
+   offspec (below level 10 the link waits until Blizzard shows the
+   character, e.g. once it's in the guild), and the approval DM. **Deny**: an optional reason only
    reviewers see, and the denial DM.
 7. **Reset** puts a decision back to pending. Fixing a wrong denial into an
    approval still sends the acceptance DM; fixing a wrong approval into a
@@ -271,7 +272,7 @@ Every poll carries the footer from `config.POLL_FOOTER`.
 | Command | Description |
 |---|---|
 | `/announce` | Draft an announcement in the sandbox channel, with Edit/Publish buttons. |
-| `/gearcheck character <name> [public]` | Gear-check any character from Blizzard: item level, gear, enchants, gems, talents and what's missing. Only you see it unless `public`. |
+| `/lookup <name> [public]` | Look up any character on Blizzard: level, item level, gear, enchants, gems, talents and what's missing. Only you see it unless `public`. |
 | `/applications archive` | Move all approved/denied applications to the archive channel (also on the dashboard's Applications page). |
 | `/checkattendance run` | Generate/refresh the attendance overview (no cooldown). |
 | `/checkattendance addlog <date> <tier> <link>` | Add a main-raid log to the tracked list. |

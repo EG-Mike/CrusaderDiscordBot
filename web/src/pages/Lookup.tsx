@@ -1,4 +1,4 @@
-// Character lookup: a gear check started by moderators, for any character
+// Character lookup: started by moderators, for any character
 // in the region (webapi/lookup_api.py). The name is in the address
 // (/lookup?name=...), so a lookup can be linked or bookmarked.
 import { useEffect, useState, type FormEvent } from "react";

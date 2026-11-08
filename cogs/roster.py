@@ -16,7 +16,8 @@ levels, are checked by cogs/leveling.py.
 With a roster channel set (GUILD_ROSTER_CHANNEL_ID), the bot keeps the
 roster posted there: a header (the "Guild roster header" bot message), a
 column header row and one row per character (level, class icon, name,
-linked member, "alt" for alts), highest level first. Characters below
+linked member, "alt" for alts, and professions with skill/maximum when
+GUILD_ROSTER_POST_PROFESSIONS is on), highest level first. Characters below
 GUILD_ROSTER_POST_MIN_LEVEL are left out unless they're someone's main.
 Every few minutes it checks whether anything changed and only then edits
 the message(s); a long roster spans several messages.
@@ -32,7 +33,7 @@ import hashlib
 import json
 import logging
 import time
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import discord
 from discord import app_commands
@@ -41,6 +42,7 @@ from discord.ext import commands, tasks
 import bot_messages
 import config
 import db
+import emoji_library
 import icons
 import roster
 import wow_api
@@ -52,7 +54,7 @@ STATUS_META = "roster_last_sync"
 POST_META = "roster_post"         # {"channel_id", "message_ids", "hash", "updated"}
 POST_TEXT_LIMIT = 3800            # per message: Discord allows 4000 characters of text
 POST_CHECK_MINUTES = 2
-POST_LAYOUT = "table-2"           # part of the post's hash: changing the layout updates old posts
+POST_LAYOUT = "table-3"           # part of the post's hash: changing the layout updates old posts
 CLAIM_ID = "roster:claim"
 MINE_ID = "roster:mine"
 NO_PINGS = discord.AllowedMentions.none()
@@ -99,9 +101,31 @@ class RosterCog(commands.Cog):
 
     # --- the roster posted in Discord ------------------------------------------------------------
 
-    def _post_lines(self, rows: List[dict], ref: dict, guild) -> List[str]:
+    async def _profession_icons(self, rows: List[dict]) -> Dict[int, str]:
+        """{profession id: inline emoji} for the professions on the roster ('' when none can be made)."""
+        if not config.GUILD_ROSTER_POST_PROFESSIONS:
+            return {}
+        ids = {p["id"] for c in rows for p in roster.professions(c) if p.get("id")}
+        found = {}
+        for profession_id in sorted(ids):
+            found[profession_id] = await emoji_library.ensure_icon(self.bot, "profession", profession_id,
+                                                                   by="automatic (guild roster)")
+        return found
+
+    @staticmethod
+    def _profession_text(c: dict, icons_by_id: Dict[int, str]) -> str:
+        """'<icon> 200/225 | <icon> 45/75' (the name when there's no icon)."""
+        parts = []
+        for p in roster.professions(c):
+            label = icons_by_id.get(p.get("id")) or p.get("name") or "?"
+            parts.append(f"{label} {p.get('skill') if p.get('skill') is not None else '?'}/{p.get('max') or '?'}")
+        return " | ".join(parts)
+
+    def _post_lines(self, rows: List[dict], ref: dict, guild, profession_icons: Optional[Dict[int, str]] = None
+                    ) -> List[str]:
         """A header row and one aligned row per character. Discord has no
-        tables, so the level and name columns are padded inline code."""
+        tables, so the level and name columns are padded inline code.
+        `profession_icons`: shown when professions are on (see _profession_icons)."""
         if not rows:
             return ["-# Nobody on the roster yet."]
         width = max(len("Character"), *(len(roster.display_name(c)) for c in rows))
@@ -114,7 +138,9 @@ class RosterCog(commands.Cog):
             if member and not c["is_main"]:
                 who += " · alt"
             level = c["level"] if c["level"] is not None else "?"
-            lines.append(f"`{level:>2}` {icon or '▫️'} `{roster.display_name(c):<{width}}` {who}")
+            line = f"`{level:>2}` {icon or '▫️'} `{roster.display_name(c):<{width}}` {who}"
+            trades = self._profession_text(c, profession_icons or {}) if config.GUILD_ROSTER_POST_PROFESSIONS else ""
+            lines.append(f"{line} · {trades}" if trades else line)
         return lines
 
     @staticmethod
@@ -145,7 +171,7 @@ class RosterCog(commands.Cog):
             return "The bot can't see the roster channel."
         state = json.loads(await asyncio.to_thread(db.get_meta, POST_META) or "{}")
         rows = await asyncio.to_thread(roster.posted_characters)
-        lines = self._post_lines(rows, await reference(self.bot), channel.guild)
+        lines = self._post_lines(rows, await reference(self.bot), channel.guild, await self._profession_icons(rows))
         template = bot_messages.current("guild_roster_header")["body"]
         claims = bool(config.GUILD_ROSTER_SELF_SERVICE)
         digest = hashlib.sha256("\n".join([POST_LAYOUT, str(claims), template, config.GUILD_ROSTER_GUILD or "",

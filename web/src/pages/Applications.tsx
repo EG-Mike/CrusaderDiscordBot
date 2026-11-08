@@ -1,5 +1,5 @@
 // Applications (webapi/applications_api.py): the same applications as the
-// review channel, with the gear check from Blizzard. Moderators read them;
+// review channel, with the character read from Blizzard. Moderators read them;
 // approvers decide (the server checks it, these buttons only follow).
 // Decisions run the bot's own rules: roles, nickname, DM, roster link, and
 // the card in Discord updates too.
@@ -84,7 +84,7 @@ function Row({ a, now }: { a: ApplicationRow; now: number }) {
         </div>
         <div className="hidden shrink-0 items-center gap-3 text-2xs text-muted sm:flex">
           {a.flag_count > 0 && (
-            <span className="inline-flex items-center gap-1 text-warn" title="Gear check warnings">
+            <span className="inline-flex items-center gap-1 text-warn" title="Warnings from the character check">
               <AlertTriangle className="h-3.5 w-3.5" /> {a.flag_count}
             </span>
           )}
@@ -256,7 +256,7 @@ function DecisionPanel({ a, canDecide, onDone }: { a: ApplicationDetail; canDeci
           approve: `${a.character} is approved.`,
           deny: `${a.character} is denied.`,
           reset: "Back to pending.",
-          "refresh-gear": "Gear refreshed from Blizzard.",
+          "refresh-gear": "Refreshed from Blizzard.",
         }[action],
       );
     } catch (e) {
@@ -374,10 +374,10 @@ function RefreshGear({ a, busy, act }: { a: ApplicationDetail; busy: string | nu
   return (
     <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-line pt-3">
       <Button size="sm" icon={<RefreshCw className="h-3.5 w-3.5" />} loading={busy === "refresh-gear"} disabled={busy !== null} onClick={() => act("refresh-gear")}>
-        Refresh gear
+        Refresh from Blizzard
       </Button>
       <span className="text-2xs text-faint">
-        Blizzard updates gear when the player logs out.{a.gear_checked_at ? ` Last read ${timeAgo(iso(a.gear_checked_at))}.` : ""}
+        Blizzard updates characters when the player logs out.{a.gear_checked_at ? ` Last read ${timeAgo(iso(a.gear_checked_at))}.` : ""}
       </span>
     </div>
   );

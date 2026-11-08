@@ -26,8 +26,8 @@ reset, refresh_gear, archive_decided), so the card's buttons and the
 dashboard (webapi/applications_api.py) follow the same rules. Shared
 record helpers are in applications.py.
 
-Moderators can also gear-check any character without an application:
-/gearcheck character.
+Moderators can also look up any character without an application: /lookup
+(the dashboard's Character lookup does the same).
 """
 
 import asyncio
@@ -65,7 +65,8 @@ NOT_FOUND_TIMEOUT = 180    # waiting for the retry-name/continue-anyway choice
 AMSTERDAM_TZ = ZoneInfo("Europe/Amsterdam")
 
 ARCHIVE_CONFIRMATION_KEY = "archive_confirmation"  # sentinel store key, not a real message id
-GEAR_TEXT_LIMIT = 1800  # the gear list's share of a review card's 4000 characters
+CARD_TEXT_LIMIT = 3900  # Discord allows 4000 characters of text per message; a little room to spare
+MIN_GEAR_TEXT = 600     # the gear list always gets at least this much
 BLIZZARD_ROLES = {"tank": "Tank", "healer": "Healer", "dps": "DPS"}  # wow_api spec roles -> ours
 
 
@@ -81,7 +82,7 @@ def _clip(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     cut = text.rfind("\n", 0, limit - 40)
-    return text[:cut if cut > 0 else limit - 40] + "\n-# … more items not shown"
+    return text[:cut if cut > 0 else limit - 40] + "\n-# … more items on the dashboard's Applications page"
 
 
 def _emoji_for(icon_str):
@@ -394,9 +395,6 @@ class ApplyCog(commands.Cog):
     applications_group = app_commands.Group(
         name="applications", description="Guild applications (moderators)"
     )
-    gearcheck_group = app_commands.Group(
-        name="gearcheck", description="Gear-check any character (moderators)"
-    )
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -621,12 +619,12 @@ class ApplyCog(commands.Cog):
             checked = application.get("gear_checked_at")
             when = f" · checked <t:{checked}:R>" if checked else ""
             container.add_item(discord.ui.TextDisplay(
-                f"### Gear\n-# From Blizzard, as of the character's last logout{when}\n{gear_text['overview']}"))
-            container.add_item(discord.ui.TextDisplay(_clip(gear_text["gear"], GEAR_TEXT_LIMIT)))
+                f"### Character\n-# From Blizzard, as of the character's last logout{when}\n{gear_text['overview']}"))
+            container.add_item(discord.ui.TextDisplay(_clip(gear_text["gear"], self._gear_room(application))))
             if gear_text.get("flags"):
                 container.add_item(discord.ui.TextDisplay(gear_text["flags"]))
             container.add_item(discord.ui.Separator())
-        elif application.get("armory_block"):  # applications from before the gear check
+        elif application.get("armory_block"):  # applications from before Blizzard's WoW Forever data
             container.add_item(discord.ui.TextDisplay(application["armory_block"]))
             container.add_item(discord.ui.Separator())
 
@@ -666,7 +664,7 @@ class ApplyCog(commands.Cog):
              self._on_approve_click),
             ("Deny", DENY_EMOJI, discord.ButtonStyle.danger, "wow_apply_deny", not is_pending, self._on_deny_click),
             ("Reset", "🔄", discord.ButtonStyle.primary, "wow_apply_reset", is_pending, self._on_reset_click),
-            ("Refresh gear", "🛡️", discord.ButtonStyle.secondary, "wow_apply_refresh_gear",
+            ("Refresh from Blizzard", "🔃", discord.ButtonStyle.secondary, "wow_apply_refresh_gear",
              not application.get("character_slug"), self._on_refresh_gear_click),
         ):
             button = discord.ui.Button(label=label, emoji=emoji, style=style, custom_id=custom_id, disabled=disabled)
@@ -674,6 +672,20 @@ class ApplyCog(commands.Cog):
             action_row.add_item(button)
         view.add_item(action_row)
         return view
+
+    @staticmethod
+    def _gear_room(application: dict) -> int:
+        """How much of the card's text the gear list may use: what the rest
+        of the card leaves (the note is cut at 1024 characters)."""
+        gear_text = application.get("gear_text") or {}
+        others = [application.get("character_name") or "", application.get("profile_url") or "",
+                  application.get("class_block") or "", application.get("also_play_block") or "",
+                  gear_text.get("overview") or "", gear_text.get("flags") or "", application.get("tier_block") or "",
+                  application.get("boss_block") or "", application.get("hidden_block") or "",
+                  application.get("wcl_url") or "", (application.get("note") or "")[:1024],
+                  application.get("decision_footer") or ""]
+        fixed = 600  # headings, the applicant line, warnings, labels and separators
+        return max(MIN_GEAR_TEXT, CARD_TEXT_LIMIT - fixed - sum(len(t) for t in others))
 
     async def _gear_fields(self, summary, role=None) -> dict:
         """What an application stores about the gear: the summary (data) and
@@ -895,31 +907,44 @@ class ApplyCog(commands.Cog):
 
     async def _link_on_roster(self, application: dict) -> Optional[str]:
         """Links the approved character to the applicant on the guild roster
-        (when the roster is on), with their main and offspec. A line for the
-        decision footer, or None."""
-        if self.bot.get_cog("RosterCog") is None or not application.get("character_slug"):
+        (when the roster is on), with their main and offspec. When Blizzard
+        doesn't know the character yet (below level 10), the link waits and
+        is made as soon as it shows up (roster.remember_link), e.g. once it
+        joins the guild. A line for the decision footer, or None."""
+        character_slug = application.get("character_slug")
+        if self.bot.get_cog("RosterCog") is None or not character_slug:
             return None
+        spec_id, off_spec_id = application.get("spec_id"), application.get("off_spec_id")
         try:
-            found = await roster.find_or_add(self.bot, application["character_slug"])
+            found = await roster.find_or_add(self.bot, character_slug)
+        except roster.RosterError:
+            if await asyncio.to_thread(roster.get, character_slug) is None:
+                await asyncio.to_thread(roster.remember_link, character_slug, application["applicant_id"],
+                                        by="application approval", main_spec_id=spec_id, off_spec_id=off_spec_id)
+                return ("Guild roster: will be linked as soon as Blizzard shows the character (from level 10, or "
+                        "once it's in the guild)")
+            raise
+        except Exception:
+            log.exception("Linking %s on the guild roster failed", character_slug)
+            return "Guild roster: not linked (see the System log)"
+        try:
             await asyncio.to_thread(roster.link, found["slug"], application["applicant_id"],
                                     by="application approval", as_moderator=False)
         except roster.RosterError as exc:
             return f"Guild roster: not linked ({exc})"
-        except Exception:
-            log.exception("Linking %s on the guild roster failed", application["character_slug"])
-            return "Guild roster: not linked (see the System log)"
-        if application.get("spec_id"):
+        if spec_id:
             try:
                 _, class_specs = await self._reference()
                 spec_ids = {c_id: [s["id"] for s in specs] for c_id, specs in class_specs["by_id"].items()}
-                await asyncio.to_thread(roster.set_specs, found["slug"], application.get("spec_id"),
-                                        application.get("off_spec_id"), discord_id=application["applicant_id"],
-                                        as_moderator=True, class_specs=spec_ids)
+                await asyncio.to_thread(roster.set_specs, found["slug"], spec_id, off_spec_id,
+                                        discord_id=application["applicant_id"], as_moderator=True,
+                                        class_specs=spec_ids)
             except roster.RosterError as exc:
                 log.info("Specs of %s not set on the roster: %s", found["slug"], exc)
             except Exception:
                 log.exception("Setting the specs of %s on the guild roster failed", found["slug"])
-        return "Guild roster: character linked to the applicant"
+        in_guild = " (shown on the posted roster once it's in the guild)" if not found.get("guild_slug") else ""
+        return f"Guild roster: character linked to the applicant{in_guild}"
 
     async def deny(self, message_id: int, reviewer: Reviewer, reason: Optional[str] = None) -> dict:
         """Denies a pending application: removes the approval role (a
@@ -946,6 +971,8 @@ class ApplyCog(commands.Cog):
                         await self._notice(application, f"(Couldn't DM {applicant.mention} - their DMs may be "
                                                         "closed. Please let them know about the decision.)")
 
+            if application.get("character_slug") and application.get("last_decision") == "approved":
+                await asyncio.to_thread(roster.forget_link, application["character_slug"])  # a link still waiting
             footer = f"❌ Denied by {reviewer.label} • {self._timestamp()}\nRoles assigned: None"
             if reason:
                 footer += f"\nReason: {reason}"
@@ -989,7 +1016,7 @@ class ApplyCog(commands.Cog):
         try:
             summary = await gear.fetch(self.bot, application["character_slug"], class_names)
         except (gear.GearError, wow_api.WowApiError) as exc:
-            raise ApplicationError(f"Couldn't refresh the gear: {exc}") from None
+            raise ApplicationError(f"Couldn't refresh the character: {exc}") from None
         self.bot.store.update(message_id, **await self._gear_fields(summary, application.get("role")))
         await self._rerender(message_id)
         return self.bot.store.get(message_id)
@@ -1014,7 +1041,7 @@ class ApplyCog(commands.Cog):
         if not allowed:
             await interaction.response.send_message(
                 "Only approvers can approve, deny or reset applications." if decide
-                else "Only moderators and approvers can refresh the gear.", ephemeral=True)
+                else "Only moderators and approvers can refresh the character.", ephemeral=True)
             return None
         return application
 
@@ -1059,7 +1086,7 @@ class ApplyCog(commands.Cog):
         except ApplicationError as exc:
             await interaction.followup.send(str(exc), ephemeral=True)
             return
-        await interaction.followup.send("Gear refreshed from Blizzard (as of the character's last logout).",
+        await interaction.followup.send("Refreshed from Blizzard (as of the character's last logout).",
                                         ephemeral=True)
 
     # --- applying -------------------------------------------------------------------------------------
@@ -1524,14 +1551,14 @@ class ApplyCog(commands.Cog):
             summary += f" {failed} failed - see the System log."
         await interaction.followup.send(summary, ephemeral=True)
 
-    # --- /gearcheck character --------------------------------------------------------------------------
+    # --- /lookup -------------------------------------------------------------------------------------
 
-    @gearcheck_group.command(name="character", description="Gear-check any character from Blizzard (moderators)")
+    @app_commands.command(name="lookup", description="Look up any character on Blizzard (moderators)")
     @app_commands.describe(name="The character's name and surname, e.g. Eggmike Thewhite",
                            public="Post it in this channel instead of only showing it to you")
-    async def gearcheck_character(self, interaction: discord.Interaction, name: str, public: bool = False):
+    async def lookup(self, interaction: discord.Interaction, name: str, public: bool = False):
         if not is_moderator(interaction.user):
-            await interaction.response.send_message("Only moderators can gear-check characters.", ephemeral=True)
+            await interaction.response.send_message("Only moderators can look up characters.", ephemeral=True)
             return
         if getattr(self.bot, "blizzard", None) is None:
             await interaction.response.send_message(
@@ -1542,7 +1569,7 @@ class ApplyCog(commands.Cog):
         try:
             summary = await gear.fetch(self.bot, wow_api.slug(name), class_names)
         except (gear.GearError, wow_api.WowApiError) as exc:
-            await interaction.followup.send(f"Couldn't gear-check **{name.strip()}**: {exc}", ephemeral=True)
+            await interaction.followup.send(f"Couldn't look up **{name.strip()}**: {exc}", ephemeral=True)
             return
         text = gear.render_lines(summary, await gear.item_icons(self.bot, summary))
         container = discord.ui.Container(accent_color=discord.Color(

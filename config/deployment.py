@@ -236,6 +236,11 @@ BLIZZARD_LOCALE = "en_GB"
 # API explorer (Maintenance) shows what Blizzard answers.
 CHARACTER_LOOKUP_PATHS = ["/profile/wow/character/{name}-{surname}"]
 
+# Where item names link to (application cards, Applications and Character
+# lookup pages). {id} is the item's ID for the game version. Empty: names
+# aren't links. Wowhead's WoW Forever pages are under /forever/.
+ITEM_LINK_URL = "https://www.wowhead.com/forever/item={id}"
+
 # --- Guild roster (roster.py, cogs/roster.py) ---
 # The guild's in-game name, as Blizzard's API knows it (e.g. "Encore").
 # Its roster (every member and their level) is read from Blizzard. Empty:
@@ -258,6 +263,11 @@ GUILD_ROSTER_POST_MIN_LEVEL = 10
 # character, Discord member), edited whenever it changes. Best a channel
 # only the bot can post in. Empty: not posted.
 GUILD_ROSTER_CHANNEL_ID = 0
+
+# Show each character's primary professions on the posted roster (icon and
+# skill/maximum, e.g. Enchanting 200/225). Read from Blizzard after the
+# player logs out.
+GUILD_ROSTER_POST_PROFESSIONS = True
 
 # --- Leveling (cogs/leveling.py) ---
 # Channel where level milestones are announced. Empty: no announcements

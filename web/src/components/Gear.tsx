@@ -17,9 +17,15 @@ export function ItemRow({ item }: { item: GearItem }) {
       )}
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-baseline gap-x-2">
-          <span className="font-medium" style={{ color: QUALITY_COLORS[item.quality ?? ""] }}>
-            {item.name}
-          </span>
+          {item.url ? (
+            <a href={item.url} target="_blank" rel="noreferrer" className="font-medium hover:underline" style={{ color: QUALITY_COLORS[item.quality ?? ""] }}>
+              {item.name}
+            </a>
+          ) : (
+            <span className="font-medium" style={{ color: QUALITY_COLORS[item.quality ?? ""] }}>
+              {item.name}
+            </span>
+          )}
           <span className="text-2xs text-faint">{item.slot_name}</span>
           {item.set && <span className="text-2xs text-gold">{item.set}</span>}
         </div>

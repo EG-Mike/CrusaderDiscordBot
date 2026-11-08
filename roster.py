@@ -23,10 +23,18 @@ whole guild at once.
 Linking: a member links a character to themselves (if self-service is on),
 a moderator links any character to anyone. A character linked to someone
 can only be moved by a moderator. Each member has one main: the first
-character they link, until they choose another.
+character they link, until they choose another. An approved application
+whose character Blizzard doesn't know yet (below level 10) leaves a
+pending link (remember_link), applied as soon as the character shows up
+from the guild roster or its profile.
+
+Professions (primary ones, with skill and maximum) are read from the
+character's professions document after a profile check finds the player
+logged out since the last read, and shown on the posted roster.
 """
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
@@ -35,6 +43,7 @@ import aiohttp
 
 import config
 import db
+import gear
 import wow_api
 
 log = logging.getLogger("wow-apply-bot.roster")
@@ -124,6 +133,14 @@ def display_name(c: dict) -> str:
     return f"{c['name']} {c['surname']}" if c.get("surname") else c["name"]
 
 
+def professions(c: dict) -> List[dict]:
+    """A stored character's primary professions: [{id, name, skill, max}]."""
+    try:
+        return json.loads(c.get("professions") or "[]")
+    except ValueError:
+        return []
+
+
 # --- storing what Blizzard says -------------------------------------------------------------------
 
 def _store(found: dict, *, source: str) -> Optional[dict]:
@@ -186,11 +203,23 @@ def store_roster(members: List[dict], guild_slug: str) -> List[dict]:
     marks = ",".join("?" * len(present)) or "NULL"
     db.execute(f"UPDATE roster_characters SET guild_slug = NULL, guild_rank = NULL WHERE game = ? AND region = ? "
                f"AND guild_slug = ? AND character_id NOT IN ({marks})", (game, region, guild_slug, *present))
+    apply_pending_links()
     return events
 
 
 def store_profile(found: dict) -> Optional[dict]:
-    return _store(found, source="profile")
+    event = _store(found, source="profile")
+    apply_pending_links()
+    return event
+
+
+def store_professions(character_slug: str, data: Optional[dict]):
+    """Keeps the primary professions from Blizzard's professions document."""
+    primary = [{"id": p["id"], "name": p["name"], "skill": p["skill"], "max": p["max"]}
+               for p in gear.parse_professions(data) if p["primary"]]
+    game, region = _scope()
+    db.execute("UPDATE roster_characters SET professions = ? WHERE game = ? AND region = ? AND slug = ?",
+               (json.dumps(primary), game, region, character_slug))
 
 
 def _profile_missing(character_slug: str):
@@ -246,13 +275,21 @@ async def refresh_profiles(bot, rows: Optional[List[dict]] = None) -> dict:
                 failed += 1
                 log.debug("Profile check for %s failed: %s", c["slug"], exc)
                 return
-        checked += 1
-        if found is None:
-            await asyncio.to_thread(_profile_missing, c["slug"])
-            return
-        event = await asyncio.to_thread(store_profile, found)
-        if event:
-            events.append(event)
+            checked += 1
+            if found is None:
+                await asyncio.to_thread(_profile_missing, c["slug"])
+                return
+            event = await asyncio.to_thread(store_profile, found)
+            if event:
+                events.append(event)
+            # Professions change only in game, so they're read again only after a logout.
+            if c.get("professions") is None or found.get("last_login") != c.get("last_login"):
+                try:
+                    data = await wow_api.character_professions(bot, c["slug"], session=session)
+                except (wow_api.WowApiError, aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                    log.debug("Professions of %s not read: %s", c["slug"], exc)
+                else:
+                    await asyncio.to_thread(store_professions, c["slug"], data)
 
     if rows:
         async with aiohttp.ClientSession(trust_env=True, timeout=aiohttp.ClientTimeout(total=20)) as session:
@@ -295,6 +332,55 @@ def link(character_slug: str, discord_id: int, *, by: str, as_moderator: bool) -
                "WHERE game = ? AND region = ? AND character_id = ?",
                (int(discord_id), 0 if has_main else 1, by, timestamp(), timestamp(), game, region, c["character_id"]))
     return get(character_slug)
+
+
+def remember_link(character_slug: str, discord_id: int, *, by: str, main_spec_id: Optional[int] = None,
+                  off_spec_id: Optional[int] = None):
+    """Links the character to the member as soon as it shows up on the
+    roster (apply_pending_links). Replaces an earlier pending link for it."""
+    game, region = _scope()
+    db.execute("INSERT OR REPLACE INTO roster_pending_links (game, region, slug, discord_id, main_spec_id, off_spec_id, "
+               "linked_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+               (game, region, character_slug, int(discord_id), main_spec_id, off_spec_id, by, timestamp()))
+
+
+def forget_link(character_slug: str):
+    game, region = _scope()
+    db.execute("DELETE FROM roster_pending_links WHERE game = ? AND region = ? AND slug = ?",
+               (game, region, character_slug))
+
+
+def pending_links() -> List[dict]:
+    game, region = _scope()
+    return [dict(r) for r in db.query("SELECT * FROM roster_pending_links WHERE game = ? AND region = ?",
+                                      (game, region))]
+
+
+def apply_pending_links() -> List[dict]:
+    """Links waiting characters that are on the roster now. A character
+    someone else linked in the meantime keeps that link. Returns the
+    characters that were linked."""
+    linked = []
+    for pending in pending_links():
+        c = get(pending["slug"])
+        if c is None:
+            continue
+        forget_link(pending["slug"])
+        if c["discord_id"] and c["discord_id"] != pending["discord_id"]:
+            log.info("Pending link of %s to %s dropped: already linked to %s", pending["slug"], pending["discord_id"],
+                     c["discord_id"])
+            continue
+        c = link(pending["slug"], pending["discord_id"], by=pending["linked_by"] or "application approval",
+                 as_moderator=False)
+        if pending["main_spec_id"] and c["main_spec_id"] is None:
+            game, region = _scope()
+            db.execute("UPDATE roster_characters SET main_spec_id = ?, off_spec_id = ? "
+                       "WHERE game = ? AND region = ? AND character_id = ?",
+                       (pending["main_spec_id"], pending["off_spec_id"], game, region, c["character_id"]))
+        log.info("Linked %s to %s (waiting since the application was approved)", pending["slug"],
+                 pending["discord_id"])
+        linked.append(get(pending["slug"]))
+    return linked
 
 
 def unlink(character_slug: str, *, discord_id: int, as_moderator: bool) -> dict:

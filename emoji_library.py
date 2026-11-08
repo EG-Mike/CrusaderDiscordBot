@@ -43,7 +43,8 @@ import db
 log = logging.getLogger("wow-apply-bot.emoji_library")
 
 MAX_APP_EMOJI = 2000          # Discord's limit of emoji per bot application
-KINDS = ("item", "spell")
+KINDS = ("item", "spell")             # searchable on the Emoji page
+ICON_KINDS = KINDS + ("profession",)  # anything with a Blizzard icon (professions: the posted guild roster)
 SEARCH_LIMIT_PER_KIND = 12
 CACHE_SECONDS = 60
 WOWHEAD_TOOLTIP_URL = "https://nether.wowhead.com/tooltip/{kind}/{id}"
@@ -138,7 +139,10 @@ async def _from_blizzard(bot, kind: str, game_id: int) -> Optional[Resolved]:
     blizzard = getattr(bot, "blizzard", None)
     if blizzard is None:
         return None
-    for namespace in _namespaces():
+    namespaces = _namespaces()
+    if kind not in KINDS:  # e.g. professions: the game version's own static data first
+        namespaces = list(dict.fromkeys([config.BLIZZARD_STATIC_NAMESPACE, *namespaces]))
+    for namespace in namespaces:
         record = await blizzard.get_game_data(f"{kind}/{game_id}", namespace)
         if record is None:
             continue
@@ -179,8 +183,8 @@ async def resolve(bot, kind: str, game_id: int) -> Resolved:
     is then asked from Wowhead (when allowed) - just the name, to match
     icons that only Wowhead knows (e.g. Amplify Magic shares Flash Heal's
     spell_holy_flashheal) and to give the emoji a readable name."""
-    if kind not in KINDS:
-        raise EmojiError("Only items and spells have icons.")
+    if kind not in ICON_KINDS:
+        raise EmojiError("Only items, spells and professions have icons.")
     errors = []
     try:
         found = await _from_blizzard(bot, kind, game_id)
@@ -188,7 +192,7 @@ async def resolve(bot, kind: str, game_id: int) -> Resolved:
         errors.append(exc)
         found = None
     if found is not None:
-        if not found.icon_name:
+        if not found.icon_name and kind in KINDS:  # Wowhead's tooltips know items and spells only
             try:
                 hint = await _from_wowhead(kind, game_id)
             except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
@@ -197,7 +201,7 @@ async def resolve(bot, kind: str, game_id: int) -> Resolved:
                 found.icon_name = hint.icon_name
         return found
     try:
-        found = await _from_wowhead(kind, game_id)
+        found = await _from_wowhead(kind, game_id) if kind in KINDS else None
     except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
         errors.append(exc)
     if found is not None:
@@ -486,7 +490,7 @@ async def add(bot, kind: str, game_id: int, by: str, *, fallback_image_url: Opti
 
 
 async def ensure_icon(bot, kind: str, game_id: int, image_url: Optional[str] = None, by: str = "automatic") -> str:
-    """The emoji text for an item/spell's icon, creating or reusing the
+    """The emoji text for an item/spell/profession's icon, creating or reusing the
     emoji as needed; '' if that isn't possible. Never raises - for features
     that just want to decorate a line with an icon."""
     existing = find_alias(kind, game_id)

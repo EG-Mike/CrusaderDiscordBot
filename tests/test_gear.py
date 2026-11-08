@@ -67,9 +67,14 @@ class GearTests(unittest.TestCase):
         self.assertIn("**Item level:** 60 (bags included: 62)", text["overview"])
         self.assertIn("**Talents:** Holy 30 / Discipline 21", text["overview"])
         self.assertIn("⚠️ below on item level 60 (needs 65)", text["overview"])
-        self.assertIn("<:inv_helm:1> **Circlet of Prophecy** `66` · Head · Vestments of Prophecy", text["gear"])
+        helm_id = EQUIPMENT["equipped_items"][1]["item"]["id"]
+        self.assertIn(f"<:inv_helm:1> **[Circlet of Prophecy](https://www.wowhead.com/forever/item={helm_id})** `66` "
+                      "· Head · Vestments of Prophecy", text["gear"])
+        with mock.patch.object(config, "ITEM_LINK_URL", ""):
+            self.assertIn("**Circlet of Prophecy** `66`", gear.render_lines(s)["gear"])
         self.assertIn("-# Insightful Earthsiege Diamond · empty Blue", text["gear"])
-        self.assertIn("🟪 **Benediction** `70` · Main hand\n-# Enchanted: +30 Spell Power", text["gear"])
+        weapon_id = EQUIPMENT["equipped_items"][0]["item"]["id"]
+        self.assertIn(f"/item={weapon_id})** `70` · Main hand\n-# Enchanted: +30 Spell Power", text["gear"])
         self.assertNotIn("Neophyte's Shirt", text["gear"])  # cosmetic slots aren't listed
         self.assertEqual(text["flags"], "⚠️ Empty: Ring 1 · No enchant: Head, Chest · 1 empty gem socket")
 
@@ -82,15 +87,15 @@ class GearTests(unittest.TestCase):
 
 
 class ProfessionAndRulesetTests(unittest.TestCase):
-    PROFESSIONS = {"primaries": [{"profession": {"name": "Tailoring"},
+    PROFESSIONS = {"primaries": [{"profession": {"name": "Tailoring", "id": 197},
                                   "tiers": [{"skill_points": 63, "max_skill_points": 150}]}],
-                   "secondaries": [{"profession": {"name": "Cooking"},
+                   "secondaries": [{"profession": {"name": "Cooking", "id": 185},
                                     "tiers": [{"skill_points": 16, "max_skill_points": 75}]}]}
 
     def test_professions(self):
         s = gear.summarise(PROFILE, {"equipped_items": []}, None, professions=self.PROFESSIONS)
-        self.assertEqual(s["professions"], [{"name": "Tailoring", "skill": 63, "max": 150, "primary": True},
-                                            {"name": "Cooking", "skill": 16, "max": 75, "primary": False}])
+        self.assertEqual(s["professions"], [{"id": 197, "name": "Tailoring", "skill": 63, "max": 150, "primary": True},
+                                            {"id": 185, "name": "Cooking", "skill": 16, "max": 75, "primary": False}])
         text = gear.render_lines(s)
         self.assertIn("**Professions:** Tailoring 63/150", text["overview"])  # primaries only
         self.assertNotIn("Cooking", text["overview"])

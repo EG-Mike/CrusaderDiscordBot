@@ -1,5 +1,5 @@
 """
-Dashboard API for the character lookup: a gear check started by
+Dashboard API for the character lookup: a character check started by
 moderators, for any character in the region (gear.py), with where the
 character stands on the guild roster. WarcraftLogs parses join here once
 WarcraftLogs covers the game version.
@@ -55,7 +55,8 @@ async def lookup(request):
     icons = await gear.item_icon_urls(bot, summary)
     entry = await asyncio.to_thread(_roster_entry, auth.guild_for(bot), summary["slug"])
     return json_response({
-        "character": {**summary, "items": [{**i, "icon_url": icons.get(i["item_id"])} for i in summary["items"]]},
+        "character": {**summary, "items": [
+            {**i, "icon_url": icons.get(i["item_id"]), "url": gear.item_url(i["item_id"])} for i in summary["items"]]},
         "off_ruleset": gear.off_ruleset(summary),
         "requirement_problems": gear.requirement_problems(summary),
         "stat_groups": gear.stat_groups(summary.get("stats") or {}),

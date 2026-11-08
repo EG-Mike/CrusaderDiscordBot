@@ -26,7 +26,7 @@ else in the bot.
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Awaitable, Callable, Dict, List, Optional
+from typing import Awaitable, Callable, Dict, List, Optional, Tuple
 
 import discord
 
@@ -68,6 +68,7 @@ class Definition:
     default_color: Optional[str] = None
     variables: List[Variable] = field(default_factory=list)
     marker: Optional[str] = None    # embed footer that identifies the pinned message
+    old_markers: Tuple[str, ...] = ()  # earlier markers: a message pinned with one is updated, not posted again
     feature: Optional[str] = None   # FEATURE_* flag the message depends on
 
 
@@ -100,15 +101,16 @@ _REVIEW_EXPLAINER = (
     "spec and role (suggested from their talents), can pick an offspec, and can add an optional note or "
     "screenshot(s). Once that's done (or skipped, or it times out), a card posts right here - and on the "
     "dashboard's Applications page. That's the point where it becomes your job.\n"
-    "Blizzard updates gear when a player logs out: 🛡️ **Refresh gear** reads it again, e.g. after they "
-    "logged out in their raid gear.\n"
+    "Blizzard updates characters when a player logs out: 🔃 **Refresh from Blizzard** reads it again, e.g. "
+    "after they levelled up or changed gear.\n"
     "\n"
     "**2. Clicking {approve_emoji} Approve** (here or on the dashboard)\n"
     "- They're assigned the Fresh role - unless they already hold Fresh, Regular, or Organizer, in "
     "which case that's skipped and the card says so instead of pretending something changed.\n"
     "- They're also auto-tagged with their class (e.g. Mage) and role (Tank/Healer/DPS) roles.\n"
     "- Their character is linked to them on the guild roster, with their main spec and offspec "
-    "(unless someone else already linked it).\n"
+    "(unless someone else already linked it). Below level 10 Blizzard doesn't show the character yet: "
+    "the link is then made as soon as it shows up, e.g. when it joins the guild.\n"
     "- Their server nickname is changed to their character name - again skipped for "
     "already-established members.\n"
     "- The card's footer shows exactly what was newly assigned vs. what they already had, plus the "
@@ -133,8 +135,8 @@ _REVIEW_EXPLAINER = (
     "keeping this one focused on what's still pending. A single confirmation message here tracks who "
     "last ran it and when - it gets updated in place, not reposted, each time.\n"
     "\n"
-    "**6. `/gearcheck character`**\n"
-    "Gear-check anyone without an application: the same gear summary, shown only to you unless you "
+    "**6. `/lookup`**\n"
+    "Look anyone up without an application: the same character summary, shown only to you unless you "
     "choose to post it. The dashboard's Character lookup does the same."
 )
 
@@ -176,7 +178,7 @@ _ATTENDANCE_EXPLAINER = (
 _NOTE_PROMPT_DM = (
     "**This step is optional:**\n"
     "\n"
-    "You can provide a note and/or screenshot(s) of your gear by simply replying to this chat.\n"
+    "You can provide a note and/or screenshot(s) by simply replying to this chat.\n"
     "This information will be added added to your application and can be seen by the reviewers\n"
     "\n"
     "Your application will automatically post in 3 minutes. You may press the skip button to "
@@ -222,7 +224,8 @@ DEFINITIONS: List[Definition] = [
         where="Pinned in the apply channel",
         default_title="How to apply and get the permissions to sign up for raids",
         default_body=_APPLY_EXPLAINER,
-        marker="gear-check-explainer",  # finds the message already pinned; don't rename
+        marker="application-explainer",
+        old_markers=("gear-check-explainer",),
     ),
     Definition(
         key="review_explainer",
@@ -428,7 +431,20 @@ def text(key: str, **values) -> str:
 
 def embed_matches(existing: discord.Embed, wanted: discord.Embed) -> bool:
     return (existing.title == wanted.title and existing.description == wanted.description
-            and (existing.color.value if existing.color else None) == (wanted.color.value if wanted.color else None))
+            and (existing.color.value if existing.color else None) == (wanted.color.value if wanted.color else None)
+            and existing.footer.text == wanted.footer.text)
+
+
+def _button_labels(components) -> List[str]:
+    """The labels of a message's (or a view's) buttons, in order."""
+    labels = []
+    for item in components or []:
+        children = getattr(item, "children", None)
+        if children is not None:
+            labels.extend(_button_labels(children))
+        elif getattr(item, "label", None) is not None:
+            labels.append(item.label)
+    return labels
 
 
 # --- writing ----------------------------------------------------------------------------------
@@ -532,12 +548,14 @@ async def sync_pinned(channel, key: str, *, view=None, on_posted=None) -> str:
         pins = await _pinned_messages(channel)
     except discord.Forbidden:
         raise BotMessageError(f"The bot can't read the pinned messages in #{channel.name}.") from None
-    existing = next((m for m in pins if m.embeds and m.embeds[0].footer.text == marker), None)
+    markers = {marker, *definition(key).old_markers}
+    existing = next((m for m in pins if m.embeds and m.embeds[0].footer.text in markers), None)
     if existing is not None:
-        if embed_matches(existing.embeds[0], wanted):
+        same_buttons = view is None or _button_labels(existing.components) == _button_labels(view.children)
+        if embed_matches(existing.embeds[0], wanted) and same_buttons:
             return f"Already up to date in #{channel.name}."
         try:
-            await existing.edit(embed=wanted)
+            await (existing.edit(embed=wanted, view=view) if view is not None else existing.edit(embed=wanted))
         except discord.HTTPException as exc:
             raise BotMessageError(f"Discord refused the edit: {exc.text or exc.status}") from None
         return f"Updated the pinned message in #{channel.name}."

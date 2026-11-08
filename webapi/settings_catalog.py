@@ -309,6 +309,9 @@ CATALOG: Dict[str, Entry] = {
     "GUILD_ROSTER_POST_MIN_LEVEL": Entry("roster", "List characters from level",
                                          "The posted roster leaves out lower characters, except members' mains.",
                                          unit="level"),
+    "GUILD_ROSTER_POST_PROFESSIONS": Entry("roster", "Show professions",
+                                           "Each character's professions with their skill, e.g. Enchanting 200/225, "
+                                           "on the posted roster. Updated after the player logs out."),
     "GUILD_ROSTER_SELF_SERVICE": Entry("roster", "Members link their own characters",
                                        "With the Claim button under the posted roster, or /character link. Off: only moderators link characters."),
     "GUILD_ROSTER_REFRESH_MINUTES": Entry("roster", "Read the guild roster every",
@@ -354,6 +357,10 @@ CATALOG: Dict[str, Entry] = {
                                         advanced=True),
     "BLIZZARD_PROFILE_NAMESPACE": Entry("blizzard", "Character namespace", "For characters and accounts. The region "
                                                                            "is added automatically.", advanced=True),
+    "ITEM_LINK_URL": Entry(
+        "blizzard", "Item link",
+        "Item names on applications and in the character lookup link here, e.g. to Wowhead. {id} is filled in "
+        "with the item's number. Empty: names aren't links."),
     "CHARACTER_LOOKUP_PATHS": Entry(
         "blizzard", "Character lookup paths",
         "Tried in order until one answers; {name} and {surname} are filled in. Try paths in the "
