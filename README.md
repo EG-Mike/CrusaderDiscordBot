@@ -25,16 +25,19 @@ moderator-driven announcement system.
    screenshot(s), or Skip. With DMs closed, the spec step happens privately
    in the channel and the note step is skipped.
 4. A card posts to the review channel and shows on the dashboard's
-   **Applications** page: class, spec, role, offspec, level, guild, item
-   level, talents, the statistics that matter for their role (tank,
-   healer, caster, melee or ranged), the gear list, flags (empty slots,
-   missing enchants, empty sockets, wrong ruleset, below the guild's
-   minimum level/item level), note, screenshots, and a warning if the same
-   person was denied before. WarcraftLogs parses are added once
+   **Applications** page. The card has the character's portrait, class,
+   level, guild and a status line; the main spec, role, offspec, item level
+   and talents; one "Worth a look" list (earlier denials, the guild's
+   minimum level/item level, empty slots, missing enchants, empty sockets,
+   another ruleset); the statistics that matter for their role and their
+   professions; the gear (item level first, names linked to Wowhead); the
+   note and screenshots; and, once decided, what the bot did. Its colour
+   shows the status (class colour, green approved, red denied), and it
+   only shows the buttons that fit, plus "Open on dashboard". WarcraftLogs parses are added once
    WarcraftLogs covers WoW Forever (Settings, Applications).
 5. **Approve** / **Deny** / **Reset** work on the card *and* on the
    dashboard, for moderators and members with the approver role (checked by
-   the bot, in both places). **Refresh from Blizzard** (same people)
+   the bot, in both places). **Refresh** (same people)
    reads the character again, e.g. after they levelled up.
 6. **Approve**: the "Fresh" role (unless they already hold an exempt role),
    their class and role roles, their nickname set to the character name,

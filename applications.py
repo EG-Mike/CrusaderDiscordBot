@@ -18,7 +18,8 @@ Fields of a record (older records may lack the newer ones):
   applicant_id, character_name, character_slug, status (pending | approved |
   denied), class_name, class_color, role, spec, spec_id, other_specs
   (the offspec, as a list of one), off_spec_id, note, screenshot_urls,
-  gear (gear.summarise), gear_text, gear_checked_at, profile_url, wcl_url,
+  gear (gear.summarise, with portraits), icons ({"item:id"/"profession:id": emoji}),
+  gear_text (older records), gear_checked_at, profile_url, wcl_url,
   channel_id, submitted_at, original_message_id, last_decision,
   decision ({status, by_id, by_name, via, at, roles_assigned, roles_kept,
   nickname, roster, reason}), decision_footer (the card's footer text).

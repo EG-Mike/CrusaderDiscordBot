@@ -41,20 +41,21 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+import application_card
 import applications
 import bot_messages
 import config
+import emoji_library
 import gear
 import icons
 import roster
 import wow_api
 from applications import ApplicationError, Reviewer
 from permissions import is_moderator, member_is_moderator
+from web_links import dashboard_link
 
 log = logging.getLogger("wow-apply-bot.apply")
 
-APPROVE_EMOJI = "✅"
-DENY_EMOJI = "❌"
 FRESH_ROLE_EMOJI = "<:fresh_role:1542590697238962226>"
 NO_OFFSPEC = "__none__"
 
@@ -65,8 +66,6 @@ NOT_FOUND_TIMEOUT = 180    # waiting for the retry-name/continue-anyway choice
 AMSTERDAM_TZ = ZoneInfo("Europe/Amsterdam")
 
 ARCHIVE_CONFIRMATION_KEY = "archive_confirmation"  # sentinel store key, not a real message id
-CARD_TEXT_LIMIT = 3900  # Discord allows 4000 characters of text per message; a little room to spare
-MIN_GEAR_TEXT = 600     # the gear list always gets at least this much
 BLIZZARD_ROLES = {"tank": "Tank", "healer": "Healer", "dps": "DPS"}  # wow_api spec roles -> ours
 
 
@@ -82,7 +81,7 @@ def _clip(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     cut = text.rfind("\n", 0, limit - 40)
-    return text[:cut if cut > 0 else limit - 40] + "\n-# … more items on the dashboard's Applications page"
+    return text[:cut if cut > 0 else limit - 40] + "\n-# … more items on the dashboard's Character lookup"
 
 
 def _emoji_for(icon_str):
@@ -411,7 +410,7 @@ class ApplyCog(commands.Cog):
             "character_name": "template",
             "character_slug": "template",
             "status": "pending",
-        })
+        }, all_buttons=True)
         self.bot.add_view(template)
         bot_messages.register_updater("gear_check_explainer", self._sync_apply_explainer)
         bot_messages.register_updater("review_explainer", self._sync_review_explainer)
@@ -565,136 +564,38 @@ class ApplyCog(commands.Cog):
 
         return tier_block, boss_block, hidden_block
 
-    def _render_application_view(self, application: dict, message_id: int = None) -> discord.ui.LayoutView:
-        """
-        Rebuilds the whole review card from stored data - always from
-        scratch, for the first post and every later edit (decisions, gear
-        refresh, /update-application), so exactly one code path knows how to
-        render an application.
+    def _render_application_view(self, application: dict, message_id: int = None, *,
+                                 all_buttons: bool = False) -> discord.ui.LayoutView:
+        """The review card (application_card.py), rebuilt from the stored
+        record for the first post and every later edit, so exactly one code
+        path knows how to draw an application. message_id: this
+        application's own message, left out when counting earlier denials.
+        all_buttons: every action button, for registering the persistent view."""
+        return application_card.build(
+            application,
+            prior_denials=applications.prior_denials(self.bot.store, application["applicant_id"], exclude=message_id),
+            callbacks={"approve": self._on_approve_click, "deny": self._on_deny_click, "reset": self._on_reset_click,
+                       "refresh": self._on_refresh_gear_click},
+            guild=self._guild(),
+            dashboard_url=dashboard_link(f"/applications/{message_id}") if message_id else None,
+            all_buttons=all_buttons,
+        )
 
-        message_id, if given, is this application's own message id - used to
-        leave it out when counting earlier denials.
-        """
-        view = discord.ui.LayoutView(timeout=None)
-        color = discord.Color(application.get("class_color") or 0x2B2D31)
-        container = discord.ui.Container(accent_color=color)
-
-        status = application.get("status", "pending")
-        is_pending = status == "pending"
-        icon_prefix = {"approved": f"{APPROVE_EMOJI} ", "denied": f"{DENY_EMOJI} "}.get(status, "")
-        suffix = {"approved": " (APPROVED)", "denied": " (DENIED)"}.get(status, "")
-        profile_url = application.get("profile_url") or ""
-        character_name = application.get("character_name", "?")
-        if profile_url:
-            title = f"## {icon_prefix}[{character_name}{suffix}]({profile_url})"
-        else:
-            title = f"## {icon_prefix}{character_name}{suffix}"
-        container.add_item(discord.ui.TextDisplay(title))
-        container.add_item(discord.ui.TextDisplay(f"Applicant: <@{application['applicant_id']}>"))
-        container.add_item(discord.ui.Separator())
-
-        prior_denials = applications.prior_denials(self.bot.store, application["applicant_id"], exclude=message_id)
-        # Only worth flagging once it's a pattern, not a single past denial.
-        if len(prior_denials) >= 2:
-            most_recent_id, most_recent_rec = prior_denials[-1]
-            most_recent_date = time.strftime(
-                "%Y-%m-%d", time.gmtime(applications.submitted_at(most_recent_id, most_recent_rec)))
-            container.add_item(discord.ui.TextDisplay(
-                f"⚠️ **Previously Denied** ⚠️\nThis applicant has been denied {len(prior_denials)} "
-                f"times before. Most recent: **{most_recent_rec.get('character_name', '?')}** "
-                f"on {most_recent_date}."
-            ))
-            container.add_item(discord.ui.Separator())
-
-        container.add_item(discord.ui.TextDisplay(application.get("class_block") or "-"))
-        container.add_item(discord.ui.Separator())
-
-        if application.get("also_play_block") and application["also_play_block"] != "-":
-            # Applications from before the offspec choice listed every other spec here.
-            container.add_item(discord.ui.TextDisplay(f"**Can also play:** {application['also_play_block']}"))
-            container.add_item(discord.ui.Separator())
-
-        gear_text = application.get("gear_text")
-        if gear_text:
-            checked = application.get("gear_checked_at")
-            when = f" · checked <t:{checked}:R>" if checked else ""
-            container.add_item(discord.ui.TextDisplay(
-                f"### Character\n-# From Blizzard, as of the character's last logout{when}\n{gear_text['overview']}"))
-            container.add_item(discord.ui.TextDisplay(_clip(gear_text["gear"], self._gear_room(application))))
-            if gear_text.get("flags"):
-                container.add_item(discord.ui.TextDisplay(gear_text["flags"]))
-            container.add_item(discord.ui.Separator())
-        elif application.get("armory_block"):  # applications from before Blizzard's WoW Forever data
-            container.add_item(discord.ui.TextDisplay(application["armory_block"]))
-            container.add_item(discord.ui.Separator())
-
-        for key in ("tier_block", "boss_block", "hidden_block"):
-            if application.get(key):
-                container.add_item(discord.ui.TextDisplay(application[key]))
-                container.add_item(discord.ui.Separator())
-
-        links = [f"[Profile]({profile_url})" if profile_url else None,
-                 f"[WarcraftLogs]({application['wcl_url']})" if application.get("wcl_url") else None]
-        if any(links):
-            container.add_item(discord.ui.TextDisplay("**Links:** " + " · ".join(filter(None, links))))
-            container.add_item(discord.ui.Separator())
-
-        note = application.get("note")
-        container.add_item(discord.ui.TextDisplay(
-            f"**Applicant's note:**\n{note[:1024] if note else 'No note provided'}"
-        ))
-        container.add_item(discord.ui.Separator())
-
-        screenshot_urls = (application.get("screenshot_urls") or [])[: config.MAX_SCREENSHOTS]
-        if screenshot_urls:
-            container.add_item(discord.ui.MediaGallery(*[discord.MediaGalleryItem(u) for u in screenshot_urls]))
-        else:
-            container.add_item(discord.ui.TextDisplay("**Screenshot(s):** No screenshot provided"))
-        container.add_item(discord.ui.Separator())
-
-        footer_text = application.get("decision_footer") or "Use the buttons below or the dashboard to decide"
-        container.add_item(discord.ui.TextDisplay(footer_text))
-
-        view.add_item(container)
-
-        action_row = discord.ui.ActionRow()
-        # The custom IDs are unchanged from the first version, so every card ever posted keeps working.
-        for label, emoji, style, custom_id, disabled, callback in (
-            ("Approve", APPROVE_EMOJI, discord.ButtonStyle.success, "wow_apply_approve", not is_pending,
-             self._on_approve_click),
-            ("Deny", DENY_EMOJI, discord.ButtonStyle.danger, "wow_apply_deny", not is_pending, self._on_deny_click),
-            ("Reset", "🔄", discord.ButtonStyle.primary, "wow_apply_reset", is_pending, self._on_reset_click),
-            ("Refresh from Blizzard", "🔃", discord.ButtonStyle.secondary, "wow_apply_refresh_gear",
-             not application.get("character_slug"), self._on_refresh_gear_click),
-        ):
-            button = discord.ui.Button(label=label, emoji=emoji, style=style, custom_id=custom_id, disabled=disabled)
-            button.callback = callback
-            action_row.add_item(button)
-        view.add_item(action_row)
-        return view
-
-    @staticmethod
-    def _gear_room(application: dict) -> int:
-        """How much of the card's text the gear list may use: what the rest
-        of the card leaves (the note is cut at 1024 characters)."""
-        gear_text = application.get("gear_text") or {}
-        others = [application.get("character_name") or "", application.get("profile_url") or "",
-                  application.get("class_block") or "", application.get("also_play_block") or "",
-                  gear_text.get("overview") or "", gear_text.get("flags") or "", application.get("tier_block") or "",
-                  application.get("boss_block") or "", application.get("hidden_block") or "",
-                  application.get("wcl_url") or "", (application.get("note") or "")[:1024],
-                  application.get("decision_footer") or ""]
-        fixed = 600  # headings, the applicant line, warnings, labels and separators
-        return max(MIN_GEAR_TEXT, CARD_TEXT_LIMIT - fixed - sum(len(t) for t in others))
-
-    async def _gear_fields(self, summary, role=None) -> dict:
-        """What an application stores about the gear: the summary (data) and
-        its rendered text, so a re-render never needs Blizzard."""
+    async def _gear_fields(self, summary) -> dict:
+        """What an application stores about the character: the summary (data)
+        and the emoji of its items and professions, so a re-render never
+        needs Blizzard."""
         if not summary:
-            return {"gear": None, "gear_text": None, "gear_checked_at": None}
-        icons_by_item = await gear.item_icons(self.bot, summary)
-        return {"gear": summary, "gear_text": gear.render_lines(summary, icons_by_item, role=role),
-                "gear_checked_at": int(time.time())}
+            return {"gear": None, "icons": {}, "gear_checked_at": None}
+        found = {application_card.icon_key("item", item_id): emoji
+                 for item_id, emoji in (await gear.item_icons(self.bot, summary)).items() if emoji}
+        for profession in summary.get("professions") or []:
+            if profession.get("primary") and profession.get("id"):
+                emoji = await emoji_library.ensure_icon(self.bot, "profession", profession["id"],
+                                                        by="automatic (application)")
+                if emoji:
+                    found[application_card.icon_key("profession", profession["id"])] = emoji
+        return {"gear": summary, "icons": found, "gear_checked_at": int(time.time())}
 
     # --- where an application's card is ---------------------------------------------------------------
 
@@ -703,10 +604,12 @@ class ApplyCog(commands.Cog):
         return self._locks.setdefault(int(message_id), asyncio.Lock())
 
     def _guild(self):
-        channel = self.bot.get_channel(config.REVIEW_CHANNEL_ID) if config.REVIEW_CHANNEL_ID else None
+        get_channel = getattr(self.bot, "get_channel", None)
+        channel = get_channel(config.REVIEW_CHANNEL_ID) if get_channel and config.REVIEW_CHANNEL_ID else None
         if channel is not None and getattr(channel, "guild", None) is not None:
             return channel.guild
-        return self.bot.guilds[0] if self.bot.guilds else None
+        guilds = getattr(self.bot, "guilds", None) or []
+        return guilds[0] if guilds else None
 
     def _card_channel(self, record: dict):
         channel_id = record.get("channel_id") or config.REVIEW_CHANNEL_ID
@@ -1017,7 +920,7 @@ class ApplyCog(commands.Cog):
             summary = await gear.fetch(self.bot, application["character_slug"], class_names)
         except (gear.GearError, wow_api.WowApiError) as exc:
             raise ApplicationError(f"Couldn't refresh the character: {exc}") from None
-        self.bot.store.update(message_id, **await self._gear_fields(summary, application.get("role")))
+        self.bot.store.update(message_id, **await self._gear_fields(summary))
         await self._rerender(message_id)
         return self.bot.store.get(message_id)
 
@@ -1349,7 +1252,7 @@ class ApplyCog(commands.Cog):
             "screenshot_urls": screenshot_urls or [],
             "channel_id": config.REVIEW_CHANNEL_ID,
             "submitted_at": int(time.time()),
-            **await self._gear_fields(char_data.get("gear"), choice["role"]),
+            **await self._gear_fields(char_data.get("gear")),
         }
 
         review_channel = self.bot.get_channel(config.REVIEW_CHANNEL_ID)

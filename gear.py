@@ -280,11 +280,12 @@ async def fetch(bot, character_slug: str, class_names: Optional[Dict[int, str]] 
         try:
             answers = await asyncio.gather(*(
                 client.request(base + sub, namespace, session=session, locale=config.BLIZZARD_LOCALE)
-                for sub in ("", "/equipment", "/specializations", "/professions", "/statistics")))
+                for sub in ("", "/equipment", "/specializations", "/professions", "/statistics",
+                            "/character-media")))
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             raise GearError(f"Couldn't reach Blizzard ({type(exc).__name__}). Try again in a minute.") from None
     ((p_status, p_headers, profile), (e_status, _, equipment), (_s, _, specializations), (_p, _, professions),
-     (_st, _, statistics)) = answers
+     (_st, _, statistics), (m_status, _, media)) = answers
     if p_status == 404:
         raise GearError("Blizzard has no profile for this character. Characters can be looked up from level "
                         "10, after logging out once.")
@@ -294,7 +295,17 @@ async def fetch(bot, character_slug: str, class_names: Optional[Dict[int, str]] 
     summary = summarise(profile, equipment, specializations, professions=professions, statistics=statistics,
                         class_name=(class_names or {}).get(class_id, ""))
     summary["profile_updated"] = p_headers.get("Last-Modified") or p_headers.get("last-modified")
+    summary.update(portraits(media if m_status == 200 else None))
     return summary
+
+
+def portraits(media: Optional[dict]) -> Dict[str, Optional[str]]:
+    """{"avatar_url", "render_url"}: the character's portrait (a small
+    square) and full-body render from the character-media document."""
+    assets = [a.get("value") or "" for a in (media or {}).get("assets") or []]
+    avatar = next((a for a in assets if a.endswith("-avatar.jpg")), None)
+    render = next((a for a in assets if a.endswith("-main-raw.png")), None)
+    return {"avatar_url": avatar, "render_url": render}
 
 
 # --- rendering ---------------------------------------------------------------------------------------

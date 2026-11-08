@@ -127,11 +127,18 @@ version or raid tier is a configuration change.
   to `ITEM_LINK_URL` (Wowhead's Forever pages by default). Approval links
   the character on the roster, or leaves a pending link
   (`roster.remember_link`) when Blizzard doesn't know it yet.
+- `application_card.py`: the review card in Discord (Components V2), built
+  from the stored record by plain functions: portrait header with a status
+  line, facts, one "Worth a look" list, role stats and professions, gear
+  (item level first, linked names), note, decision summary, and only the
+  buttons that fit the status plus "Open on dashboard" (`web_links.py`).
+  The accent colour shows the status. The persistent view is registered
+  with `all_buttons=True` so every button is answered after a restart.
 - `gear.py`: the gear check: a character's gear (item level, enchants,
   gems, sets), talents and profile from Blizzard, flags (empty slots,
   missing enchants, empty sockets) and the guild's minimum level/item
   level, as plain data plus Discord text. Used by `cogs/apply.py` (the
-  review card, "Refresh from Blizzard", `/lookup`) and the dashboard's
+  review card, "Refresh", `/lookup`) and the dashboard's
   Character lookup page (`webapi/lookup_api.py`), which also shows
   professions and the character's place on the roster. Character
   statistics (`parse_stats`; `stat_highlights` per role on the card,

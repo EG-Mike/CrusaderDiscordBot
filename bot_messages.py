@@ -101,7 +101,7 @@ _REVIEW_EXPLAINER = (
     "spec and role (suggested from their talents), can pick an offspec, and can add an optional note or "
     "screenshot(s). Once that's done (or skipped, or it times out), a card posts right here - and on the "
     "dashboard's Applications page. That's the point where it becomes your job.\n"
-    "Blizzard updates characters when a player logs out: 🔃 **Refresh from Blizzard** reads it again, e.g. "
+    "Blizzard updates characters when a player logs out: 🔃 **Refresh** reads it again, e.g. "
     "after they levelled up or changed gear.\n"
     "\n"
     "**2. Clicking {approve_emoji} Approve** (here or on the dashboard)\n"
@@ -124,7 +124,7 @@ _REVIEW_EXPLAINER = (
     "If you're instead correcting an earlier approval into a denial, no DM is sent - their Fresh "
     "role is just quietly removed.\n"
     "\n"
-    "**4. 🔄 Reset**\n"
+    "**4. ↩️ Reset decision**\n"
     "Made the wrong call? Reset puts the card back to pending - Approve/Deny become clickable again. "
     "Re-deciding still follows the rules above: approving after a wrong denial sends the acceptance "
     "DM as normal; denying after a wrong approval doesn't send a denial DM, since they were never "
@@ -238,7 +238,7 @@ DEFINITIONS: List[Definition] = [
         default_body=_REVIEW_EXPLAINER,
         variables=[
             Variable("approve_emoji", "The Approve button's emoji", "✅", lambda: "✅"),
-            Variable("deny_emoji", "The Deny button's emoji", "❌", lambda: "❌"),
+            Variable("deny_emoji", "The Deny button's emoji", "✖️", lambda: "✖️"),
         ],
         marker="review-channel-explainer",
     ),
