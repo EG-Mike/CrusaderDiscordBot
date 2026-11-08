@@ -3,6 +3,7 @@
 import unittest
 from unittest import mock
 
+import application_card
 import config
 import gear
 
@@ -61,29 +62,31 @@ class GearTests(unittest.TestCase):
         self.assertEqual(s["empty_sockets"], 1)
         self.assertEqual(gear.requirement_problems(s), ["item level 60 (needs 65)"])
 
-    def test_render(self):
+    def test_card_parts(self):
         s = gear.summarise(PROFILE, EQUIPMENT, SPECS)
-        text = gear.render_lines(s, icons={s["items"][0]["item_id"]: "<:inv_helm:1>"})
-        self.assertIn("**Item level:** 60 (bags included: 62)", text["overview"])
-        self.assertIn("**Talents:** Holy 30 / Discipline 21", text["overview"])
-        self.assertIn("⚠️ below on item level 60 (needs 65)", text["overview"])
-        helm_id = EQUIPMENT["equipped_items"][1]["item"]["id"]
-        self.assertIn(f"<:inv_helm:1> **[Circlet of Prophecy](https://www.wowhead.com/forever/item={helm_id})** `66` "
-                      "· Head · Vestments of Prophecy", text["gear"])
+        helm_id, weapon_id = (EQUIPMENT["equipped_items"][i]["item"]["id"] for i in (1, 0))
+        record = {"gear": s, "icons": {f"item:{helm_id}": "<:inv_helm:1>"}}
+        self.assertIn("**Item level** `60` (62 with bags) · **Talents** Holy 30 / Discipline 21",
+                      application_card.facts(record))
+        gear_text = application_card.gear_lines(record, 4000)
+        self.assertIn(f"` 66` <:inv_helm:1> **[Circlet of Prophecy](https://www.wowhead.com/forever/item={helm_id})"
+                      "** · Head\n-# 🔗 Vestments of Prophecy · 💎 Insightful Earthsiege Diamond · ◻️ empty Blue",
+                      gear_text)
+        self.assertIn(f"/item={weapon_id})** · Main hand\n-# ✨ +30 Spell Power", gear_text)
+        self.assertNotIn("Neophyte's Shirt", gear_text)  # cosmetic slots aren't listed
         with mock.patch.object(config, "ITEM_LINK_URL", ""):
-            self.assertIn("**Circlet of Prophecy** `66`", gear.render_lines(s)["gear"])
-        self.assertIn("-# Insightful Earthsiege Diamond · empty Blue", text["gear"])
-        weapon_id = EQUIPMENT["equipped_items"][0]["item"]["id"]
-        self.assertIn(f"/item={weapon_id})** `70` · Main hand\n-# Enchanted: +30 Spell Power", text["gear"])
-        self.assertNotIn("Neophyte's Shirt", text["gear"])  # cosmetic slots aren't listed
-        self.assertEqual(text["flags"], "⚠️ Empty: Ring 1 · No enchant: Head, Chest · 1 empty gem socket")
+            self.assertIn("🟪 **Circlet of Prophecy** · Head", application_card.gear_lines({"gear": s}, 4000))
+        worth = application_card.attention(record, [])
+        self.assertIn("- Below the guild's minimum: item level 60 (needs 65)", worth)
+        self.assertIn("- Empty: Ring 1\n- No enchant: Head, Chest\n- 1 empty gem socket", worth)
 
     def test_no_requirements_set(self):
-        with mock.patch.multiple(config, GEARCHECK_MIN_LEVEL=0, GEARCHECK_MIN_ITEM_LEVEL=0):
-            text = gear.render_lines(gear.summarise(PROFILE, {"equipped_items": []}, None))
-        self.assertNotIn("Requirements", text["overview"])
-        self.assertIn("**Talents:** none spent", text["overview"])
-        self.assertEqual(text["gear"], "No gear equipped.")
+        with mock.patch.multiple(config, GEARCHECK_MIN_LEVEL=0, GEARCHECK_MIN_ITEM_LEVEL=0,
+                                 GEARCHECK_EXPECTED_SLOTS=[], GEARCHECK_ENCHANT_SLOTS=[]):
+            record = {"gear": gear.summarise(PROFILE, {"equipped_items": []}, None)}
+            self.assertIsNone(application_card.attention(record, []))
+        self.assertIn("-# No gear equipped.", application_card.gear_lines(record, 4000))
+        self.assertNotIn("Talents", application_card.facts(record))  # none spent
 
 
 class ProfessionAndRulesetTests(unittest.TestCase):
@@ -96,9 +99,9 @@ class ProfessionAndRulesetTests(unittest.TestCase):
         s = gear.summarise(PROFILE, {"equipped_items": []}, None, professions=self.PROFESSIONS)
         self.assertEqual(s["professions"], [{"id": 197, "name": "Tailoring", "skill": 63, "max": 150, "primary": True},
                                             {"id": 185, "name": "Cooking", "skill": 16, "max": 75, "primary": False}])
-        text = gear.render_lines(s)
-        self.assertIn("**Professions:** Tailoring 63/150", text["overview"])  # primaries only
-        self.assertNotIn("Cooking", text["overview"])
+        text = application_card.stats_block({"gear": s, "icons": {"profession:197": "<:tailoring:1>"}})
+        self.assertIn("**Professions** <:tailoring:1> Tailoring 63/150", text)  # primaries only
+        self.assertNotIn("Cooking", text)
 
     def test_ruleset_flag(self):
         s = gear.summarise(PROFILE, {"equipped_items": []}, None)
@@ -107,7 +110,8 @@ class ProfessionAndRulesetTests(unittest.TestCase):
             self.assertFalse(gear.off_ruleset(s))  # no rulesets set: any is fine
         with mock.patch.object(config, "CHARACTER_RULESETS", [1]):
             self.assertTrue(gear.off_ruleset(s))
-            self.assertIn("On the Normal ruleset, not one of the guild's", gear.render_lines(s)["flags"])
+            self.assertIn("On the Normal ruleset, not one of the guild's",
+                          application_card.attention({"gear": s}, []))
         with mock.patch.object(config, "CHARACTER_RULESETS", [1, 2]):
             self.assertFalse(gear.off_ruleset(s))
 

@@ -57,7 +57,7 @@ class ReviewCardTests(unittest.TestCase):
         self.assertIn("🟡 **Waiting for review** · applied <t:1793870000:R>", text)
         self.assertIn("**Main spec** Holy · Healer", text)
         self.assertIn("**Offspec** Discipline", text)
-        self.assertIn("**Item level** `60` · **Talents** Holy 30 / Discipline 21", text)
+        self.assertIn("**Item level** `60` (62 with bags) · **Talents** Holy 30 / Discipline 21", text)
         self.assertIn("### ⚠️ Worth a look\n- Empty: Neck", text)
         self.assertIn("`1,729` Mana / power · `95` Intellect", text)  # healer stats
         self.assertIn("**Professions** <:enchanting:2> Enchanting 200/225", text)
@@ -128,6 +128,39 @@ class ReviewCardTests(unittest.TestCase):
     def test_no_dashboard_link_when_it_is_off(self):
         with mock.patch.object(config, "FEATURE_WEB_DASHBOARD_ENABLED", False):
             self.assertNotIn("Open on dashboard", buttons(self.card()))
+
+
+class LookupViewTests(unittest.TestCase):
+    """/lookup draws a character with the application card's parts."""
+
+    def test_same_parts_without_the_application(self):
+        with mock.patch.object(config, "GEARCHECK_MIN_ITEM_LEVEL", 0):
+            view = application_card.lookup_view(
+                summary(), icons_by_key={"profession:333": "<:enchanting:2>"},
+                extra_facts=["**Guild roster** <@111> · main"], dashboard_url="http://localhost:8081/lookup?name=x")
+        text = texts(view)
+        self.assertIn("## Eggmike Thewhite\nLevel 60 Undead Priest · ‹Encore› · Normal", text)
+        self.assertNotIn("Waiting for review", text)  # no application status
+        self.assertNotIn("Applicant", text)
+        self.assertIn("**Guild roster** <@111> · main", text)
+        self.assertIn("**Item level** `60` (62 with bags)", text)
+        self.assertIn("### ⚠️ Worth a look", text)
+        self.assertIn("**Professions** <:enchanting:2> Enchanting 200/225", text)
+        self.assertIn("### Gear", text)
+        self.assertNotIn("### Note", text)
+        [section] = [c for c in view.walk_children() if isinstance(c, discord.ui.Section)]
+        self.assertTrue(section.accessory.media.url.endswith("-avatar.jpg"))
+        self.assertEqual(set(buttons(view)), {"Open in Character lookup"})  # a link only, nothing to decide
+        [container] = [c for c in view.walk_children() if isinstance(c, discord.ui.Container)]
+        self.assertEqual(container.accent_color.value, config.CLASS_COLORS["Priest"])
+
+    def test_long_gear_points_to_the_lookup_page(self):
+        items = [{"slot": "HEAD", "slot_name": "Head", "item_id": 100000 + i, "name": f"Some Long Item Name {i}",
+                  "quality": "EPIC", "item_level": 60, "stats": [], "enchants": ["Enchanted: +10 Stamina"],
+                  "sockets": [], "set": None} for i in range(80)]
+        text = texts(application_card.lookup_view(summary(items=items)))
+        self.assertIn("the rest is on the dashboard's Character lookup", text)
+        self.assertLessEqual(len(text), 4000)
 
 
 class PortraitTests(unittest.TestCase):

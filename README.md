@@ -275,7 +275,7 @@ Every poll carries the footer from `config.POLL_FOOTER`.
 | Command | Description |
 |---|---|
 | `/announce` | Draft an announcement in the sandbox channel, with Edit/Publish buttons. |
-| `/lookup <name> [public]` | Look up any character on Blizzard: level, item level, gear, enchants, gems, talents and what's missing. Only you see it unless `public`. |
+| `/lookup <name> [public]` | Look up any character on Blizzard, shown like an application card: portrait, level, item level, talents, what's worth a look, stats, professions, gear and where it stands on the guild roster. Only you see it unless `public`. |
 | `/applications archive` | Move all approved/denied applications to the archive channel (also on the dashboard's Applications page). |
 | `/checkattendance run` | Generate/refresh the attendance overview (no cooldown). |
 | `/checkattendance addlog <date> <tier> <link>` | Add a main-raid log to the tracked list. |

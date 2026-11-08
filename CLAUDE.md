@@ -134,6 +134,9 @@ version or raid tier is a configuration change.
   buttons that fit the status plus "Open on dashboard" (`web_links.py`).
   The accent colour shows the status. The persistent view is registered
   with `all_buttons=True` so every button is answered after a restart.
+  `/lookup` uses the same parts (`lookup_view`: no applicant, note,
+  decision or action buttons; a roster line and "Open in Character
+  lookup" instead), so the two always look alike.
 - `gear.py`: the gear check: a character's gear (item level, enchants,
   gems, sets), talents and profile from Blizzard, flags (empty slots,
   missing enchants, empty sockets) and the guild's minimum level/item

@@ -2,6 +2,8 @@
 The application's review card in Discord: a stored application record
 (applications.py) as a Components V2 layout. Plain functions, so the card
 can be built (and tested) without the cog; cogs/apply.py wires the buttons.
+/lookup shows a character with the same parts (lookup_view), minus what
+belongs to an application.
 
 Layout, top to bottom:
   header      the character's portrait (Blizzard, or the applicant's Discord
@@ -68,7 +70,7 @@ def accent(application: dict) -> int:
 
 # --- the parts ------------------------------------------------------------------------------------
 
-def header(application: dict, guild=None) -> str:
+def header(application: dict, guild=None, *, status: bool = True) -> str:
     summary = application.get("gear") or {}
     name = application.get("character_name") or "?"
     url = application.get("profile_url")
@@ -81,6 +83,8 @@ def header(application: dict, guild=None) -> str:
                                        summary.get("ruleset")]))
     if details:
         lines.append(f"{class_icon} {details}".strip())
+    if not status:
+        return "\n".join(lines)
     status = application.get("status", "pending")
     decision = application.get("decision") or {}
     line = STATUS_LINES.get(status, status)
@@ -96,7 +100,8 @@ def facts(application: dict, guild=None) -> str:
     """Applicant, specs and role, item level and talents. Older records
     without Blizzard data show their stored class block."""
     summary = application.get("gear")
-    lines = [f"**Applicant** <@{application['applicant_id']}>"]
+    lines = [f"**Applicant** <@{application['applicant_id']}>"] if application.get("applicant_id") else []
+    lines.extend(application.get("extra_facts") or [])
     if not summary and application.get("class_block"):
         return "\n".join(lines + [application["class_block"]])
     class_name = application.get("class_name") or ""
@@ -111,8 +116,9 @@ def facts(application: dict, guild=None) -> str:
                                                 for s in others))
     if summary:
         talents = " / ".join(f"{t['spec']} {t['points']}" for t in summary.get("talents") or [] if t["points"])
-        lines.append(f"**Item level** `{summary.get('equipped_item_level') or '?'}`"
-                     + (f" · **Talents** {talents}" if talents else ""))
+        equipped, average = summary.get("equipped_item_level"), summary.get("average_item_level")
+        bags = f" ({average} with bags)" if average and equipped and average != equipped else ""
+        lines.append(f"**Item level** `{equipped or '?'}`{bags}" + (f" · **Talents** {talents}" if talents else ""))
     return "\n".join(lines)
 
 
@@ -149,7 +155,8 @@ def stats_block(application: dict) -> Optional[str]:
     return "### Stats\n" + "\n".join(lines) if lines else None
 
 
-def gear_lines(application: dict, limit: int) -> Optional[str]:
+def gear_lines(application: dict, limit: int,
+               more: str = "-# … the rest is on the dashboard's Applications page") -> Optional[str]:
     """The gear list within `limit` characters, or None without Blizzard data."""
     summary = application.get("gear")
     if not summary:
@@ -176,7 +183,7 @@ def gear_lines(application: dict, limit: int) -> Optional[str]:
             row += "\n-# " + " · ".join(extras)
         rows.append(row)
     body = "\n".join(rows) or "-# No gear equipped."
-    return _clip(f"{head}\n{body}", limit, "-# … the rest is on the dashboard's Applications page")
+    return _clip(f"{head}\n{body}", limit, more)
 
 
 def note_block(application: dict) -> str:
@@ -288,4 +295,45 @@ def build(application: dict, *, prior_denials: List[Tuple[int, dict]], callbacks
     if dashboard_url and not all_buttons:
         row.add_item(discord.ui.Button(label="Open on dashboard", style=discord.ButtonStyle.link, url=dashboard_url))
     view.add_item(row)
+    return view
+
+
+def lookup_view(summary: dict, *, icons_by_key: Optional[Dict[str, str]] = None, profile_url: Optional[str] = None,
+                guild=None, dashboard_url: Optional[str] = None,
+                extra_facts: Optional[List[str]] = None) -> discord.ui.LayoutView:
+    """/lookup: a character (gear.fetch) drawn like an application card,
+    without the applicant, note, decision and buttons. `extra_facts`: lines
+    under the header (e.g. where it stands on the guild roster)."""
+    record = {"character_name": summary.get("character"), "class_name": summary.get("class_name"),
+              "class_color": config.CLASS_COLORS.get(summary.get("class_name") or "", NEUTRAL_COLOR),
+              "gear": summary, "icons": icons_by_key or {}, "profile_url": profile_url,
+              "gear_checked_at": int(time.time()), "extra_facts": extra_facts or []}
+    parts = {
+        "header": header(record, guild, status=False),
+        "facts": facts(record, guild),
+        "attention": attention(record, []),
+        "stats": stats_block(record),
+    }
+    room = max(MIN_GEAR_TEXT, CARD_TEXT_LIMIT - sum(len(p or "") for p in parts.values()))
+    parts["gear"] = gear_lines(record, room, "-# … the rest is on the dashboard's Character lookup")
+
+    container = discord.ui.Container(accent_color=discord.Color(accent(record)))
+    if summary.get("avatar_url"):
+        container.add_item(discord.ui.Section(discord.ui.TextDisplay(parts["header"]),
+                                              accessory=discord.ui.Thumbnail(summary["avatar_url"])))
+    else:
+        container.add_item(discord.ui.TextDisplay(parts["header"]))
+    if parts["facts"]:
+        container.add_item(discord.ui.TextDisplay(parts["facts"]))
+    if parts["attention"]:
+        container.add_item(discord.ui.TextDisplay(parts["attention"]))
+    container.add_item(discord.ui.Separator(spacing=discord.SeparatorSpacing.large))
+    for key in ("stats", "gear"):
+        if parts[key]:
+            container.add_item(discord.ui.TextDisplay(parts[key]))
+    view = discord.ui.LayoutView(timeout=None)
+    view.add_item(container)
+    if dashboard_url:
+        view.add_item(discord.ui.ActionRow(discord.ui.Button(label="Open in Character lookup",
+                                                             style=discord.ButtonStyle.link, url=dashboard_url)))
     return view

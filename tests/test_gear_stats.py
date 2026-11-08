@@ -2,6 +2,7 @@
 
 import unittest
 
+import application_card
 import gear
 
 # Trimmed from a real WoW Forever answer (/profile/wow/character/{slug}/statistics, level 28 priest).
@@ -55,9 +56,9 @@ class StatTests(unittest.TestCase):
 
     def test_card_shows_role_stats(self):
         summary = {"stats": gear.parse_stats(STATISTICS), "items": [], "talents": [], "professions": []}
-        overview = gear.render_lines(summary, role="Healer")["overview"]
-        self.assertIn("**Stats:** Mana / power 1,729 · Intellect 95", overview)
-        self.assertNotIn("**Stats:**", gear.render_lines({"items": [], "talents": []})["overview"])
+        text = application_card.stats_block({"gear": summary, "role": "Healer"})
+        self.assertIn("### Stats\n`1,729` Mana / power · `95` Intellect", text)
+        self.assertIsNone(application_card.stats_block({"gear": {"items": [], "talents": []}}))
 
 
 if __name__ == "__main__":

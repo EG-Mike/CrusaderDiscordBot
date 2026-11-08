@@ -34,7 +34,7 @@ import asyncio
 import logging
 import time
 from typing import Dict, List, Optional, Tuple
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 from zoneinfo import ZoneInfo
 
 import discord
@@ -74,14 +74,6 @@ def _fresh_label(name: str) -> str:
     mentioned in an assigned/already-had role list - other exempt roles
     (Regular/Organizer) are left as plain text."""
     return f"{FRESH_ROLE_EMOJI} {name}" if name == "Fresh" else name
-
-
-def _clip(text: str, limit: int) -> str:
-    """Cuts at a line break so an item line isn't split."""
-    if len(text) <= limit:
-        return text
-    cut = text.rfind("\n", 0, limit - 40)
-    return text[:cut if cut > 0 else limit - 40] + "\n-# … more items on the dashboard's Character lookup"
 
 
 def _emoji_for(icon_str):
@@ -587,6 +579,11 @@ class ApplyCog(commands.Cog):
         needs Blizzard."""
         if not summary:
             return {"gear": None, "icons": {}, "gear_checked_at": None}
+        return {"gear": summary, "icons": await self._card_icons(summary), "gear_checked_at": int(time.time())}
+
+    async def _card_icons(self, summary: dict) -> Dict[str, str]:
+        """{"item:id" / "profession:id": emoji} from the emoji library, for
+        the card and /lookup. Icons that can't be made are left out."""
         found = {application_card.icon_key("item", item_id): emoji
                  for item_id, emoji in (await gear.item_icons(self.bot, summary)).items() if emoji}
         for profession in summary.get("professions") or []:
@@ -595,7 +592,7 @@ class ApplyCog(commands.Cog):
                                                         by="automatic (application)")
                 if emoji:
                     found[application_card.icon_key("profession", profession["id"])] = emoji
-        return {"gear": summary, "icons": found, "gear_checked_at": int(time.time())}
+        return found
 
     # --- where an application's card is ---------------------------------------------------------------
 
@@ -1476,23 +1473,24 @@ class ApplyCog(commands.Cog):
         except (gear.GearError, wow_api.WowApiError) as exc:
             await interaction.followup.send(f"Couldn't look up **{name.strip()}**: {exc}", ephemeral=True)
             return
-        text = gear.render_lines(summary, await gear.item_icons(self.bot, summary))
-        container = discord.ui.Container(accent_color=discord.Color(
-            config.CLASS_COLORS.get(summary["class_name"], 0x2B2D31)))
-        details = " · ".join(filter(None, [f"Level {summary['level']}", summary.get("race"), summary["class_name"],
-                                           summary.get("guild")]))
-        profile_url = self._profile_url(summary["slug"])
-        title = f"[{summary['character']}]({profile_url})" if profile_url else summary["character"]
-        container.add_item(discord.ui.TextDisplay(f"## {title}\n{details}\n-# Gear as of the last logout"))
-        container.add_item(discord.ui.Separator())
-        container.add_item(discord.ui.TextDisplay(text["overview"]))
-        container.add_item(discord.ui.TextDisplay(_clip(text["gear"], 3000)))
-        if text["flags"]:
-            container.add_item(discord.ui.TextDisplay(text["flags"]))
-        view = discord.ui.LayoutView(timeout=None)
-        view.add_item(container)
+        view = application_card.lookup_view(
+            summary, icons_by_key=await self._card_icons(summary), profile_url=self._profile_url(summary["slug"]),
+            guild=interaction.guild, extra_facts=await self._roster_facts(summary["slug"]),
+            dashboard_url=dashboard_link(f"/lookup?name={quote(summary['character'])}"))
         await interaction.followup.send(view=view, ephemeral=not public,
                                         allowed_mentions=discord.AllowedMentions.none())
+
+    async def _roster_facts(self, character_slug: str) -> List[str]:
+        """Where the character stands on the guild roster, as on the
+        dashboard's Character lookup (nothing when the roster is off)."""
+        if self.bot.get_cog("RosterCog") is None:
+            return []
+        c = await asyncio.to_thread(roster.get, character_slug)
+        if c is None:
+            return ["**Guild roster** not on it"]
+        if not c["discord_id"]:
+            return ["**Guild roster** on it, not linked to anyone"]
+        return [f"**Guild roster** <@{c['discord_id']}> · {'main' if c['is_main'] else 'alt'}"]
 
 
 async def setup(bot: commands.Bot):

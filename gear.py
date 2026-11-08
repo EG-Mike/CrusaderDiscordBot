@@ -23,8 +23,8 @@ The review card shows the ones that matter for the applicant's role
 Blizzard leaves out fields a game version doesn't have, and so do we.
 
 The summary is plain data (stored with an application, so a re-render
-never needs Blizzard); render_lines() turns it into Discord text, with
-item icons from the emoji library when available.
+never needs Blizzard); application_card.py turns it into the Discord card
+(applications and /lookup), with item icons from the emoji library.
 """
 
 import asyncio
@@ -352,64 +352,10 @@ async def item_icons(bot, summary: dict) -> Dict[int, str]:
     async def one(item):
         try:
             return item["item_id"], await emoji_library.ensure_icon(bot, "item", item["item_id"],
-                                                                    by="automatic (gear check)")
+                                                                    by="automatic (character card)")
         except Exception:
             log.debug("No icon for item %s", item["item_id"], exc_info=True)
             return item["item_id"], ""
 
     pairs = await asyncio.gather(*(one(i) for i in summary.get("items", []) if i.get("item_id")))
     return dict(pairs)
-
-
-def render_lines(summary: dict, icons: Optional[Dict[int, str]] = None, role: Optional[str] = None) -> Dict[str, str]:
-    """Discord text for a summary: {"overview", "gear", "flags"}. Compact
-    on purpose: a review card has 4000 characters for everything. `role`
-    picks which statistics are shown (stat_highlights)."""
-    icons = icons or {}
-    talents = " / ".join(f"{t['spec']} {t['points']}" for t in summary.get("talents") or []) or "none spent"
-    overview = [
-        f"**Item level:** {summary.get('equipped_item_level') or '?'}"
-        + (f" (bags included: {summary['average_item_level']})"
-           if summary.get("average_item_level") and summary.get("average_item_level") != summary.get(
-               "equipped_item_level") else ""),
-        f"**Talents:** {talents}",
-    ]
-    highlights = stat_highlights(summary.get("stats") or {}, role)
-    if highlights:
-        overview.append("**Stats:** " + " · ".join(f"{h['label']} {h['text']}" for h in highlights))
-    trades = [f"{p['name']} {p['skill']}/{p['max']}" for p in summary.get("professions") or [] if p["primary"]]
-    if trades:
-        overview.append("**Professions:** " + " · ".join(trades))
-    problems = requirement_problems(summary)
-    if config.GEARCHECK_MIN_LEVEL or config.GEARCHECK_MIN_ITEM_LEVEL:
-        overview.append("**Requirements:** " + ("✅ met" if not problems else "⚠️ below on " + ", ".join(problems)))
-
-    gear = []
-    for item in summary.get("items") or []:
-        if item["slot"] in COSMETIC_SLOTS:
-            continue
-        mark = icons.get(item.get("item_id")) or QUALITY_MARKS.get(item.get("quality") or "", "▫️")
-        extras = item["enchants"] + [s["gem"] or f"empty {s['type'] or 'socket'}" for s in item["sockets"]]
-        url = item_url(item.get("item_id"))
-        name = f"[{item['name']}]({url})" if url else item["name"]
-        line = f"{mark} **{name}** `{item.get('item_level') or '?'}` · {item['slot_name']}"
-        if item.get("set"):
-            line += f" · {item['set']}"
-        if extras:
-            line += "\n-# " + " · ".join(extras)
-        gear.append(line)
-
-    flags = []
-    if off_ruleset(summary):
-        flags.append(f"On the {summary.get('ruleset') or 'another'} ruleset, not one of the guild's")
-    if summary.get("empty_slots"):
-        flags.append("Empty: " + ", ".join(summary["empty_slots"]))
-    if summary.get("missing_enchants"):
-        flags.append("No enchant: " + ", ".join(summary["missing_enchants"]))
-    if summary.get("empty_sockets"):
-        flags.append(f"{summary['empty_sockets']} empty gem socket{'s' if summary['empty_sockets'] != 1 else ''}")
-    return {
-        "overview": "\n".join(overview),
-        "gear": "\n".join(gear) or "No gear equipped.",
-        "flags": ("⚠️ " + " · ".join(flags)) if flags else "",
-    }
