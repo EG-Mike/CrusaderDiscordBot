@@ -474,18 +474,15 @@ AUTO_ROLE_IDS = {
 ARCHIVE_ENABLED = True
 ARCHIVE_CHANNEL_ID = 1337906439066488914
 
-# Only members with this role can Approve/Deny/Reset applications, on the
-# review card and on the dashboard (ApplyCog.is_approver,
-# webapi/applications_api.py) - lets REVIEW_CHANNEL_ID be opened up read-only to a wider audience (e.g.
-# Regulars) without letting them act on applications. This is a code-level
-# check, not a Discord permission: Discord has no native permission that
-# blocks clicking a message component separately from viewing it (unlike
-# reactions/messages), so anyone who can see the review channel can
-# technically click the button - this check is what actually stops them.
-# Deliberately its own role rather than reusing MOD_ROLE_ID/Manage Roles
-# (the broader "moderator" gate every other action in this cog uses, e.g.
-# /applications archive) - a moderator without this role can no longer
-# approve/deny/reset either, by design.
+# Members with this role can Approve/Deny/Reset applications on the review
+# card and on the dashboard without being moderators; moderators always can
+# (ApplyCog.can_decide, webapi/applications_api.py). Lets REVIEW_CHANNEL_ID
+# be opened up read-only to a wider audience (e.g. Regulars) without
+# letting them act on applications. This is a code-level check, not a
+# Discord permission: Discord has no native permission that blocks clicking
+# a message component separately from viewing it, so anyone who can see the
+# review channel can technically click the button - this check is what
+# actually stops them.
 APPROVER_ROLE_ID = 1482653670855413822
 
 # Gates one-time tools that are noise in the command list day-to-day:

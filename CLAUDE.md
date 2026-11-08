@@ -120,7 +120,8 @@ version or raid tier is a configuration change.
   as `applications.changed`). The decisions themselves (`approve`, `deny`,
   `reset`, `refresh_gear`, `archive_decided`) are interaction-free methods
   on the apply cog, called by the card's buttons and the dashboard alike;
-  only approvers (`APPROVER_ROLE_ID`, dashboard level "approver") decide.
+  moderators and approvers (`APPROVER_ROLE_ID`, dashboard level
+  "approver") decide (`ApplyCog.can_decide`, `DECIDE_LEVELS`).
   The applicant enters "First Surname" in one field; the main spec is
   suggested from talent points, plus an optional offspec. Item names link
   to `ITEM_LINK_URL` (Wowhead's Forever pages by default). Approval links

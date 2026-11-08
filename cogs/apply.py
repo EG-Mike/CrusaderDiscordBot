@@ -16,7 +16,7 @@ Flow:
      minimum level and item level), and, once WarcraftLogs covers the game
      (APPLICATION_WARCRAFTLOGS_ENABLED), the applicant's parses. It also
      shows on the dashboard's Applications page.
-  5. An approver approves (roles, nickname, DM, and the character is linked
+  5. A moderator or approver approves (roles, nickname, DM, and the character is linked
      to the applicant on the guild roster with their specs) or denies (DM),
      on the card or on the dashboard. Reset undoes a decision, "Refresh
      gear" reads the gear from Blizzard again.
@@ -1025,28 +1025,30 @@ class ApplyCog(commands.Cog):
 
     @staticmethod
     def is_approver(member) -> bool:
-        """Who may approve, deny and reset: members with the approver role
-        (Settings, Applications). Separate from moderators on purpose, so the
-        review channel can be readable to more people than can decide."""
+        """Members with the approver role (Settings, Applications)."""
         return (isinstance(member, discord.Member) and bool(config.APPROVER_ROLE_ID)
                 and any(role.id == int(config.APPROVER_ROLE_ID) for role in member.roles))
 
-    async def _button_guard(self, interaction: discord.Interaction, *, decide: bool) -> Optional[dict]:
+    @classmethod
+    def can_decide(cls, member) -> bool:
+        """Who may approve, deny, reset and refresh: moderators (permissions.py)
+        and members with the approver role, so a reviewer doesn't need to be a
+        moderator. Anyone else can read the review channel without acting on it."""
+        return is_moderator(member) or cls.is_approver(member)
+
+    async def _button_guard(self, interaction: discord.Interaction) -> Optional[dict]:
         application = self.bot.store.get(interaction.message.id)
         if not applications.is_application(application):
             await interaction.response.send_message("Couldn't find this application's record.", ephemeral=True)
             return None
-        allowed = self.is_approver(interaction.user) if decide else (
-            is_moderator(interaction.user) or self.is_approver(interaction.user))
-        if not allowed:
+        if not self.can_decide(interaction.user):
             await interaction.response.send_message(
-                "Only approvers can approve, deny or reset applications." if decide
-                else "Only moderators and approvers can refresh the character.", ephemeral=True)
+                "Only moderators and approvers can act on applications.", ephemeral=True)
             return None
         return application
 
     async def _on_approve_click(self, interaction: discord.Interaction):
-        if await self._button_guard(interaction, decide=True) is None:
+        if await self._button_guard(interaction) is None:
             return
         await interaction.response.defer()  # silent: the card itself shows the result
         try:
@@ -1055,7 +1057,7 @@ class ApplyCog(commands.Cog):
             await interaction.followup.send(str(exc), ephemeral=True)
 
     async def _on_deny_click(self, interaction: discord.Interaction):
-        application = await self._button_guard(interaction, decide=True)
+        application = await self._button_guard(interaction)
         if application is None:
             return
         if application["status"] != "pending":
@@ -1067,7 +1069,7 @@ class ApplyCog(commands.Cog):
         await interaction.response.send_modal(DenyReasonModal(self, interaction.message.id))
 
     async def _on_reset_click(self, interaction: discord.Interaction):
-        if await self._button_guard(interaction, decide=True) is None:
+        if await self._button_guard(interaction) is None:
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
@@ -1078,7 +1080,7 @@ class ApplyCog(commands.Cog):
         await interaction.followup.send("Application reset - Approve and Deny work again.", ephemeral=True)
 
     async def _on_refresh_gear_click(self, interaction: discord.Interaction):
-        if await self._button_guard(interaction, decide=False) is None:
+        if await self._button_guard(interaction) is None:
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:

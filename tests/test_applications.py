@@ -200,6 +200,23 @@ class HelperTests(unittest.TestCase):
         self.assertEqual((row["level"], row["item_level"], row["flag_count"]), (28, 21, 1))
 
 
+class WhoDecidesTests(unittest.TestCase):
+    def member(self, role_ids=(), manage_roles=False):
+        member = mock.MagicMock(spec=apply.discord.Member)
+        member.roles = [role(r) for r in role_ids]
+        member.guild_permissions = SimpleNamespace(manage_roles=manage_roles)
+        return member
+
+    def test_moderators_and_approvers_decide(self):
+        with mock.patch.multiple(config, APPROVER_ROLE_ID=APPROVER_ROLE, MOD_ROLE_ID=800):
+            self.assertTrue(apply.ApplyCog.can_decide(self.member([800])))           # moderator role
+            self.assertTrue(apply.ApplyCog.can_decide(self.member(manage_roles=True)))  # Manage Roles
+            self.assertTrue(apply.ApplyCog.can_decide(self.member([APPROVER_ROLE])))  # approver only
+            self.assertFalse(apply.ApplyCog.can_decide(self.member([FRESH_ROLE])))
+        with mock.patch.multiple(config, APPROVER_ROLE_ID=0, MOD_ROLE_ID=800):
+            self.assertFalse(apply.ApplyCog.can_decide(self.member([0])))  # no approver role set
+
+
 class SpecChoiceTests(unittest.IsolatedAsyncioTestCase):
     async def test_offspec_never_offers_the_main_spec(self):
         view = apply.SpecChoiceView(1, None, "Priest", ["Discipline", "Holy", "Shadow Magic"],
@@ -240,27 +257,36 @@ class ApiTests(Setup, DatabaseTestCase, unittest.IsolatedAsyncioTestCase):
             p.stop()
         applications._listeners.pop("dashboard", None)
 
-    async def test_moderators_read_and_only_approvers_decide(self):
+    async def test_moderators_and_approvers_decide(self):
         resp = await self.client.get("/api/applications")
         body = await resp.json()
         self.assertEqual(resp.status, 200)
         self.assertEqual(body["counts"], {"pending": 1, "approved": 0, "denied": 0})
-        self.assertFalse(body["can_decide"])
+        self.assertTrue(body["can_decide"])
         self.assertEqual(body["applications"][0]["id"], str(MESSAGE_ID))
 
         resp = await self.client.get(f"/api/applications/{MESSAGE_ID}")
         self.assertEqual(resp.status, 200)
         self.assertEqual((await resp.json())["character"], "Eggmike Thewhite")
 
-        resp = await self.client.post(f"/api/applications/{MESSAGE_ID}/approve", json={}, headers=self.headers)
-        self.assertEqual(resp.status, 403)
-        self.cog.approve.assert_not_awaited()
-
-        self.levels = {"moderator", "approver"}
+        # A moderator without the approver role decides too.
         resp = await self.client.post(f"/api/applications/{MESSAGE_ID}/approve", json={}, headers=self.headers)
         self.assertEqual(resp.status, 200)
         reviewer = self.cog.approve.await_args.args[1]
         self.assertEqual((reviewer.id, reviewer.name, reviewer.via), (222, "officer", "dashboard"))
+
+        self.levels = {"moderator", "approver"}
+        resp = await self.client.post(f"/api/applications/{MESSAGE_ID}/approve", json={}, headers=self.headers)
+        self.assertEqual(resp.status, 200)
+
+    async def test_a_level_outside_the_deciders_only_reads(self):
+        from webapi import applications_api
+        with mock.patch.object(applications_api, "DECIDE_LEVELS", {"approver"}):  # as for a future viewer level
+            body = await (await self.client.get("/api/applications")).json()
+            self.assertFalse(body["can_decide"])
+            resp = await self.client.post(f"/api/applications/{MESSAGE_ID}/approve", json={}, headers=self.headers)
+            self.assertEqual(resp.status, 403)
+        self.cog.approve.assert_not_awaited()
 
     async def test_without_access_or_csrf_header(self):
         self.levels = set()

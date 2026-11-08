@@ -157,8 +157,8 @@ CATALOG: Dict[str, Entry] = {
         "Where applications are posted for approval. They're also on the dashboard's Applications page."),
     "APPROVER_ROLE_ID": Entry(
         "applications", "Approver role",
-        "Only members with this role can approve, deny or reset applications, in Discord and on the dashboard, so "
-        "others can read applications without acting on them."),
+        "Members with this role can approve, deny or reset applications, in Discord and on the dashboard, even "
+        "without being moderators. Moderators always can. Others can read the review channel without acting on it."),
     "FRESH_ROLE_ID": Entry("applications", "Role for approved applicants", "Given when an application is approved."),
     "FRESH_EXEMPT_ROLE_IDS": Entry(
         "applications", "Roles that skip the approval role",

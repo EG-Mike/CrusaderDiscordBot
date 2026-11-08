@@ -8,7 +8,7 @@ away in Discord also takes away dashboard access:
 
   - moderator: MOD_ROLE_ID or the Manage Roles permission (same rule as the
     bot's own moderator commands). Required to use the dashboard at all.
-  - approver:  APPROVER_ROLE_ID (Approve/Deny/Reset applications).
+  - approver:  APPROVER_ROLE_ID (Approve/Deny/Reset applications; moderators may too).
   - admin:     the server owner, or a user ID listed in WEB_ADMIN_USER_IDS.
                Admins always get in, even without the moderator role.
 """

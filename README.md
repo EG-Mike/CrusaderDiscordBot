@@ -33,8 +33,8 @@ moderator-driven announcement system.
    person was denied before. WarcraftLogs parses are added once
    WarcraftLogs covers WoW Forever (Settings, Applications).
 5. **Approve** / **Deny** / **Reset** work on the card *and* on the
-   dashboard, for members with the approver role only (checked by the bot,
-   in both places). **Refresh from Blizzard** (moderators and approvers)
+   dashboard, for moderators and members with the approver role (checked by
+   the bot, in both places). **Refresh from Blizzard** (same people)
    reads the character again, e.g. after they levelled up.
 6. **Approve**: the "Fresh" role (unless they already hold an exempt role),
    their class and role roles, their nickname set to the character name,
@@ -496,16 +496,12 @@ along on who's applying) without letting them act on applications:
    message, a button click needs only that the clicker can see the
    message. `Send Messages`/`Add Reactions` denials have no effect on it
    at all.
-3. The actual gate is `config.APPROVER_ROLE_ID` in `config/deployment.py`
-   (see that constant's comment) - only a member holding that exact role
-   can click Approve, Deny, or Reset on a review card; everyone else gets
-   an ephemeral "Only approvers can..." message and nothing happens.
-   Set it to your approver role's ID (enable Developer Mode, right-click
-   the role in Server Settings -> Roles, Copy ID). This is deliberately
-   separate from `MOD_ROLE_ID`/`Manage Roles` - a moderator who isn't
-   also an approver can still use every other moderator action in the bot
-   (`/applications archive`, the diagnostic commands), just not these three
-   buttons.
+3. The actual gate is in the bot: only moderators (the moderator role or
+   Manage Roles) and members with the approver role (Settings,
+   Applications) can click Approve, Deny, Reset or Refresh on a review
+   card; everyone else gets a private "Only moderators and approvers..."
+   message and nothing happens. The approver role is for reviewers who
+   aren't moderators.
 
 ## Setting up on a new server
 
@@ -541,12 +537,11 @@ along on who's applying) without letting them act on applications:
 - A **moderator role** (or just rely on anyone with `Manage Roles` - both
   work; the mod role is for people who should be able to approve/deny
   without needing full role-management permissions generally). This gates
-  most moderator actions in the bot (`/applications archive`, the diagnostic
-  commands) but NOT the review card's Approve/Deny/Reset buttons
-  specifically - those have their own separate gate, see below.
-- An **approver role** - who can actually click Approve/Deny/Reset on a
-  review card. Can be the same role as your moderator role, or a narrower
-  one - see "Restricting who can approve applications" below.
+  moderator actions in the bot (`/applications archive`, the diagnostic
+  commands), including the review card's Approve/Deny/Reset buttons.
+- An **approver role** (optional) - lets reviewers who aren't moderators
+  click Approve/Deny/Reset too - see "Restricting who can approve
+  applications" below.
 
 ### 3. Lock the landing channel down (optional but recommended)
 

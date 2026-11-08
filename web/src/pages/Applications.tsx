@@ -1,6 +1,6 @@
 // Applications (webapi/applications_api.py): the same applications as the
 // review channel, with the character read from Blizzard. Moderators read them;
-// approvers decide (the server checks it, these buttons only follow).
+// moderators and approvers decide (the server checks it, these buttons only follow).
 // Decisions run the bot's own rules: roles, nickname, DM, roster link, and
 // the card in Discord updates too.
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -164,7 +164,7 @@ export function ApplicationsPage() {
 
       {data && !data.can_decide && (
         <p className="mb-4 rounded-lg border border-line bg-raised/40 px-3 py-2 text-xs text-muted">
-          You can read applications. Approving and denying needs the approver role (Settings, Applications).
+          You can read applications. Approving and denying needs the moderator or approver role (Settings, Applications).
         </p>
       )}
 
@@ -267,7 +267,7 @@ function DecisionPanel({ a, canDecide, onDone }: { a: ApplicationDetail; canDeci
   };
 
   const d = a.decision;
-  const noDecideHint = canDecide ? undefined : "Needs the approver role";
+  const noDecideHint = canDecide ? undefined : "Needs the moderator or approver role";
   return (
     <section className="card px-4 py-4 md:px-5">
       <div className="mb-3 flex items-center justify-between gap-2">

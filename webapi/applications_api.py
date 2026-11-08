@@ -3,14 +3,15 @@ Dashboard API for applications (cogs/apply.py, applications.py).
 
   GET  /api/applications                      every application (list rows), counts, what the user may do
   GET  /api/applications/{id}                 one application: gear, statistics, note, screenshots, decision
-  POST /api/applications/{id}/approve         approve (approvers)
-  POST /api/applications/{id}/deny            {"reason": optional, reviewers only} (approvers)
-  POST /api/applications/{id}/reset           back to pending (approvers)
+  POST /api/applications/{id}/approve         approve (moderators and approvers)
+  POST /api/applications/{id}/deny            {"reason": optional, reviewers only} (moderators and approvers)
+  POST /api/applications/{id}/reset           back to pending (moderators and approvers)
   POST /api/applications/{id}/refresh-gear    read the character from Blizzard again (moderators)
   POST /api/applications/archive              move decided cards to the archive channel (moderators)
 
 Moderators see applications (as they can in the review channel); only
-approvers decide, the same rule as the card's buttons. Decisions run the
+moderators and approvers decide, the same rule as the card's buttons (a
+level that may only read, e.g. a future viewer level, can't). Decisions run the
 cog's own methods, so roles, nickname, DMs, the roster link and the card in
 Discord all follow. The audit trail records who decided what, never the
 applicant's note or the reviewer's reason.
@@ -25,7 +26,8 @@ from webapi import auth
 from webapi.common import BOT_KEY, HUB_KEY, BadRequest, audit, error, forbidden_unless, json_response, read_json
 
 LEVEL = "moderator"
-DECIDE_LEVEL = "approver"
+DECIDE = "decide"  # see DECIDE_LEVELS
+DECIDE_LEVELS = {"moderator", "approver"}  # any of these may approve, deny and reset
 WHAT = "applications"
 
 
@@ -35,9 +37,8 @@ def _cog(request):
 
 def _guard(request, level: str = LEVEL):
     denied = forbidden_unless(request, LEVEL, WHAT)
-    if denied is None and level == DECIDE_LEVEL and DECIDE_LEVEL not in request["levels"]:
-        denied = error("Only approvers can approve, deny or reset applications (Settings, Applications, "
-                       "Approver role).", 403)
+    if denied is None and level == DECIDE and not DECIDE_LEVELS & set(request["levels"]):
+        denied = error("Only moderators and approvers can approve, deny or reset applications.", 403)
     if denied:
         return denied, None
     cog = _cog(request)
@@ -78,7 +79,7 @@ async def list_applications(request):
         "applications": rows,
         "counts": counts,
         "running": cog is not None,
-        "can_decide": DECIDE_LEVEL in request["levels"],
+        "can_decide": bool(DECIDE_LEVELS & set(request["levels"])),
         "archive_problem": cog.archive_problem() if cog else None,
     })
 
@@ -96,9 +97,9 @@ async def get_application(request):
 
 ACTIONS = {
     # name: (level, audit word)
-    "approve": (DECIDE_LEVEL, "Approved"),
-    "deny": (DECIDE_LEVEL, "Denied"),
-    "reset": (DECIDE_LEVEL, "Reset"),
+    "approve": (DECIDE, "Approved"),
+    "deny": (DECIDE, "Denied"),
+    "reset": (DECIDE, "Reset"),
     "refresh-gear": (LEVEL, "Refreshed the gear of"),
 }
 
