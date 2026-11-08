@@ -1,18 +1,18 @@
-// Character lookup: a gear check started by moderators, for any character
+// Character lookup: started by moderators, for any character
 // in the region (webapi/lookup_api.py). The name is in the address
 // (/lookup?name=...), so a lookup can be linked or bookmarked.
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { AlertTriangle, BookOpen, Gem, Search, Shield, Sparkles, UserPlus, Users } from "lucide-react";
-import { ApiError, api, type GearItem, type LookupResult, type RosterCharacter } from "../lib/api";
+import { AlertTriangle, BookOpen, Search, Shield, UserPlus, Users } from "lucide-react";
+import { ApiError, api, type LookupResult, type RosterCharacter } from "../lib/api";
 import { timeAgo } from "../lib/time";
-import { CLASS_COLORS, QUALITY_COLORS } from "../lib/wow";
+import { CLASS_COLORS } from "../lib/wow";
+import { GearCard, ProfessionsCard, StatsCard, TalentsCard } from "../components/Gear";
 import { Avatar } from "../components/Audit";
 import { useToast } from "../components/Toast";
 import { Badge, Button, EmptyState, SectionHeader, Skeleton, StatTile } from "../components/ui";
 
 const RECENT_KEY = "lookup.recent";
-const COSMETIC = new Set(["SHIRT", "TABARD"]);
 
 function readRecent(): string[] {
   try {
@@ -29,44 +29,6 @@ function remember(name: string) {
   } catch {
     /* not remembered in a private window */
   }
-}
-
-function ItemRow({ item }: { item: GearItem }) {
-  const extras = [...item.enchants, ...item.sockets.map((s) => s.gem ?? `Empty ${s.type ?? "socket"}`)];
-  return (
-    <li className="flex items-start gap-3 px-4 py-2 md:px-5">
-      {item.icon_url ? (
-        <img src={item.icon_url} alt="" className="mt-0.5 h-8 w-8 shrink-0 rounded ring-1 ring-line" loading="lazy" />
-      ) : (
-        <div className="mt-0.5 h-8 w-8 shrink-0 rounded bg-raised ring-1 ring-line" />
-      )}
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-baseline gap-x-2">
-          <span className="font-medium" style={{ color: QUALITY_COLORS[item.quality ?? ""] }}>
-            {item.name}
-          </span>
-          <span className="text-2xs text-faint">{item.slot_name}</span>
-          {item.set && <span className="text-2xs text-gold">{item.set}</span>}
-        </div>
-        {extras.length > 0 && (
-          <div className="mt-0.5 flex flex-wrap gap-x-3 text-2xs">
-            {item.enchants.map((e) => (
-              <span key={e} className="inline-flex items-center gap-1 text-ok">
-                <Sparkles className="h-3 w-3" /> {e}
-              </span>
-            ))}
-            {item.sockets.map((s, i) => (
-              <span key={i} className={s.gem ? "inline-flex items-center gap-1 text-info" : "inline-flex items-center gap-1 text-warn"}>
-                <Gem className="h-3 w-3" /> {s.gem ?? `Empty ${s.type ?? "socket"}`}
-              </span>
-            ))}
-          </div>
-        )}
-        {item.stats.length > 0 && <div className="mt-0.5 truncate text-2xs text-faint">{item.stats.join(" · ")}</div>}
-      </div>
-      <span className="shrink-0 font-semibold tabular-nums">{item.item_level ?? "?"}</span>
-    </li>
-  );
 }
 
 export default function LookupPage() {
@@ -231,52 +193,13 @@ export default function LookupPage() {
             </div>
           )}
 
-          <div className="grid gap-5 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-            <section className="card">
-              <header className="border-b border-line px-4 py-3 md:px-5">
-                <div className="label">Gear</div>
-              </header>
-              <ul className="divide-y divide-line">
-                {c.items.filter((i) => !COSMETIC.has(i.slot)).map((item) => (
-                  <ItemRow key={item.slot} item={item} />
-                ))}
-                {c.items.length === 0 && <li className="px-4 py-3 text-faint md:px-5">No gear equipped.</li>}
-              </ul>
-            </section>
+          <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+            <GearCard items={c.items} />
 
             <div className="space-y-5">
-              <section className="card">
-                <header className="border-b border-line px-4 py-3 md:px-5">
-                  <div className="label">Talents</div>
-                </header>
-                <ul className="divide-y divide-line">
-                  {c.talents.map((t) => (
-                    <li key={t.spec} className="flex items-center justify-between px-4 py-2 md:px-5">
-                      {t.spec}
-                      <span className="font-semibold tabular-nums">{t.points}</span>
-                    </li>
-                  ))}
-                  {c.talents.length === 0 && <li className="px-4 py-3 text-faint md:px-5">No talents spent.</li>}
-                </ul>
-              </section>
-              <section className="card">
-                <header className="border-b border-line px-4 py-3 md:px-5">
-                  <div className="label">Professions</div>
-                </header>
-                <ul className="divide-y divide-line">
-                  {c.professions.map((p) => (
-                    <li key={p.name} className="flex items-center justify-between px-4 py-2 md:px-5">
-                      <span>
-                        {p.name} {!p.primary && <span className="text-2xs text-faint">secondary</span>}
-                      </span>
-                      <span className="tabular-nums text-muted">
-                        {p.skill ?? "?"} / {p.max ?? "?"}
-                      </span>
-                    </li>
-                  ))}
-                  {c.professions.length === 0 && <li className="px-4 py-3 text-faint md:px-5">None.</li>}
-                </ul>
-              </section>
+              <TalentsCard talents={c.talents} />
+              <StatsCard groups={result!.stat_groups} />
+              <ProfessionsCard professions={c.professions} />
               <section className="card px-4 py-3 md:px-5">
                 <div className="label mb-1">WarcraftLogs</div>
                 <p className="text-faint">Parses show here once WarcraftLogs covers WoW Forever.</p>

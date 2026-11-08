@@ -269,6 +269,20 @@ async def character_profile(bot, character_slug: str,
     return parse_character(body or {})
 
 
+async def character_professions(bot, character_slug: str,
+                                session: Optional[aiohttp.ClientSession] = None) -> Optional[dict]:
+    """A character's professions document (primaries and secondaries with
+    skill points), or None when there's no public profile."""
+    status, _headers, body = await _client(bot).request(f"/profile/wow/character/{character_slug}/professions",
+                                                        namespace("profile"), session=session,
+                                                        locale=config.BLIZZARD_LOCALE)
+    if status == 404:
+        return None
+    if status != 200:
+        raise WowApiError(f"Blizzard answered {status} for the professions of {character_slug}.")
+    return body
+
+
 _RENDER_PATH = re.compile(r"^(https://render\.worldofwarcraft\.com/)([a-z0-9]+-)?([a-z]{2})(/icons/.*)$")
 
 

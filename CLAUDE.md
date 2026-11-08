@@ -113,13 +113,39 @@ version or raid tier is a configuration change.
   by Blizzard's icon file ID / icon name) with the items and spells that
   share it; Blizzard API first, Wowhead tooltip only as a fallback. Used by
   the Emoji page, the editor emoji picker and raid summaries.
+- `applications.py`: application records shared by `cogs/apply.py` and
+  `webapi/applications_api.py` (the Applications page): finding records
+  (also by their pre-archive ID), how a record looks to the dashboard, and
+  change notifications (`on_change`/`changed`, broadcast to the dashboard
+  as `applications.changed`). The decisions themselves (`approve`, `deny`,
+  `reset`, `refresh_gear`, `archive_decided`) are interaction-free methods
+  on the apply cog, called by the card's buttons and the dashboard alike;
+  moderators and approvers (`APPROVER_ROLE_ID`, dashboard level
+  "approver") decide (`ApplyCog.can_decide`, `DECIDE_LEVELS`).
+  The applicant enters "First Surname" in one field; the main spec is
+  suggested from talent points, plus an optional offspec. Item names link
+  to `ITEM_LINK_URL` (Wowhead's Forever pages by default). Approval links
+  the character on the roster, or leaves a pending link
+  (`roster.remember_link`) when Blizzard doesn't know it yet.
+- `application_card.py`: the review card in Discord (Components V2), built
+  from the stored record by plain functions: portrait header with a status
+  line, facts, one "Worth a look" list, role stats and professions, gear
+  (item level first, linked names), note, decision summary, and only the
+  buttons that fit the status plus "Open on dashboard" (`web_links.py`).
+  The accent colour shows the status. The persistent view is registered
+  with `all_buttons=True` so every button is answered after a restart.
+  `/lookup` uses the same parts (`lookup_view`: no applicant, note,
+  decision or action buttons; a roster line and "Open in Character
+  lookup" instead), so the two always look alike.
 - `gear.py`: the gear check: a character's gear (item level, enchants,
   gems, sets), talents and profile from Blizzard, flags (empty slots,
   missing enchants, empty sockets) and the guild's minimum level/item
   level, as plain data plus Discord text. Used by `cogs/apply.py` (the
-  review card, "Refresh gear", `/gearcheck character`) and the dashboard's
+  review card, "Refresh", `/lookup`) and the dashboard's
   Character lookup page (`webapi/lookup_api.py`), which also shows
-  professions and the character's place on the roster. Characters on a
+  professions and the character's place on the roster. Character
+  statistics (`parse_stats`; `stat_highlights` per role on the card,
+  `stat_groups` on the dashboard). Characters on a
   ruleset that isn't the guild's (`CHARACTER_RULESETS`) are flagged. Item
   icons: `wow_api.icon_urls` lists fallback addresses, since Blizzard's
   image server lacks some icons under the Forever path. WarcraftLogs
@@ -137,9 +163,24 @@ version or raid tier is a configuration change.
   message; aligned columns with a header row; alts below
   `GUILD_ROSTER_POST_MIN_LEVEL` left out; persistent "Claim a character" /
   "My characters" buttons for main/alt self-service). Level milestones
-  found together are grouped into as few messages as fit. `permissions.py`:
+  found together are grouped into as few messages as fit. Primary
+  professions (`roster.professions`) are read after a logout and shown on
+  the posted roster with profession emoji (`emoji_library` kind
+  "profession"; `GUILD_ROSTER_POST_PROFESSIONS`). Columns added to existing
+  tables go in `db._ADDED_COLUMNS`. `permissions.py`:
   the shared Discord moderator check (`is_moderator(member)`,
   `member_is_moderator(guild, user_id)`); every cog uses it.
+- `crafting.py`: who in the guild can make what. Characters' professions
+  (primary and secondary) and known recipes come from their professions
+  document (`roster.store_professions`, after a logout); Blizzard's recipe
+  catalog per profession and recipe details (crafted item, reagents) are
+  cached. Moderators feature recipes on the dashboard's Crafting page
+  (`webapi/crafting_api.py`, table `crafting_featured`); `cogs/crafting.py`
+  keeps the crafting channel (`CRAFTING_CHANNEL_ID`) posted: every
+  profession with its crafters, then each featured recipe with its crafters
+  (highest skill first) and materials. It runs the profile checks itself
+  when Leveling is off. `channel_posts.py`: the shared "keep these messages
+  posted, edit only on change" logic of the roster and crafting channels.
 - `wow_api.py`: Blizzard game data for the configured game version
   (WoW Forever by default): reference data for pickers, a player's
   characters from their Battle.net account, character lookups by name, and
@@ -229,11 +270,14 @@ set in the dashboard.
   Blizzard, `/character` linking, milestone congratulations, leaderboard,
   Roster and Leveling pages. Achievements can reuse `roster_events` once
   Blizzard reliably reports them.
+- Crafting (done): crafting channel and Crafting page with featured
+  recipes.
 - Phase 4 (in progress): applications moved to Blizzard data (gear check
   with gear, enchants and talents; roster link on approval; WarcraftLogs
-  optional). Next: an Applications dashboard page, then the raid features
-  once WarcraftLogs covers Forever.
-- Phase 4 (remaining): Applications page, Raid summaries, Raid logs, Attendance, Tier recap,
+  optional). Applications page done (list, detail with gear/stats,
+  approve/deny/reset/refresh/archive). Next: WarcraftLogs parses on
+  applications and the raid features once WarcraftLogs covers Forever.
+- Phase 4 (remaining): Raid summaries, Raid logs, Attendance, Tier recap,
   Records, and the raid cache tools (`/raidsummary-refresh-cache`,
   `/raidsummary-refresh-report`). These all depend
   on TBC-era data sources, so plan them together with the WoW Forever data

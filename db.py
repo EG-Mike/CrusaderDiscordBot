@@ -28,7 +28,7 @@ from threading import RLock
 _LOCK = RLock()
 _CONN = None
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 8
 
 _SCHEMA = [
     # Generic key -> JSON record store, one "store" per former JSON file
@@ -290,6 +290,42 @@ _SCHEMA = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_roster_events_pending ON roster_events(announced_at, milestone)",
+    # Crafting (crafting.py): the recipes moderators feature in the crafting
+    # channel, with what they make and the reagents, cached from Blizzard.
+    # Recipes are game data, so they're kept per game version only.
+    """
+    CREATE TABLE IF NOT EXISTS crafting_featured (
+        game            TEXT NOT NULL,
+        recipe_id       INTEGER NOT NULL,
+        name            TEXT NOT NULL,
+        profession_id   INTEGER,
+        profession_name TEXT,
+        item_id         INTEGER,
+        item_name       TEXT,
+        quantity        REAL,
+        reagents        TEXT,
+        icon_url        TEXT,
+        added_by        TEXT,
+        added_at        TEXT NOT NULL,
+        PRIMARY KEY (game, recipe_id)
+    )
+    """,
+    # Links waiting for their character (roster.py): an approved applicant
+    # whose character Blizzard didn't know yet (below level 10) is linked
+    # as soon as the character shows up on the roster.
+    """
+    CREATE TABLE IF NOT EXISTS roster_pending_links (
+        game         TEXT NOT NULL,
+        region       TEXT NOT NULL,
+        slug         TEXT NOT NULL,
+        discord_id   INTEGER NOT NULL,
+        main_spec_id INTEGER,
+        off_spec_id  INTEGER,
+        linked_by    TEXT,
+        created_at   TEXT NOT NULL,
+        PRIMARY KEY (game, region, slug)
+    )
+    """,
     # Web dashboard login sessions. Only a SHA-256 of the cookie token is
     # stored, so a leaked database file can't be replayed as a login.
     """
@@ -303,6 +339,22 @@ _SCHEMA = [
     )
     """,
 ]
+
+
+# Columns added to existing tables after they were first created: (table,
+# column, definition). Added on start when missing, so older databases
+# catch up without a manual step.
+_ADDED_COLUMNS = [
+    ("roster_characters", "professions", "TEXT"),  # JSON: [{id, name, skill, max}], primary professions
+    ("roster_characters", "known_recipes", "TEXT"),  # JSON: [recipe id, ...] of every profession (crafting.py)
+]
+
+
+def _add_missing_columns(conn: sqlite3.Connection):
+    for table, column, definition in _ADDED_COLUMNS:
+        present = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in present:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
 
 def db_path() -> str:
@@ -322,6 +374,7 @@ def connection() -> sqlite3.Connection:
             conn.execute("PRAGMA foreign_keys=ON")
             for statement in _SCHEMA:
                 conn.execute(statement)
+            _add_missing_columns(conn)
             conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
             _CONN = conn
         return _CONN

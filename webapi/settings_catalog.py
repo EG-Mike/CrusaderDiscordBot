@@ -51,6 +51,7 @@ GROUPS: List[Tuple[str, str, str, str]] = [
     ("polls", "features", "Polls", "Defaults for new polls."),
     ("roster", "features", "Guild roster", "Characters linked to Discord members."),
     ("leveling", "features", "Leveling", "The leveling leaderboard and milestone announcements."),
+    ("crafting", "features", "Crafting", "Who in the guild can make what, and the recipes you feature."),
     ("notifications", "features", "Notifications", "Alerts the bot posts for moderators. Changes apply immediately."),
     ("api_keys", "general", "API keys", "Keys for Blizzard and WarcraftLogs. Stored encrypted and never shown again."),
     ("blizzard", "general", "Blizzard", "Which game Blizzard's API is asked about."),
@@ -131,6 +132,8 @@ CATALOG: Dict[str, Entry] = {
                                                                 "Roster page."),
     "FEATURE_LEVELING_ENABLED": Entry("features", "Leveling", "Leveling leaderboard and milestone announcements. "
                                                               "Needs the guild roster."),
+    "FEATURE_CRAFTING_ENABLED": Entry("features", "Crafting", "The crafting channel and the Crafting page: who in "
+                                                              "the guild can make what. Needs the guild roster."),
     "FEATURE_ATTENDANCE_ENABLED": Entry("features", "Attendance", "/checkattendance and the attendance messages."),
     "FEATURE_RAID_SUMMARY_ENABLED": Entry("features", "Raid summaries", "/raidsummary and the raid recaps."),
     "FEATURE_RAID_LOGS_ENABLED": Entry("features", "Raid logs", "Reposting and tagging new WarcraftLogs reports. "
@@ -150,13 +153,15 @@ CATALOG: Dict[str, Entry] = {
     # --- Applications --------------------------------------------------------------------
     "GEAR_CHECK_CHANNEL_ID": Entry(
         "applications", "Apply channel",
-        "Where new members apply. The bot pins a short explainer with an Apply button here."),
+        "Where new members apply. The bot pins a short explainer with a Start application button here. You can "
+        "rename the channel in Discord freely."),
     "REVIEW_CHANNEL_ID": Entry(
-        "applications", "Review channel", "Where applications are posted for approval."),
+        "applications", "Review channel",
+        "Where applications are posted for approval. They're also on the dashboard's Applications page."),
     "APPROVER_ROLE_ID": Entry(
         "applications", "Approver role",
-        "Only members with this role can approve or deny applications, so others can read the review channel "
-        "without acting on it."),
+        "Members with this role can approve, deny or reset applications, in Discord and on the dashboard, even "
+        "without being moderators. Moderators always can. Others can read the review channel without acting on it."),
     "FRESH_ROLE_ID": Entry("applications", "Role for approved applicants", "Given when an application is approved."),
     "FRESH_EXEMPT_ROLE_IDS": Entry(
         "applications", "Roles that skip the approval role",
@@ -165,11 +170,11 @@ CATALOG: Dict[str, Entry] = {
     "AUTO_ROLE_IDS": Entry(
         "applications", "Class and role roles",
         "Given on approval, matching the main role and class the applicant picked.", widget="role_map"),
-    "MAX_SCREENSHOTS": Entry("applications", "Gear screenshots per application",
+    "MAX_SCREENSHOTS": Entry("applications", "Screenshots per application",
                              "How many screenshots an applicant can attach (1 to 9)."),
     "ARCHIVE_ENABLED": Entry("applications", "Archive command",
-                             "/gearcheck archive moves decided applications to the archive channel."),
-    "ARCHIVE_CHANNEL_ID": Entry("applications", "Archive channel", "Where /gearcheck archive moves them."),
+                             "/applications archive (or Archive on the dashboard) moves decided applications to the archive channel."),
+    "ARCHIVE_CHANNEL_ID": Entry("applications", "Archive channel", "Where archived applications are moved to."),
     "GEARCHECK_MIN_LEVEL": Entry("applications", "Minimum level",
                                  "The review card shows whether the applicant meets it. 0: no minimum.",
                                  unit="level"),
@@ -307,6 +312,19 @@ CATALOG: Dict[str, Entry] = {
     "GUILD_ROSTER_POST_MIN_LEVEL": Entry("roster", "List characters from level",
                                          "The posted roster leaves out lower characters, except members' mains.",
                                          unit="level"),
+    "CRAFTING_CHANNEL_ID": Entry("crafting", "Crafting channel",
+                                 "The bot keeps the guild's crafting posted here: professions with their crafters "
+                                 "and the featured recipes (Crafting page). Best a channel only the bot can post in. "
+                                 "Empty: not posted."),
+    "CRAFTING_SHOW_PROFESSIONS": Entry("crafting", "List every profession",
+                                       "Each profession with its crafters and their skill. Off: only the featured "
+                                       "recipes."),
+    "CRAFTING_CRAFTERS_PER_PROFESSION": Entry("crafting", "Crafters per profession",
+                                              "At most this many per profession in the channel, highest skill first. "
+                                              "The Crafting page shows them all.", unit="crafters", advanced=True),
+    "GUILD_ROSTER_POST_PROFESSIONS": Entry("roster", "Show professions",
+                                           "Each character's professions with their skill, e.g. Enchanting 200/225, "
+                                           "on the posted roster. Updated after the player logs out."),
     "GUILD_ROSTER_SELF_SERVICE": Entry("roster", "Members link their own characters",
                                        "With the Claim button under the posted roster, or /character link. Off: only moderators link characters."),
     "GUILD_ROSTER_REFRESH_MINUTES": Entry("roster", "Read the guild roster every",
@@ -352,6 +370,10 @@ CATALOG: Dict[str, Entry] = {
                                         advanced=True),
     "BLIZZARD_PROFILE_NAMESPACE": Entry("blizzard", "Character namespace", "For characters and accounts. The region "
                                                                            "is added automatically.", advanced=True),
+    "ITEM_LINK_URL": Entry(
+        "blizzard", "Item link",
+        "Item names on applications and in the character lookup link here, e.g. to Wowhead. {id} is filled in "
+        "with the item's number. Empty: names aren't links."),
     "CHARACTER_LOOKUP_PATHS": Entry(
         "blizzard", "Character lookup paths",
         "Tried in order until one answers; {name} and {surname} are filled in. Try paths in the "

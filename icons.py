@@ -37,10 +37,11 @@ log = logging.getLogger("wow-apply-bot.icons")
 _app_emoji_cache: Dict[str, discord.Emoji] = {}
 
 
-def resolve_guild_emoji(guild: discord.Guild, emoji_name: Optional[str]) -> str:
-    """Looks up a custom guild emoji by name. Returns '' if not found/None -
-    never raises, so callers can always safely prefix text with this."""
-    if not emoji_name:
+def resolve_guild_emoji(guild: Optional[discord.Guild], emoji_name: Optional[str]) -> str:
+    """Looks up a custom guild emoji by name. Returns '' if not found/None
+    (also without a guild, e.g. in a DM) - never raises, so callers can
+    always safely prefix text with this."""
+    if not emoji_name or guild is None:
         return ""
     emoji = discord.utils.get(guild.emojis, name=emoji_name)
     return str(emoji) if emoji else ""

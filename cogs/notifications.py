@@ -26,7 +26,6 @@ not errors, so a broken channel can't feed the error reports.
 
 import asyncio
 import logging
-import os
 import time
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
@@ -38,6 +37,7 @@ import audit
 import config
 import db
 import system_log
+from web_links import dashboard_link
 
 log = logging.getLogger("wow-apply-bot.notifications")
 
@@ -94,13 +94,6 @@ def source_label(logger_name: str) -> str:
     if logger_name.startswith("asyncio"):
         return "Python"
     return logger_name
-
-
-def dashboard_link(path: str) -> Optional[str]:
-    if not config.FEATURE_WEB_DASHBOARD_ENABLED:
-        return None
-    base = os.environ.get("WEB_BASE_URL", "http://localhost:8081").rstrip("/")
-    return f"{base}{path}"
 
 
 def back_online_embed(entries: List[dict]) -> Optional[discord.Embed]:

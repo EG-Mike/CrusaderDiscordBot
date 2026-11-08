@@ -71,6 +71,7 @@ OPTIONAL_EXTENSIONS = [
     ("cogs.polls", config.FEATURE_POLLS_ENABLED),
     ("cogs.roster", config.FEATURE_ROSTER_ENABLED),
     ("cogs.leveling", config.FEATURE_LEVELING_ENABLED and config.FEATURE_ROSTER_ENABLED),
+    ("cogs.crafting", config.FEATURE_CRAFTING_ENABLED and config.FEATURE_ROSTER_ENABLED),
     ("cogs.audit_log", config.FEATURE_AUDIT_LOG_ENABLED),
     ("cogs.notifications", config.FEATURE_NOTIFICATIONS_ENABLED),
     ("cogs.web_dashboard", config.FEATURE_WEB_DASHBOARD_ENABLED),

@@ -155,6 +155,9 @@ FEATURE_ROSTER_ENABLED = True
 # cogs/leveling.py: leveling leaderboard and level milestone announcements.
 # Needs the roster.
 FEATURE_LEVELING_ENABLED = True
+# cogs/crafting.py: the crafting channel (who in the guild can make what,
+# and the featured recipes picked on the dashboard). Needs the roster.
+FEATURE_CRAFTING_ENABLED = True
 
 # cogs/web_dashboard.py: the browser-based management dashboard (see the
 # README's "Web dashboard" section). Off by default - turn it on in
@@ -236,6 +239,11 @@ BLIZZARD_LOCALE = "en_GB"
 # API explorer (Maintenance) shows what Blizzard answers.
 CHARACTER_LOOKUP_PATHS = ["/profile/wow/character/{name}-{surname}"]
 
+# Where item names link to (application cards, Applications and Character
+# lookup pages). {id} is the item's ID for the game version. Empty: names
+# aren't links. Wowhead's WoW Forever pages are under /forever/.
+ITEM_LINK_URL = "https://www.wowhead.com/forever/item={id}"
+
 # --- Guild roster (roster.py, cogs/roster.py) ---
 # The guild's in-game name, as Blizzard's API knows it (e.g. "Encore").
 # Its roster (every member and their level) is read from Blizzard. Empty:
@@ -258,6 +266,25 @@ GUILD_ROSTER_POST_MIN_LEVEL = 10
 # character, Discord member), edited whenever it changes. Best a channel
 # only the bot can post in. Empty: not posted.
 GUILD_ROSTER_CHANNEL_ID = 0
+
+# Show each character's primary professions on the posted roster (icon and
+# skill/maximum, e.g. Enchanting 200/225). Read from Blizzard after the
+# player logs out.
+GUILD_ROSTER_POST_PROFESSIONS = True
+
+# --- Crafting (crafting.py, cogs/crafting.py) ---
+# Channel where the bot keeps the guild's crafting posted: every
+# profession with its crafters, and the featured recipes (picked on the
+# dashboard's Crafting page) with who can make them and the materials.
+# Best a channel only the bot can post in. Empty: not posted.
+CRAFTING_CHANNEL_ID = 0
+
+# List every profession and its crafters (off: only the featured recipes).
+CRAFTING_SHOW_PROFESSIONS = True
+
+# At most this many crafters per profession in the channel (highest skill
+# first); the dashboard shows them all.
+CRAFTING_CRAFTERS_PER_PROFESSION = 10
 
 # --- Leveling (cogs/leveling.py) ---
 # Channel where level milestones are announced. Empty: no announcements
@@ -353,7 +380,8 @@ ROLE_ICON_URLS = {
      "DPS": "https://wow.zamimg.com/images/wow/icons/large/ability_dualwield.jpg",
 }
 
-# Key format: "ClassName:SpecName" (must match CLASS_SPECS above exactly).
+# Key format: "ClassName:SpecName", the spec as Blizzard names it for the game
+# version (WoW Forever names some trees differently, e.g. "Shadow Magic").
 SPEC_ICON_URLS = {
     # Warrior
     "Warrior:Arms":       "https://wow.zamimg.com/images/wow/icons/large/ability_rogue_eviscerate.jpg",
@@ -379,9 +407,11 @@ SPEC_ICON_URLS = {
     "Priest:Discipline":   "https://wow.zamimg.com/images/wow/icons/large/spell_holy_powerwordshield.jpg",
     "Priest:Holy":         "https://wow.zamimg.com/images/wow/icons/large/spell_holy_holybolt.jpg",
     "Priest:Shadow":       "https://wow.zamimg.com/images/wow/icons/large/spell_shadow_shadowwordpain.jpg",
+    "Priest:Shadow Magic": "https://wow.zamimg.com/images/wow/icons/large/spell_shadow_shadowwordpain.jpg",  # Forever
 
     # Shaman
     "Shaman:Elemental":    "https://wow.zamimg.com/images/wow/icons/large/spell_nature_lightning.jpg",
+    "Shaman:Elemental Combat": "https://wow.zamimg.com/images/wow/icons/large/spell_nature_lightning.jpg",  # Forever
     "Shaman:Enhancement":  "https://wow.zamimg.com/images/wow/icons/large/spell_shaman_improvedstormstrike.jpg",
     "Shaman:Restoration":  "https://wow.zamimg.com/images/wow/icons/large/spell_nature_magicimmunity.jpg",
 
@@ -454,25 +484,22 @@ AUTO_ROLE_IDS = {
     "Rogue": 1526342262488043560,
 }
 
-# Archive: /gearcheck archive moves every approved/denied application out
-# of the review channel into a separate archive channel (re-posted there,
-# original deleted). Set ARCHIVE_ENABLED to False to disable the command
+# Archive: /applications archive (and the dashboard's Archive button) moves
+# every approved/denied application out of the review channel into a
+# separate archive channel (re-posted there, original deleted). Set ARCHIVE_ENABLED to False to disable the command
 # entirely without needing to remove the channel ID.
 ARCHIVE_ENABLED = True
 ARCHIVE_CHANNEL_ID = 1337906439066488914
 
-# Only members with this role can click Approve/Deny/Reset on an
-# application review card (see ApplyCog._is_approver) - lets
-# REVIEW_CHANNEL_ID be opened up read-only to a wider audience (e.g.
-# Regulars) without letting them act on applications. This is a code-level
-# check, not a Discord permission: Discord has no native permission that
-# blocks clicking a message component separately from viewing it (unlike
-# reactions/messages), so anyone who can see the review channel can
-# technically click the button - this check is what actually stops them.
-# Deliberately its own role rather than reusing MOD_ROLE_ID/Manage Roles
-# (the broader "moderator" gate every other action in this cog uses, e.g.
-# /gearcheck archive) - a moderator without this role can no longer
-# approve/deny/reset either, by design.
+# Members with this role can Approve/Deny/Reset applications on the review
+# card and on the dashboard without being moderators; moderators always can
+# (ApplyCog.can_decide, webapi/applications_api.py). Lets REVIEW_CHANNEL_ID
+# be opened up read-only to a wider audience (e.g. Regulars) without
+# letting them act on applications. This is a code-level check, not a
+# Discord permission: Discord has no native permission that blocks clicking
+# a message component separately from viewing it, so anyone who can see the
+# review channel can technically click the button - this check is what
+# actually stops them.
 APPROVER_ROLE_ID = 1482653670855413822
 
 # Gates one-time tools that are noise in the command list day-to-day:

@@ -9,6 +9,7 @@ import discord
 from tests.helpers import DatabaseTestCase
 from tests.test_roster import char
 
+import channel_posts
 import config
 import roster
 from cogs import roster as roster_cog
@@ -114,9 +115,9 @@ class RosterPostTests(DatabaseTestCase, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.channel.sent), 2)
 
     def test_long_rosters_span_messages(self):
-        chunks = self.cog._chunks("header", [f"line {i:04d} " + "x" * 80 for i in range(100)])
+        chunks = channel_posts.chunks("header", [f"line {i:04d} " + "x" * 80 for i in range(100)])
         self.assertGreater(len(chunks), 1)
-        self.assertTrue(all(len(c) <= roster_cog.POST_TEXT_LIMIT for c in chunks))
+        self.assertTrue(all(len(c) <= channel_posts.TEXT_LIMIT for c in chunks))
         self.assertTrue(chunks[0].startswith("header"))
 
     async def test_no_channel_set(self):

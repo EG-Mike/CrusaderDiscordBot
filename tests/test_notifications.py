@@ -121,12 +121,17 @@ class CogTests(DatabaseTestCase, unittest.IsolatedAsyncioTestCase):
         def change(kind, action, summary):
             self.cog._on_audit_event({"source": "dashboard", "kind": kind, "action": action, "summary": summary,
                                       "actor_name": "Mike", "details": {}})
-        change("setting", "settings.update", "Changed setting Region")
-        change("setting", "settings.update", "Changed setting Realm")
-        change("login", "auth.login", "Logged in")  # not reported
-        change("announcement", "announcements.publish", "Published the announcement “Raid”")
-        self.cog._on_audit_event({"source": "discord", "kind": "command", "action": "/x", "summary": "", "details": {}})
+        # A fixed clock: with the real one, `last + 30 - last` can come out a hair under 30 when the sum
+        # crosses a power of two (e.g. 98.1 + 30 > 128), and the batch wouldn't be due yet.
+        with mock.patch.object(n.time, "monotonic", return_value=1000.0):
+            change("setting", "settings.update", "Changed setting Region")
+            change("setting", "settings.update", "Changed setting Realm")
+            change("login", "auth.login", "Logged in")  # not reported
+            change("announcement", "announcements.publish", "Published the announcement “Raid”")
+            self.cog._on_audit_event({"source": "discord", "kind": "command", "action": "/x", "summary": "",
+                                      "details": {}})
         last = self.cog.changes[-1]["_at"]
+        self.assertEqual(last, 1000.0)
         await self.cog.flush(now=last + 5)
         self.assertEqual(self.sent(), [])  # still within the quiet period
         await self.cog.flush(now=last + n.CHANGES_QUIET_SECONDS)

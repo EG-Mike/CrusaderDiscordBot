@@ -64,6 +64,7 @@ KINDS = {
     "maintenance": "Maintenance",
     "poll": "Poll",
     "roster": "Roster",
+    "crafting": "Crafting",
     "audit": "Audit log",
     "other": "Other",
 }

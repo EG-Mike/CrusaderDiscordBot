@@ -204,6 +204,7 @@ export type AuditKind =
   | "maintenance"
   | "poll"
   | "roster"
+  | "crafting"
   | "audit"
   | "other";
 
@@ -576,6 +577,8 @@ export interface GearItem {
   sockets: { type: string | null; gem: string | null; text: string | null }[];
   set: string | null;
   icon_url: string | null;
+  /** The item's page (Settings: Item link), or null. */
+  url?: string | null;
 }
 
 export interface CharacterSummary {
@@ -599,6 +602,19 @@ export interface CharacterSummary {
   missing_enchants: string[];
   empty_sockets: number;
   profile_updated: string | null;
+  stats?: Record<string, number>;
+}
+
+export interface StatValue {
+  key: string;
+  label: string;
+  value: number;
+  text: string;
+}
+
+export interface StatGroup {
+  title: string;
+  stats: StatValue[];
 }
 
 export interface LookupResult {
@@ -606,5 +622,125 @@ export interface LookupResult {
   off_ruleset: boolean;
   requirement_problems: string[];
   roster: { on_roster: boolean; in_guild: boolean; is_main: boolean; member: RosterMember | null } | null;
+  stat_groups: StatGroup[];
   warcraftlogs: null;
+}
+
+// --- applications (webapi/applications_api.py) ------------------------------------
+
+export type ApplicationStatus = "pending" | "approved" | "denied";
+
+export interface ApplicationRow {
+  id: string;
+  status: ApplicationStatus;
+  character: string;
+  character_slug: string | null;
+  class_name: string | null;
+  level: number | null;
+  item_level: number | null;
+  guild: string | null;
+  role: string | null;
+  spec: string | null;
+  offspec: string | null;
+  applicant: { id: string; name: string | null; username: string | null; avatar_url: string | null };
+  applicant_in_server: boolean;
+  /** Unix seconds. */
+  submitted_at: number;
+  has_gear: boolean;
+  flag_count: number;
+  has_note: boolean;
+  screenshot_count: number;
+  prior_denials: number;
+  archived: boolean;
+  decided_by: string | null;
+  decided_at: number | null;
+}
+
+export interface ApplicationList {
+  applications: ApplicationRow[];
+  counts: Record<ApplicationStatus, number>;
+  running: boolean;
+  can_decide: boolean;
+  archive_problem: string | null;
+}
+
+export interface ApplicationDecision {
+  status: "approved" | "denied";
+  by_id: string;
+  by_name: string;
+  via: "discord" | "dashboard";
+  at: number;
+  roles_assigned: string[];
+  roles_kept: string[];
+  nickname: string | null;
+  roster: string | null;
+  reason: string | null;
+}
+
+export interface ApplicationDetail extends ApplicationRow {
+  note: string | null;
+  screenshots: string[];
+  gear: (CharacterSummary & { stat_highlights: StatValue[]; stat_groups: StatGroup[] }) | null;
+  gear_checked_at: number | null;
+  flags: string[];
+  requirement_problems: string[];
+  profile_url: string | null;
+  wcl_url: string | null;
+  message_url: string | null;
+  decision: ApplicationDecision | null;
+  decision_text: string | null;
+  legacy_text: string | null;
+  warcraftlogs: { enabled: boolean; text: string | null };
+}
+
+// --- crafting (webapi/crafting_api.py) ----------------------------------------------
+
+export interface Crafter {
+  slug: string;
+  display_name: string;
+  class_name: string | null;
+  level: number | null;
+  in_guild: boolean;
+  is_main: boolean;
+  member: { id: string; name: string; avatar_url: string } | null;
+  skill?: number | null;
+  max?: number | null;
+}
+
+export interface CraftingProfession {
+  id: number;
+  name: string;
+  icon_url: string | null;
+  crafters: Crafter[];
+}
+
+export interface FeaturedRecipe {
+  recipe_id: number;
+  name: string;
+  profession_id: number | null;
+  profession_name: string | null;
+  item_id: number | null;
+  item_name: string | null;
+  quantity: number | null;
+  reagents: { id: number | null; name: string; quantity: number | null }[];
+  icon_url: string | null;
+  item_url: string | null;
+  item_icon_url: string | null;
+  added_by: string | null;
+  added_at: string;
+  crafters: Crafter[];
+}
+
+export interface CraftingOverview {
+  professions: CraftingProfession[];
+  featured: FeaturedRecipe[];
+  characters: number;
+  characters_with_recipes: number;
+  channel_problem: string | null;
+}
+
+export interface RecipeCatalog {
+  id: number;
+  name: string;
+  categories: { name: string; recipes: { id: number; name: string; known_by: number; featured: boolean }[] }[];
 }

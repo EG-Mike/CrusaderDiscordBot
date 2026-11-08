@@ -65,7 +65,7 @@ const STEPS: Step[] = [
     title: "WarcraftLogs",
     icon: KeyRound,
     intro:
-      "API keys and your realm, used for gear checks, raid summaries and attendance. Keys are stored encrypted and never shown again after saving.",
+      "API keys and your realm, used for applications, the guild roster, raid summaries and attendance. Keys are stored encrypted and never shown again after saving.",
     keys: ["SERVER_REGION", "SERVER_SLUG", "GUILD_NAME"],
   },
   {

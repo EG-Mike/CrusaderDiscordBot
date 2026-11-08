@@ -1,46 +1,72 @@
 """
-Guild application feature (the gear check).
+Guild applications.
 
 Flow:
-  1. /apply character:<name and surname> (or the Start button) - the bot
-     reads the character from Blizzard's API (gear.py): class, level,
-     guild, talents, and the equipped gear with enchants and gems.
-  2. The applicant confirms their main role and spec (the spec with the
-     most talent points is suggested) and any other specs they play.
+  1. The applicant clicks "Start application" in the apply channel (or
+     uses /apply) and types their character's name and surname in one
+     field. The bot reads the character from Blizzard's API (gear.py):
+     class, level, guild, talents, statistics, and the equipped gear with
+     enchants and gems.
+  2. By DM: the main spec is pre-selected from where the talent points
+     are, with a role to match; the applicant confirms or changes them and
+     can pick an offspec (optional).
   3. An optional note and screenshots, collected by DM.
   4. The application is posted to the review channel: the gear summary,
-     requirements (Settings: minimum level and item level), and, once
-     WarcraftLogs covers the game (APPLICATION_WARCRAFTLOGS_ENABLED), the
-     applicant's parses. "Refresh gear" re-reads the gear from Blizzard.
-  5. An approver approves (roles, nickname, DM, and the character is linked
-     to the applicant on the guild roster) or denies (DM).
+     the statistics that matter for the role, requirements (Settings:
+     minimum level and item level), and, once WarcraftLogs covers the game
+     (APPLICATION_WARCRAFTLOGS_ENABLED), the applicant's parses. It also
+     shows on the dashboard's Applications page.
+  5. A moderator or approver approves (roles, nickname, DM, and the character is linked
+     to the applicant on the guild roster with their specs) or denies (DM),
+     on the card or on the dashboard. Reset undoes a decision, "Refresh
+     gear" reads the gear from Blizzard again.
 
-Moderators can also gear-check any character without an application:
-/gearcheck character.
+Decisions are methods without a Discord interaction (approve, deny,
+reset, refresh_gear, archive_decided), so the card's buttons and the
+dashboard (webapi/applications_api.py) follow the same rules. Shared
+record helpers are in applications.py.
+
+Moderators can also look up any character without an application: /lookup
+(the dashboard's Character lookup does the same).
 """
 
-import os
 import asyncio
 import logging
+import time
+from typing import Dict, List, Optional, Tuple
+from urllib.parse import parse_qs, quote, urlparse
 from zoneinfo import ZoneInfo
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
+import application_card
+import applications
 import bot_messages
 import config
+import emoji_library
 import gear
 import icons
 import roster
 import wow_api
+from applications import ApplicationError, Reviewer
 from permissions import is_moderator, member_is_moderator
+from web_links import dashboard_link
 
 log = logging.getLogger("wow-apply-bot.apply")
 
-APPROVE_EMOJI = "✅"
-DENY_EMOJI = "❌"
 FRESH_ROLE_EMOJI = "<:fresh_role:1542590697238962226>"
+NO_OFFSPEC = "__none__"
+
+DIALOG_TIMEOUT = 300       # spec/role selection
+SCREENSHOT_TIMEOUT = 180   # waiting for an optional note/screenshot reply
+NOT_FOUND_TIMEOUT = 180    # waiting for the retry-name/continue-anyway choice
+
+AMSTERDAM_TZ = ZoneInfo("Europe/Amsterdam")
+
+ARCHIVE_CONFIRMATION_KEY = "archive_confirmation"  # sentinel store key, not a real message id
+BLIZZARD_ROLES = {"tank": "Tank", "healer": "Healer", "dps": "DPS"}  # wow_api spec roles -> ours
 
 
 def _fresh_label(name: str) -> str:
@@ -48,23 +74,6 @@ def _fresh_label(name: str) -> str:
     mentioned in an assigned/already-had role list - other exempt roles
     (Regular/Organizer) are left as plain text."""
     return f"{FRESH_ROLE_EMOJI} {name}" if name == "Fresh" else name
-
-DIALOG_TIMEOUT = 300       # role/spec selection
-SCREENSHOT_TIMEOUT = 180   # waiting for an optional screenshot reply
-NOT_FOUND_TIMEOUT = 180    # waiting for the retry-name/continue-anyway choice
-
-AMSTERDAM_TZ = ZoneInfo("Europe/Amsterdam")
-
-ARCHIVE_CONFIRMATION_KEY = "archive_confirmation"  # sentinel store key, not a real message id
-GEAR_TEXT_LIMIT = 1800  # the gear list's share of a review card's 4000 characters
-
-
-def _clip(text: str, limit: int) -> str:
-    """Cuts at a line break so an item line isn't split."""
-    if len(text) <= limit:
-        return text
-    cut = text.rfind("\n", 0, limit - 40)
-    return text[:cut if cut > 0 else limit - 40] + "\n-# … more items not shown"
 
 
 def _emoji_for(icon_str):
@@ -94,101 +103,89 @@ def _match_known_spec(specs, wcl_spec_name):
     return None
 
 
-class RoleSpecView(discord.ui.View):
-    """View letting the applicant pick their main role, main spec, and any
-    other specs they can also play. 'Continue' moves on to the note/screenshot
-    step. Works identically whether sent to a DM channel or a guild channel.
-    `specs`: the class's spec names for the game version (Blizzard's)."""
+def default_role(class_name: str, spec: Optional[str], spec_roles: Dict[str, Optional[str]]) -> Optional[str]:
+    """The role a spec usually plays: Blizzard's role for the spec when it
+    gives one, else SPEC_DEFAULT_ROLE (healing and tanking trees), else DPS.
+    None when the class can't play that role."""
+    if not spec:
+        return None
+    allowed = config.CLASS_ROLES.get(class_name, config.ROLES)
+    role = BLIZZARD_ROLES.get(spec_roles.get(spec) or "") or config.SPEC_DEFAULT_ROLE.get(spec) or "DPS"
+    return role if role in allowed else None
 
-    def __init__(self, user_id, guild, class_name, specs, suggested_role=None, suggested_spec=None):
+
+def screenshot_expiry(url: str) -> Optional[int]:
+    """When a Discord attachment link stops working (its `ex` parameter,
+    unix seconds in hex). None for links without one."""
+    try:
+        values = parse_qs(urlparse(url).query).get("ex")
+        return int(values[0], 16) if values else None
+    except (ValueError, TypeError):
+        return None
+
+
+class SpecChoiceView(discord.ui.View):
+    """The applicant confirms their main spec (pre-selected from their
+    talent points) and role, and can pick an offspec. Works the same in a
+    DM and in a server channel. `specs`: the class's spec names for the game
+    version; `spec_roles`: Blizzard's role per spec name (may be empty)."""
+
+    def __init__(self, user_id, guild, class_name, specs, spec_roles=None, suggested_spec=None,
+                 suggested_role=None):
         super().__init__(timeout=DIALOG_TIMEOUT)
         self.user_id = user_id
         self.guild = guild
         self.class_name = class_name
-        # Pre-filled from WCL data if available - the applicant can still
-        # change either before continuing.
-        self.role = suggested_role
+        self.specs = list(specs)
+        self.spec_roles = spec_roles or {}
         self.main_spec = suggested_spec
-        self.other_specs = []
-
+        self.role = suggested_role
+        self.role_chosen = False  # once the applicant picks a role, changing the spec doesn't override it
+        self.offspec = None
         self.done = asyncio.Event()
-        self.specs = specs
 
-        role_options = config.CLASS_ROLES.get(class_name, config.ROLES)
-        self.role_select = discord.ui.Select(
-            placeholder="Main role" + (f" (suggested: {suggested_role})" if suggested_role else ""),
-            options=[
-                discord.SelectOption(
-                    label=r,
-                    emoji=_emoji_for(icons.resolve_role_icon(guild, r)),
-                    default=(r == suggested_role),
-                )
-                for r in role_options
-            ],
-        )
-        self.role_select.callback = self._on_role
-        self.add_item(self.role_select)
-
-        self.spec_select = discord.ui.Select(
-            placeholder="Main spec" + (f" (suggested: {suggested_spec})" if suggested_spec else ""),
-            options=[
-                discord.SelectOption(
-                    label=s,
-                    emoji=_emoji_for(icons.resolve_spec_icon(class_name, s)),
-                    default=(s == suggested_spec),
-                )
-                for s in specs
-            ],
-        )
+        self.spec_select = discord.ui.Select(placeholder="Main spec", row=0)
         self.spec_select.callback = self._on_spec
         self.add_item(self.spec_select)
 
-        self.other_spec_select = None
-        if len(specs) > 1:
-            self.other_spec_select = discord.ui.Select(
-                placeholder="Other specs you can also play (this is optional)",
-                min_values=0,
-                max_values=1,  # corrected immediately by _sync_other_spec_options()
-                options=[discord.SelectOption(label=specs[0])],  # placeholder, replaced below
-            )
-            self.other_spec_select.callback = self._on_other_specs
-            self._sync_other_spec_options()
-            self.add_item(self.other_spec_select)
+        self.role_select = discord.ui.Select(placeholder="Main role", row=1)
+        self.role_select.callback = self._on_role
+        self.add_item(self.role_select)
 
-        continue_button = discord.ui.Button(label="Continue", style=discord.ButtonStyle.primary)
+        self.offspec_select = None
+        if len(self.specs) > 1:
+            self.offspec_select = discord.ui.Select(placeholder="Offspec (optional)", row=2)
+            self.offspec_select.callback = self._on_offspec
+            self.add_item(self.offspec_select)
+
+        continue_button = discord.ui.Button(label="Continue", style=discord.ButtonStyle.primary, row=3)
         continue_button.callback = self._on_continue
         self.add_item(continue_button)
+        self._sync()
 
-    def _sync_other_spec_options(self):
-        """Rebuilds the 'other specs' options to exclude whatever is
-        currently the main spec (no point letting someone tick the same
-        spec as both their main and an 'other' choice)."""
-        if self.other_spec_select is None:
-            return
-        specs = self.specs
-        available = [s for s in specs if s != self.main_spec] or specs
-        # Drop the main spec from any already-chosen "other specs" too, in
-        # case it just became the main spec.
-        self.other_specs = [s for s in self.other_specs if s != self.main_spec]
-        self.other_spec_select.options = [
-            discord.SelectOption(
-                label=s,
-                emoji=_emoji_for(icons.resolve_spec_icon(self.class_name, s)),
-                default=(s in self.other_specs),
-            )
-            for s in available
+    def _sync(self):
+        """Rebuilds every dropdown from the current choices (Discord resends
+        all components on an edit, so each option's `default` must be right)."""
+        self.spec_select.options = [
+            discord.SelectOption(label=s, emoji=_emoji_for(icons.resolve_spec_icon(self.class_name, s)),
+                                 default=(s == self.main_spec))
+            for s in self.specs
+        ] or [discord.SelectOption(label="(no specs found)", value=NO_OFFSPEC)]
+        self.role_select.options = [
+            discord.SelectOption(label=r, emoji=_emoji_for(icons.resolve_role_icon(self.guild, r)),
+                                 default=(r == self.role))
+            for r in config.CLASS_ROLES.get(self.class_name, config.ROLES)
         ]
-        self.other_spec_select.max_values = len(available)
-
-    def _sync_selected_defaults(self):
-        """Keeps the role/spec dropdowns showing the currently-selected
-        value after a full view refresh (edit_message resends every
-        component fresh, so stale `default` flags would visually reset
-        selections that were made earlier)."""
-        for opt in self.role_select.options:
-            opt.default = opt.label == self.role
-        for opt in self.spec_select.options:
-            opt.default = opt.label == self.main_spec
+        if self.offspec_select is not None:
+            if self.offspec == self.main_spec:
+                self.offspec = None
+            self.offspec_select.options = [
+                discord.SelectOption(label="No offspec", value=NO_OFFSPEC, default=self.offspec is None)
+            ] + [
+                discord.SelectOption(label=s, emoji=_emoji_for(icons.resolve_spec_icon(self.class_name, s)),
+                                     default=(s == self.offspec))
+                for s in self.specs if s != self.main_spec
+            ]
 
     async def _guard(self, interaction) -> bool:
         if interaction.user.id != self.user_id:
@@ -196,35 +193,41 @@ class RoleSpecView(discord.ui.View):
             return False
         return True
 
+    async def _on_spec(self, interaction: discord.Interaction):
+        if not await self._guard(interaction):
+            return
+        value = self.spec_select.values[0]
+        self.main_spec = value if value != NO_OFFSPEC else None
+        if not self.role_chosen:
+            self.role = default_role(self.class_name, self.main_spec, self.spec_roles) or self.role
+        self._sync()
+        await interaction.response.edit_message(view=self)
+
     async def _on_role(self, interaction: discord.Interaction):
         if not await self._guard(interaction):
             return
         self.role = self.role_select.values[0]
-        await interaction.response.defer()
-
-    async def _on_spec(self, interaction: discord.Interaction):
-        if not await self._guard(interaction):
-            return
-        self.main_spec = self.spec_select.values[0]
-        self._sync_selected_defaults()
-        self._sync_other_spec_options()
+        self.role_chosen = True
+        self._sync()
         await interaction.response.edit_message(view=self)
 
-    async def _on_other_specs(self, interaction: discord.Interaction):
+    async def _on_offspec(self, interaction: discord.Interaction):
         if not await self._guard(interaction):
             return
-        self.other_specs = list(self.other_spec_select.values)
-        await interaction.response.defer()
+        value = self.offspec_select.values[0]
+        self.offspec = None if value == NO_OFFSPEC else value
+        self._sync()
+        await interaction.response.edit_message(view=self)
 
     async def _on_continue(self, interaction: discord.Interaction):
         if not await self._guard(interaction):
             return
         if not self.role or not self.main_spec:
-            await interaction.response.send_message(
-                "Please select both a role and a main spec first.", ephemeral=True
-            )
+            await interaction.response.send_message("Please pick your main spec and role first.", ephemeral=True)
             return
-        await interaction.response.defer()
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.edit_message(view=self)
         self.done.set()
         self.stop()
 
@@ -243,7 +246,7 @@ class SkipNoteScreenshotView(discord.ui.View):
         await interaction.response.send_message(
             "Skipped - no note or screenshot was attached.\n\n"
             "Your application has been posted for review. You'll get a DM once a reviewer makes a decision.\n\n"
-            "**At any time you may use `/application_update` in this chat to provide a note and/or screenshot(s)**", 
+            "**You can add a note and/or screenshot(s) at any time with `/update-application` in this chat.**",
             ephemeral=True)
         self.skipped.set()
         self.stop()
@@ -268,10 +271,10 @@ class CharacterNameModal(discord.ui.Modal, title="Apply to the guild"):
 
 class StartApplicationView(discord.ui.View):
     """
-    Persistent view for the #gear-check landing message. The button click
-    itself only needs View Channel (unlike typing a slash command, which
-    Discord requires Send Messages for) - so this works even in a channel
-    where @everyone can't post, keeping it clutter-free.
+    Persistent view for the apply channel's pinned explainer. The button
+    click itself only needs View Channel (unlike typing a slash command,
+    which Discord requires Send Messages for) - so this works even in a
+    channel where @everyone can't post, keeping it clutter-free.
     """
 
     def __init__(self, cog: "ApplyCog"):
@@ -279,10 +282,10 @@ class StartApplicationView(discord.ui.View):
         self.cog = cog
 
     @discord.ui.button(
-        label="Start Gear-Check procedure",
+        label="Start application",
         style=discord.ButtonStyle.primary,
         emoji="📝",
-        custom_id="wow_apply_start",
+        custom_id="wow_apply_start",  # unchanged, so pinned messages from before keep working
     )
     async def start(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(CharacterNameModal(self.cog))
@@ -328,10 +331,9 @@ class NotFoundView(discord.ui.View):
 
 class ClassSelectView(discord.ui.View):
     """Shown when continuing without Blizzard data - there's no class to
-    infer from, so the applicant picks it manually before the (otherwise
-    identical) role/spec dialog can build its spec dropdown."""
+    infer from, so the applicant picks it before the spec dialog."""
 
-    def __init__(self, user_id, guild):
+    def __init__(self, user_id, guild, class_names: List[str]):
         super().__init__(timeout=DIALOG_TIMEOUT)
         self.user_id = user_id
         self.class_name = None
@@ -341,21 +343,16 @@ class ClassSelectView(discord.ui.View):
             placeholder="What class is your character?",
             options=[
                 discord.SelectOption(label=c, emoji=_emoji_for(icons.resolve_class_icon(guild, c)))
-                for c in config.CLASS_SPECS.keys()
+                for c in class_names[:25]
             ],
         )
         select.callback = self._on_select
         self.add_item(select)
         self._select = select
 
-    async def _guard(self, interaction) -> bool:
+    async def _on_select(self, interaction: discord.Interaction):
         if interaction.user.id != self.user_id:
             await interaction.response.send_message("This isn't your application.", ephemeral=True)
-            return False
-        return True
-
-    async def _on_select(self, interaction: discord.Interaction):
-        if not await self._guard(interaction):
             return
         self.class_name = self._select.values[0]
         await interaction.response.defer()
@@ -363,9 +360,9 @@ class ClassSelectView(discord.ui.View):
         self.stop()
 
 
-class DenyReasonModal(discord.ui.Modal, title="Deny Application"):
+class DenyReasonModal(discord.ui.Modal, title="Deny application"):
     reason = discord.ui.TextInput(
-        label="Reason (optional, mods only)",
+        label="Reason (optional, reviewers only)",
         style=discord.TextStyle.paragraph,
         required=False,
         max_length=500,
@@ -378,21 +375,23 @@ class DenyReasonModal(discord.ui.Modal, title="Deny Application"):
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer()
-        await self.cog._apply_denial(interaction, self.message_id, str(self.reason).strip() or None)
+        try:
+            await self.cog.deny(self.message_id, applications.discord_reviewer(interaction.user),
+                                str(self.reason).strip() or None)
+        except ApplicationError as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
 
 
 class ApplyCog(commands.Cog):
-    gearcheck_group = app_commands.Group(
-        name="gearcheck", description="Gear-check application management (moderator only)"
+    applications_group = app_commands.Group(
+        name="applications", description="Guild applications (moderators)"
     )
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.review_channel_id = config.REVIEW_CHANNEL_ID
-        self.fresh_role_id = config.FRESH_ROLE_ID
-        self.server_slug = config.SERVER_SLUG
-        self.server_region = config.SERVER_REGION
         self.start_view = StartApplicationView(self)
+        self._locks: Dict[int, asyncio.Lock] = {}
+        self._screenshot_cache: Dict[str, Tuple[str, int]] = {}  # original link -> (fresh link, expires)
 
     async def cog_load(self):
         # Registers the persistent buttons so they keep working across bot
@@ -403,12 +402,12 @@ class ApplyCog(commands.Cog):
             "character_name": "template",
             "character_slug": "template",
             "status": "pending",
-        })
+        }, all_buttons=True)
         self.bot.add_view(template)
-        bot_messages.register_updater("gear_check_explainer", self._sync_gear_check_explainer)
+        bot_messages.register_updater("gear_check_explainer", self._sync_apply_explainer)
         bot_messages.register_updater("review_explainer", self._sync_review_explainer)
 
-    # --- embed/layout building -----------------------------------------
+    # --- the review card ------------------------------------------------------------------------------
 
     def _format_boss_line(self, name, kills, pct) -> str:
         if kills == 0:
@@ -435,7 +434,7 @@ class ApplyCog(commands.Cog):
             value = value[:1000] + "\n… (truncated, see full profile)"
         return value
 
-    def _build_class_block(self, guild, class_name, spec, role, level, guild_name) -> str:
+    def _build_class_block(self, guild, class_name, spec, role, level, guild_name, offspec=None) -> str:
         class_icon = icons.resolve_class_icon(guild, class_name)
         lines = [f"**Class:** {class_icon} {class_name}".strip()]
         if spec:
@@ -444,18 +443,11 @@ class ApplyCog(commands.Cog):
         if role:
             role_icon = icons.resolve_role_icon(guild, role)
             lines.append(f"**Role:** {role_icon} {role}".strip())
+        if offspec:
+            lines.append(f"**Offspec:** {icons.resolve_spec_icon(class_name, offspec)} {offspec}".strip())
         lines.append(f"**Level:** {level if level is not None else '? (not found on Blizzard)'}")
         lines.append(f"**Guild:** {guild_name or 'None'}")
         return "\n".join(lines)
-
-    def _build_also_play_block(self, class_name, other_specs) -> str:
-        if not other_specs:
-            return "-"
-        parts = []
-        for s in other_specs:
-            icon = icons.resolve_spec_icon(class_name, s)
-            parts.append(f"{icon} {s}".strip())
-        return ", ".join(parts)
 
     def _count_full_clears(self, tier_data) -> int:
         """
@@ -479,10 +471,10 @@ class ApplyCog(commands.Cog):
 
     async def _compute_tier_and_boss_blocks(self, character: dict):
         """
-        Live WCL lookups happen ONLY here, once, at posting time. Everything
-        rendered afterward (approve/deny/reset/update) reuses the resulting
-        text - never re-queries WCL, so a decision doesn't wait on the API
-        and a rebuild can't silently change the numbers shown.
+        WarcraftLogs parses (APPLICATION_WARCRAFTLOGS_ENABLED), read once when
+        the application is posted. Everything rendered afterward reuses the
+        resulting text, so a decision doesn't wait on the API and a rebuild
+        can't silently change the numbers shown.
         """
         current_tier_data = None
         if character.get("id") and config.CURRENT_TIER.get("zone_id"):
@@ -497,9 +489,8 @@ class ApplyCog(commands.Cog):
         current_has_data = bool(
             current_tier_data and current_tier_data.get("best_performance_average") is not None
         )
-        # Fewer than NEW_TIER_LOG_THRESHOLD full clears - including zero, i.e. no
-        # current-tier data at all - is what triggers the previous-tier fallback,
-        # not whether any current-tier data exists at all.
+        # Fewer than NEW_TIER_LOG_THRESHOLD full clears - including zero - is
+        # what triggers the previous-tier fallback.
         low_kill_count = full_clears < config.NEW_TIER_LOG_THRESHOLD
 
         prev_tier_data = None
@@ -565,357 +556,454 @@ class ApplyCog(commands.Cog):
 
         return tier_block, boss_block, hidden_block
 
-    def _render_application_view(self, application: dict, message_id: int = None) -> discord.ui.LayoutView:
-        """
-        Rebuilds the whole application layout from stored data - always
-        from scratch, never by mutating an existing message's components.
-        Used both for the initial post AND every subsequent edit (approve,
-        deny, reset, /update-application), so there's exactly one code path
-        that knows how to render an application, and no dependency on
-        component-mutation APIs.
-
-        message_id, if given, is this application's OWN message id - used
-        to exclude itself when counting prior denials (without this, an
-        application that was just denied would count itself as a "prior"
-        denial the moment it's rendered post-decision).
-        """
-        view = discord.ui.LayoutView(timeout=None)
-        color = discord.Color(application.get("class_color") or 0x2B2D31)
-        container = discord.ui.Container(accent_color=color)
-
-        status = application.get("status", "pending")
-        is_pending = status == "pending"
-        icon_prefix = {"approved": f"{APPROVE_EMOJI} ", "denied": f"{DENY_EMOJI} "}.get(status, "")
-        suffix = {"approved": " (APPROVED)", "denied": " (DENIED)"}.get(status, "")
-        profile_url = application.get("profile_url") or ""
-        character_name = application.get("character_name", "?")
-        if profile_url:
-            title = f"## {icon_prefix}[{character_name}{suffix}]({profile_url})"
-        else:
-            title = f"## {icon_prefix}{character_name}{suffix}"
-        container.add_item(discord.ui.TextDisplay(title))
-        container.add_item(discord.ui.TextDisplay(f"Applicant: <@{application['applicant_id']}>"))
-        container.add_item(discord.ui.Separator())
-
-        prior_denials = [
-            (mid, rec)
-            for mid, rec in self.bot.store.find_all_by_applicant(application["applicant_id"])
-            if rec.get("status") == "denied" and mid != message_id
-        ]
-        # Only worth flagging once it's a pattern, not a single past denial.
-        if len(prior_denials) >= 2:
-            most_recent_id, most_recent_rec = prior_denials[-1]
-            most_recent_date = discord.utils.snowflake_time(most_recent_id).strftime("%Y-%m-%d")
-            container.add_item(discord.ui.TextDisplay(
-                f"⚠️ **Previously Denied** ⚠️\nThis character has been denied {len(prior_denials)} "
-                f"times before. Most recent: **{most_recent_rec.get('character_name', '?')}** "
-                f"on {most_recent_date}."
-            ))
-            container.add_item(discord.ui.Separator())
-
-        container.add_item(discord.ui.TextDisplay(application.get("class_block") or "-"))
-        container.add_item(discord.ui.Separator())
-
-        container.add_item(discord.ui.TextDisplay(
-            f"**Can also play:** {application.get('also_play_block') or '-'}"
-        ))
-        container.add_item(discord.ui.Separator())
-
-        gear_text = application.get("gear_text")
-        if gear_text:
-            checked = application.get("gear_checked_at")
-            when = f" · checked <t:{checked}:R>" if checked else ""
-            container.add_item(discord.ui.TextDisplay(
-                f"### Gear\n-# From Blizzard, as of the character's last logout{when}\n{gear_text['overview']}"))
-            container.add_item(discord.ui.TextDisplay(_clip(gear_text["gear"], GEAR_TEXT_LIMIT)))
-            if gear_text.get("flags"):
-                container.add_item(discord.ui.TextDisplay(gear_text["flags"]))
-            container.add_item(discord.ui.Separator())
-        elif application.get("armory_block"):  # applications from before the gear check
-            container.add_item(discord.ui.TextDisplay(application["armory_block"]))
-            container.add_item(discord.ui.Separator())
-
-        if application.get("tier_block"):
-            container.add_item(discord.ui.TextDisplay(application["tier_block"]))
-            container.add_item(discord.ui.Separator())
-
-        if application.get("boss_block"):
-            container.add_item(discord.ui.TextDisplay(application["boss_block"]))
-            container.add_item(discord.ui.Separator())
-
-        if application.get("hidden_block"):
-            container.add_item(discord.ui.TextDisplay(application["hidden_block"]))
-            container.add_item(discord.ui.Separator())
-
-        links = [f"[Profile]({profile_url})" if profile_url else None,
-                 f"[WarcraftLogs]({application['wcl_url']})" if application.get("wcl_url") else None]
-        if any(links):
-            container.add_item(discord.ui.TextDisplay("**Links:** " + " · ".join(filter(None, links))))
-            container.add_item(discord.ui.Separator())
-
-        note = application.get("note")
-        container.add_item(discord.ui.TextDisplay(
-            f"**Applicant's note:**\n{note[:1024] if note else 'No note provided'}"
-        ))
-        container.add_item(discord.ui.Separator())
-
-        screenshot_urls = (application.get("screenshot_urls") or [])[: config.MAX_SCREENSHOTS]
-        if screenshot_urls:
-            gallery = discord.ui.MediaGallery(
-                *[discord.MediaGalleryItem(u) for u in screenshot_urls]
-            )
-            container.add_item(gallery)
-        else:
-            container.add_item(discord.ui.TextDisplay("**Screenshot(s):** No screenshot provided"))
-        container.add_item(discord.ui.Separator())
-
-        footer_text = application.get("decision_footer") or "Use the buttons below to decide"
-        container.add_item(discord.ui.TextDisplay(footer_text))
-
-        view.add_item(container)
-
-        action_row = discord.ui.ActionRow()
-
-        approve_button = discord.ui.Button(
-            label="Approve",
-            emoji=APPROVE_EMOJI,
-            style=discord.ButtonStyle.success,
-            custom_id="wow_apply_approve",
-            disabled=not is_pending,
+    def _render_application_view(self, application: dict, message_id: int = None, *,
+                                 all_buttons: bool = False) -> discord.ui.LayoutView:
+        """The review card (application_card.py), rebuilt from the stored
+        record for the first post and every later edit, so exactly one code
+        path knows how to draw an application. message_id: this
+        application's own message, left out when counting earlier denials.
+        all_buttons: every action button, for registering the persistent view."""
+        return application_card.build(
+            application,
+            prior_denials=applications.prior_denials(self.bot.store, application["applicant_id"], exclude=message_id),
+            callbacks={"approve": self._on_approve_click, "deny": self._on_deny_click, "reset": self._on_reset_click,
+                       "refresh": self._on_refresh_gear_click},
+            guild=self._guild(),
+            dashboard_url=dashboard_link(f"/applications/{message_id}") if message_id else None,
+            all_buttons=all_buttons,
         )
-        approve_button.callback = self._on_approve_click
-        action_row.add_item(approve_button)
-
-        deny_button = discord.ui.Button(
-            label="Deny",
-            emoji=DENY_EMOJI,
-            style=discord.ButtonStyle.danger,
-            custom_id="wow_apply_deny",
-            disabled=not is_pending,
-        )
-        deny_button.callback = self._on_deny_click
-        action_row.add_item(deny_button)
-
-        reset_button = discord.ui.Button(
-            label="Reset",
-            emoji="🔄",
-            style=discord.ButtonStyle.primary,
-            custom_id="wow_apply_reset",
-            disabled=is_pending,
-        )
-        reset_button.callback = self._on_reset_click
-        action_row.add_item(reset_button)
-
-        refresh_button = discord.ui.Button(
-            label="Refresh gear",
-            emoji="🛡️",
-            style=discord.ButtonStyle.secondary,
-            custom_id="wow_apply_refresh_gear",
-            disabled=not application.get("character_slug"),
-        )
-        refresh_button.callback = self._on_refresh_gear_click
-        action_row.add_item(refresh_button)
-
-        view.add_item(action_row)
-
-        return view
-
-    async def _refresh_review_message(self, message: discord.Message, application: dict):
-        await message.edit(view=self._render_application_view(application, message_id=message.id))
 
     async def _gear_fields(self, summary) -> dict:
-        """What an application stores about the gear: the summary (data) and
-        its rendered text, so a re-render never needs Blizzard."""
+        """What an application stores about the character: the summary (data)
+        and the emoji of its items and professions, so a re-render never
+        needs Blizzard."""
         if not summary:
-            return {"gear": None, "gear_text": None, "gear_checked_at": None}
-        icons_by_item = await gear.item_icons(self.bot, summary)
-        return {"gear": summary, "gear_text": gear.render_lines(summary, icons_by_item),
-                "gear_checked_at": int(discord.utils.utcnow().timestamp())}
+            return {"gear": None, "icons": {}, "gear_checked_at": None}
+        return {"gear": summary, "icons": await self._card_icons(summary), "gear_checked_at": int(time.time())}
 
-    async def _post_application(
-        self, interaction, char_data, role, spec, other_specs, note, screenshot_urls
-    ):
-        class_block = self._build_class_block(
-            interaction.guild, char_data["class_name"], spec, role,
-            char_data.get("level"), char_data.get("guild_name"),
-        )
-        also_play_block = self._build_also_play_block(char_data["class_name"], other_specs)
-        tier_block = boss_block = hidden_block = None
-        if config.APPLICATION_WARCRAFTLOGS_ENABLED and char_data.get("id"):
-            tier_block, boss_block, hidden_block = await self._compute_tier_and_boss_blocks(char_data)
+    async def _card_icons(self, summary: dict) -> Dict[str, str]:
+        """{"item:id" / "profession:id": emoji} from the emoji library, for
+        the card and /lookup. Icons that can't be made are left out."""
+        found = {application_card.icon_key("item", item_id): emoji
+                 for item_id, emoji in (await gear.item_icons(self.bot, summary)).items() if emoji}
+        for profession in summary.get("professions") or []:
+            if profession.get("primary") and profession.get("id"):
+                emoji = await emoji_library.ensure_icon(self.bot, "profession", profession["id"],
+                                                        by="automatic (application)")
+                if emoji:
+                    found[application_card.icon_key("profession", profession["id"])] = emoji
+        return found
 
-        application = {
-            "applicant_id": interaction.user.id,
-            "character_name": char_data["name"],
-            "character_slug": char_data.get("slug"),
-            "status": "pending",
-            "class_name": char_data["class_name"],
-            "role": role,
-            "spec": spec,
-            "other_specs": other_specs,
-            "note": note,
-            "class_color": config.CLASS_COLORS.get(char_data["class_name"], 0x2B2D31),
-            "last_decision": None,
-            "class_block": class_block,
-            "also_play_block": also_play_block,
-            "tier_block": tier_block,
-            "boss_block": boss_block,
-            "hidden_block": hidden_block,
-            "profile_url": char_data.get("profile_url"),
-            "wcl_url": char_data.get("wcl_url"),
-            "screenshot_urls": screenshot_urls or [],
-            **await self._gear_fields(char_data.get("gear")),
-        }
+    # --- where an application's card is ---------------------------------------------------------------
 
-        review_channel = self.bot.get_channel(self.review_channel_id)
-        if review_channel is None:
-            log.error("Can't post %s's application: REVIEW_CHANNEL_ID isn't set to a channel the bot can see",
-                      application["character_name"])
-            await interaction.followup.send(
-                "Sorry, applications can't be submitted right now (the review channel isn't set up). "
-                "Please let a moderator know.",
-                ephemeral=True,
-            )
-            return
-        view = self._render_application_view(application)
-        message = await review_channel.send(view=view)
+    def _lock(self, message_id: int) -> asyncio.Lock:
+        """One decision at a time per application (two reviewers clicking at once)."""
+        return self._locks.setdefault(int(message_id), asyncio.Lock())
 
-        fields = {k: v for k, v in application.items() if k not in ("applicant_id", "character_name")}
-        self.bot.store.add(message.id, application["applicant_id"], application["character_name"], **fields)
+    def _guild(self):
+        get_channel = getattr(self.bot, "get_channel", None)
+        channel = get_channel(config.REVIEW_CHANNEL_ID) if get_channel and config.REVIEW_CHANNEL_ID else None
+        if channel is not None and getattr(channel, "guild", None) is not None:
+            return channel.guild
+        guilds = getattr(self.bot, "guilds", None) or []
+        return guilds[0] if guilds else None
 
+    def _card_channel(self, record: dict):
+        channel_id = record.get("channel_id") or config.REVIEW_CHANNEL_ID
+        return self.bot.get_channel(int(channel_id)) if channel_id else None
+
+    async def _card_message(self, message_id: int, record: dict) -> Optional[discord.Message]:
+        channel = self._card_channel(record)
+        if channel is None:
+            return None
         try:
-            await interaction.user.send(
-                f"✅ Your application for **{application['character_name']}** has been "
-                "posted for review. You'll get a DM once a reviewer makes a decision."
-            )
-        except discord.Forbidden:
-            pass  # DMs closed - the ephemeral confirmation below still covers this
-
-        await interaction.followup.send(
-            "Your application has been posted for review. You'll get a DM once "
-            "a reviewer makes a decision.",
-            ephemeral=True,
-        )
-
-    # --- shared helpers -----------------------------------------------
-
-    async def _try_open_dm(self, user: discord.User):
-        try:
-            return await user.create_dm()
-        except discord.Forbidden:
+            return await channel.fetch_message(int(message_id))
+        except (discord.NotFound, discord.Forbidden):
+            return None
+        except discord.HTTPException:
+            log.warning("Couldn't fetch the review card %s", message_id, exc_info=True)
             return None
 
-    async def _suggest_spec_role(self, char_data, specs):
-        """The spec with the most talent points (Blizzard); with WarcraftLogs
-        parses on and no talents spent, the spec logged most this tier."""
-        suggested_spec = (char_data.get("gear") or {}).get("suggested_spec")
-        if suggested_spec not in specs:
-            suggested_spec = None
-        if not suggested_spec and config.APPLICATION_WARCRAFTLOGS_ENABLED and char_data.get("id"):
-            for tier in (config.CURRENT_TIER, config.PREVIOUS_TIER):
-                if suggested_spec or not tier or not tier.get("zone_id"):
-                    continue
+    async def _rerender(self, message_id: int, message: Optional[discord.Message] = None):
+        """Redraws the card from the stored record and tells the dashboard."""
+        record = self.bot.store.get(message_id)
+        if record is not None:
+            message = message or await self._card_message(message_id, record)
+            if message is not None:
                 try:
-                    tier_data = await self.bot.wcl.get_tier_data(char_data["id"], tier["zone_id"])
-                except Exception:
-                    log.exception("Failed to fetch tier data for the spec suggestion")
-                    continue
-                if tier_data:
-                    suggested_spec = _match_known_spec(specs, tier_data.get("primary_spec"))
+                    await message.edit(view=self._render_application_view(record, message_id=int(message_id)))
+                except discord.HTTPException:
+                    log.warning("Couldn't update the review card %s", message_id, exc_info=True)
+            else:
+                log.warning("The review card of %s's application (%s) is gone; only the record was updated",
+                            record.get("character_name"), message_id)
+        applications.changed(message_id)
 
-        suggested_role = config.SPEC_DEFAULT_ROLE.get(suggested_spec) if suggested_spec else None
-        if suggested_role not in config.CLASS_ROLES.get(char_data["class_name"], config.ROLES):
-            suggested_role = None
-        return suggested_spec, suggested_role
-
-    async def _collect_note_screenshot_and_post(
-        self, interaction, char_data, role, spec, other_specs, dm_channel
-    ):
-        """
-        Collects an optional note+screenshot(s) via DM, then posts the
-        application. If dm_channel is None (DMs closed), posts immediately
-        without collecting them - the applicant can still add one later
-        with /update-application.
-        """
-        if dm_channel is None:
-            await interaction.followup.send(
-                "I couldn't DM you to collect an optional note/screenshot - your "
-                "DMs might be closed to server members. Posting your application "
-                "without them for now; you can add a screenshot later with "
-                "/update-application once you enable DMs.",
-                ephemeral=True,
-            )
-            await self._post_application(interaction, char_data, role, spec, other_specs, None, [])
+    async def _notice(self, record: dict, text: str):
+        """A note for the reviewers next to the card (e.g. a DM that couldn't be sent)."""
+        channel = self._card_channel(record)
+        if channel is None:
             return
+        try:
+            await channel.send(text, allowed_mentions=discord.AllowedMentions.none())
+        except discord.HTTPException:
+            log.warning("Couldn't post a notice in the review channel", exc_info=True)
 
-        skip_view = SkipNoteScreenshotView(interaction.user.id)
-        await dm_channel.send(
-            bot_messages.text("note_prompt_dm"),
-            view=skip_view,
-        )
-
-        await interaction.followup.send(
-            f"\nThank you, **{char_data['name']}**, please check your DMs to continue the process",
-            ephemeral=True,
-        )
-
-        def _is_applicant_dm_reply(m: discord.Message) -> bool:
-            return m.author.id == interaction.user.id and m.channel.id == dm_channel.id
-
-        message_task = asyncio.create_task(
-            self.bot.wait_for("message", check=_is_applicant_dm_reply, timeout=SCREENSHOT_TIMEOUT)
-        )
-        skip_task = asyncio.create_task(skip_view.skipped.wait())
-        done, pending = await asyncio.wait(
-            {message_task, skip_task}, return_when=asyncio.FIRST_COMPLETED
-        )
-        for task in pending:
-            task.cancel()
-
-        note_text = None
-        screenshot_urls = []
-        timed_out = False
-        if message_task in done:
+    async def _applicant(self, guild, user_id: int) -> Optional[discord.Member]:
+        if guild is None:
+            return None
+        member = guild.get_member(int(user_id))
+        if member is None:
             try:
-                msg = message_task.result()
-                note_text = msg.content.strip() or None
-                screenshot_urls = [
-                    a.url for a in msg.attachments if (a.content_type or "").startswith("image/")
-                ]
-            except asyncio.TimeoutError:
-                timed_out = True
-            except asyncio.CancelledError:
-                pass
+                member = await guild.fetch_member(int(user_id))
+            except discord.HTTPException:
+                return None
+        return member
 
-        if timed_out:
+    async def screenshot_urls(self, record: dict) -> List[str]:
+        """The application's screenshots with links that work now: Discord's
+        attachment links expire after about a day, so expired ones are
+        renewed (Discord's refresh-urls endpoint). Links that can't be
+        renewed are returned as they are."""
+        urls = list(record.get("screenshot_urls") or [])
+        now = int(time.time())
+
+        def usable(url):
+            cached = self._screenshot_cache.get(url)
+            if cached and cached[1] > now + 300:
+                return cached[0]
+            expires = screenshot_expiry(url)
+            return url if expires is None or expires > now + 300 else None
+
+        stale = [u for u in urls if usable(u) is None]
+        if stale:
             try:
-                await dm_channel.send(bot_messages.text("note_timeout_dm"))
-            except discord.Forbidden:
-                pass
+                answer = await self.bot.http.request(discord.http.Route("POST", "/attachments/refresh-urls"),
+                                                     json={"attachment_urls": stale})
+                for pair in (answer or {}).get("refreshed_urls") or []:
+                    if pair.get("refreshed"):
+                        self._screenshot_cache[pair.get("original")] = (
+                            pair["refreshed"], screenshot_expiry(pair["refreshed"]) or now + 3600)
+            except discord.HTTPException:
+                log.warning("Couldn't renew screenshot links", exc_info=True)
+        return [usable(u) or u for u in urls]
 
-        await self._post_application(
-            interaction, char_data, role, spec, other_specs, note_text, screenshot_urls
-        )
+    # --- decisions (Discord buttons and the dashboard) ------------------------------------------------
 
-    # --- /apply command and the button+modal entry point ------------------
-    # Both funnel into _run_application_flow after their own initial
-    # response - the slash command defers immediately, the modal defers in
-    # its on_submit. From that point on the flow is identical.
+    def _pending(self, message_id: int) -> dict:
+        record = self.bot.store.get(message_id)
+        if not applications.is_application(record):
+            raise ApplicationError("That application doesn't exist (any more).")
+        if record["status"] != "pending":
+            raise ApplicationError(f"This application was already {record['status']}. Reset it first to change "
+                                   "the decision.")
+        return record
 
-    @app_commands.command(name="apply", description="Apply to the guild with your character name")
-    @app_commands.describe(character="Your character's exact in-game name")
-    async def apply(self, interaction: discord.Interaction, character: str):
+    @staticmethod
+    def _timestamp() -> str:
+        return discord.utils.utcnow().astimezone(AMSTERDAM_TZ).strftime("%Y-%m-%d %H:%M %Z")
+
+    async def _grant_role(self, guild, applicant, role_id, label, newly_assigned, already_had, reason):
+        """Assigns role_id to applicant if not already present, tracking the
+        outcome in the newly_assigned/already_had lists (both hold
+        display labels, e.g. an icon + name string)."""
+        if not role_id:
+            return
+        role = guild.get_role(int(role_id))
+        if role is None:
+            return
+        if role in applicant.roles:
+            already_had.append(label)
+            return
+        try:
+            await applicant.add_roles(role, reason=reason)
+            newly_assigned.append(label)
+        except discord.Forbidden:
+            log.warning("Missing permission to assign role %s to %s", role.name, applicant)
+
+    def _class_or_role_label(self, guild, name: str, *, is_class: bool) -> str:
+        icon = icons.resolve_class_icon(guild, name) if is_class else icons.resolve_role_icon(guild, name)
+        return f"{icon} {name}".strip()
+
+    async def approve(self, message_id: int, reviewer: Reviewer) -> dict:
+        """Approves a pending application: the approval role (unless they
+        already hold an exempt role), class and role roles, nickname, DM,
+        and the character linked to them on the guild roster with their
+        specs. Returns the updated record."""
+        message_id = int(message_id)
+        async with self._lock(message_id):
+            application = self._pending(message_id)
+            guild = self._guild()
+            applicant = await self._applicant(guild, application["applicant_id"])
+            character_name = application["character_name"]
+            class_name = application.get("class_name")
+            role_name = application.get("role")
+            previous_decision = application.get("last_decision")
+            reason = f"Guild application approved by {reviewer.label}"
+
+            newly_assigned, already_had = [], []
+            nickname_line = "Name not changed - the applicant isn't in the server"
+            if applicant is not None:
+                applicant_role_ids = {r.id for r in applicant.roles}
+                held_exempt_roles = [name for rid, name in config.FRESH_EXEMPT_ROLE_IDS.items()
+                                     if int(rid) in applicant_role_ids]
+                is_exempt = bool(held_exempt_roles)
+                held_exempt_display = "/".join(_fresh_label(name) for name in held_exempt_roles)
+
+                if is_exempt:
+                    already_had.append(held_exempt_display)
+                else:
+                    await self._grant_role(guild, applicant, config.FRESH_ROLE_ID, _fresh_label("Fresh"),
+                                           newly_assigned, already_had, reason)
+
+                # Class/role tags are independent of the exemption: a Regular still gets tagged.
+                if role_name and role_name in config.AUTO_ROLE_IDS:
+                    await self._grant_role(guild, applicant, config.AUTO_ROLE_IDS[role_name],
+                                           self._class_or_role_label(guild, role_name, is_class=False),
+                                           newly_assigned, already_had, reason)
+                if class_name and class_name in config.AUTO_ROLE_IDS:
+                    await self._grant_role(guild, applicant, config.AUTO_ROLE_IDS[class_name],
+                                           self._class_or_role_label(guild, class_name, is_class=True),
+                                           newly_assigned, already_had, reason)
+
+                original_name = applicant.display_name
+                if is_exempt:
+                    nickname_line = f"Name not changed - already {held_exempt_display} ({original_name})"
+                else:
+                    try:
+                        await applicant.edit(nick=character_name[:32], reason=reason)
+                        nickname_line = f"Name changed: {original_name} → {character_name}"
+                    except discord.Forbidden:
+                        log.warning("Missing permission to set nickname for %s", applicant)
+                        nickname_line = f"⚠️ Name NOT changed (missing permission) - still {original_name}"
+
+                # Tell them on a first approval, or when correcting a denial. Re-approving
+                # after an approval (reset twice) has nothing new to say.
+                if previous_decision in (None, "denied"):
+                    try:
+                        await applicant.send(bot_messages.text("approval_dm", character=character_name))
+                    except discord.HTTPException:
+                        await self._notice(application, f"(Couldn't DM {applicant.mention} - their DMs may be "
+                                                        "closed. Please let them know they've been accepted.)")
+
+            roster_line = await self._link_on_roster(application)
+            assigned_display = ", ".join(newly_assigned) if newly_assigned else "None"
+            already_display = f"\nAlready had: {', '.join(already_had)}" if already_had else ""
+            self.bot.store.update(
+                message_id,
+                status="approved",
+                last_decision="approved",
+                decision={"status": "approved", "by_id": reviewer.id, "by_name": reviewer.name, "via": reviewer.via,
+                          "at": int(time.time()), "roles_assigned": newly_assigned, "roles_kept": already_had,
+                          "nickname": nickname_line, "roster": roster_line, "reason": None},
+                decision_footer=(
+                    f"✅ Approved by {reviewer.label} • {self._timestamp()}\n"
+                    f"Role(s) assigned: {assigned_display}{already_display}\n"
+                    f"{nickname_line}" + (f"\n{roster_line}" if roster_line else "")
+                ),
+            )
+        await self._rerender(message_id)
+        return self.bot.store.get(message_id)
+
+    async def _link_on_roster(self, application: dict) -> Optional[str]:
+        """Links the approved character to the applicant on the guild roster
+        (when the roster is on), with their main and offspec. When Blizzard
+        doesn't know the character yet (below level 10), the link waits and
+        is made as soon as it shows up (roster.remember_link), e.g. once it
+        joins the guild. A line for the decision footer, or None."""
+        character_slug = application.get("character_slug")
+        if self.bot.get_cog("RosterCog") is None or not character_slug:
+            return None
+        spec_id, off_spec_id = application.get("spec_id"), application.get("off_spec_id")
+        try:
+            found = await roster.find_or_add(self.bot, character_slug)
+        except roster.RosterError:
+            if await asyncio.to_thread(roster.get, character_slug) is None:
+                await asyncio.to_thread(roster.remember_link, character_slug, application["applicant_id"],
+                                        by="application approval", main_spec_id=spec_id, off_spec_id=off_spec_id)
+                return ("Guild roster: will be linked as soon as Blizzard shows the character (from level 10, or "
+                        "once it's in the guild)")
+            raise
+        except Exception:
+            log.exception("Linking %s on the guild roster failed", character_slug)
+            return "Guild roster: not linked (see the System log)"
+        try:
+            await asyncio.to_thread(roster.link, found["slug"], application["applicant_id"],
+                                    by="application approval", as_moderator=False)
+        except roster.RosterError as exc:
+            return f"Guild roster: not linked ({exc})"
+        if spec_id:
+            try:
+                _, class_specs = await self._reference()
+                spec_ids = {c_id: [s["id"] for s in specs] for c_id, specs in class_specs["by_id"].items()}
+                await asyncio.to_thread(roster.set_specs, found["slug"], spec_id, off_spec_id,
+                                        discord_id=application["applicant_id"], as_moderator=True,
+                                        class_specs=spec_ids)
+            except roster.RosterError as exc:
+                log.info("Specs of %s not set on the roster: %s", found["slug"], exc)
+            except Exception:
+                log.exception("Setting the specs of %s on the guild roster failed", found["slug"])
+        in_guild = " (shown on the posted roster once it's in the guild)" if not found.get("guild_slug") else ""
+        return f"Guild roster: character linked to the applicant{in_guild}"
+
+    async def deny(self, message_id: int, reviewer: Reviewer, reason: Optional[str] = None) -> dict:
+        """Denies a pending application: removes the approval role (a
+        correction of an approval) and DMs on a first denial only. The reason
+        is for reviewers and is never sent to the applicant."""
+        message_id = int(message_id)
+        reason = (reason or "").strip()[:500] or None
+        async with self._lock(message_id):
+            application = self._pending(message_id)
+            guild = self._guild()
+            applicant = await self._applicant(guild, application["applicant_id"])
+            if applicant is not None:
+                role = guild.get_role(int(config.FRESH_ROLE_ID)) if config.FRESH_ROLE_ID else None
+                if role is not None and role in applicant.roles:
+                    try:
+                        await applicant.remove_roles(role, reason=f"Guild application denied by {reviewer.label}")
+                    except discord.Forbidden:
+                        log.warning("Missing permission to remove role from %s", applicant)
+                # A correction of an earlier approval just takes the role away, without a DM.
+                if application.get("last_decision") is None:
+                    try:
+                        await applicant.send(bot_messages.text("denial_dm", character=application["character_name"]))
+                    except discord.HTTPException:
+                        await self._notice(application, f"(Couldn't DM {applicant.mention} - their DMs may be "
+                                                        "closed. Please let them know about the decision.)")
+
+            if application.get("character_slug") and application.get("last_decision") == "approved":
+                await asyncio.to_thread(roster.forget_link, application["character_slug"])  # a link still waiting
+            footer = f"❌ Denied by {reviewer.label} • {self._timestamp()}\nRoles assigned: None"
+            if reason:
+                footer += f"\nReason: {reason}"
+            self.bot.store.update(
+                message_id, status="denied", last_decision="denied", decision_footer=footer,
+                decision={"status": "denied", "by_id": reviewer.id, "by_name": reviewer.name, "via": reviewer.via,
+                          "at": int(time.time()), "roles_assigned": [], "roles_kept": [], "nickname": None,
+                          "roster": None, "reason": reason},
+            )
+        await self._rerender(message_id)
+        return self.bot.store.get(message_id)
+
+    async def reset(self, message_id: int, reviewer: Reviewer) -> dict:
+        """Puts a decided application back to pending. Roles stay as they
+        are until the next decision."""
+        message_id = int(message_id)
+        async with self._lock(message_id):
+            application = self.bot.store.get(message_id)
+            if not applications.is_application(application):
+                raise ApplicationError("That application doesn't exist (any more).")
+            if application["status"] == "pending":
+                raise ApplicationError("This application is already pending - nothing to reset.")
+            self.bot.store.update(
+                message_id, status="pending", last_decision=application["status"], decision=None,
+                decision_footer=f"🔄 Reset by {reviewer.label} • {self._timestamp()} - decide again with the buttons "
+                                "or on the dashboard",
+            )
+        await self._rerender(message_id)
+        return self.bot.store.get(message_id)
+
+    async def refresh_gear(self, message_id: int) -> dict:
+        """Reads the character's gear from Blizzard again (it changes when the
+        player logs out)."""
+        message_id = int(message_id)
+        application = self.bot.store.get(message_id)
+        if not applications.is_application(application) or not application.get("character_slug"):
+            raise ApplicationError("This application has no character to read from Blizzard.")
+        if getattr(self.bot, "blizzard", None) is None:
+            raise ApplicationError("Blizzard API keys aren't set up (Settings, General, Integrations).")
+        class_names, _ = await self._reference()
+        try:
+            summary = await gear.fetch(self.bot, application["character_slug"], class_names)
+        except (gear.GearError, wow_api.WowApiError) as exc:
+            raise ApplicationError(f"Couldn't refresh the character: {exc}") from None
+        self.bot.store.update(message_id, **await self._gear_fields(summary))
+        await self._rerender(message_id)
+        return self.bot.store.get(message_id)
+
+    # --- Discord buttons ------------------------------------------------------------------------------
+
+    @staticmethod
+    def is_approver(member) -> bool:
+        """Members with the approver role (Settings, Applications)."""
+        return (isinstance(member, discord.Member) and bool(config.APPROVER_ROLE_ID)
+                and any(role.id == int(config.APPROVER_ROLE_ID) for role in member.roles))
+
+    @classmethod
+    def can_decide(cls, member) -> bool:
+        """Who may approve, deny, reset and refresh: moderators (permissions.py)
+        and members with the approver role, so a reviewer doesn't need to be a
+        moderator. Anyone else can read the review channel without acting on it."""
+        return is_moderator(member) or cls.is_approver(member)
+
+    async def _button_guard(self, interaction: discord.Interaction) -> Optional[dict]:
+        application = self.bot.store.get(interaction.message.id)
+        if not applications.is_application(application):
+            await interaction.response.send_message("Couldn't find this application's record.", ephemeral=True)
+            return None
+        if not self.can_decide(interaction.user):
+            await interaction.response.send_message(
+                "Only moderators and approvers can act on applications.", ephemeral=True)
+            return None
+        return application
+
+    async def _on_approve_click(self, interaction: discord.Interaction):
+        if await self._button_guard(interaction) is None:
+            return
+        await interaction.response.defer()  # silent: the card itself shows the result
+        try:
+            await self.approve(interaction.message.id, applications.discord_reviewer(interaction.user))
+        except ApplicationError as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
+
+    async def _on_deny_click(self, interaction: discord.Interaction):
+        application = await self._button_guard(interaction)
+        if application is None:
+            return
+        if application["status"] != "pending":
+            await interaction.response.send_message(
+                "This application has already been decided - use Reset first if you need to change it.",
+                ephemeral=True)
+            return
+        # A modal must be the first response, so the modal's on_submit does the rest.
+        await interaction.response.send_modal(DenyReasonModal(self, interaction.message.id))
+
+    async def _on_reset_click(self, interaction: discord.Interaction):
+        if await self._button_guard(interaction) is None:
+            return
         await interaction.response.defer(ephemeral=True, thinking=True)
-        await self._run_application_flow(interaction, character.strip())
+        try:
+            await self.reset(interaction.message.id, applications.discord_reviewer(interaction.user))
+        except ApplicationError as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
+            return
+        await interaction.followup.send("Application reset - Approve and Deny work again.", ephemeral=True)
 
-    async def _class_names(self) -> dict:
-        """{class id: name} and {class name: [spec names]} for the game version, from Blizzard."""
+    async def _on_refresh_gear_click(self, interaction: discord.Interaction):
+        if await self._button_guard(interaction) is None:
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            await self.refresh_gear(interaction.message.id)
+        except ApplicationError as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
+            return
+        await interaction.followup.send("Refreshed from Blizzard (as of the character's last logout).",
+                                        ephemeral=True)
+
+    # --- applying -------------------------------------------------------------------------------------
+
+    async def _reference(self) -> Tuple[Dict[int, str], dict]:
+        """({class id: name}, {"by_name": {class: [spec]}, "by_id": {class id: [spec]}}) for the
+        game version, from Blizzard. Each spec: {id, name, role}. Empty when
+        Blizzard can't be reached."""
         try:
             ref = await wow_api.reference(self.bot)
         except wow_api.WowApiError:
             ref = {"classes": []}
-        return ({c["id"]: c["name"] for c in ref.get("classes", [])},
-                {c["name"]: [sp["name"] for sp in c["specs"]] for c in ref.get("classes", [])})
+        classes = ref.get("classes", [])
+        return ({c["id"]: c["name"] for c in classes},
+                {"by_name": {c["name"]: c["specs"] for c in classes}, "by_id": {c["id"]: c["specs"] for c in classes}})
 
     def _profile_url(self, character_slug: str):
         template = (config.GEARCHECK_PROFILE_URL or "").strip()
@@ -923,11 +1011,25 @@ class ApplyCog(commands.Cog):
             return None
         return template.replace("{region}", wow_api.region()).replace("{slug}", character_slug)
 
+    @app_commands.command(name="apply", description="Apply to the guild with your character")
+    @app_commands.describe(character="Your character's name and surname, e.g. Eggmike Thewhite")
+    async def apply(self, interaction: discord.Interaction, character: str):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        await self._run_application_flow(interaction, character.strip())
+
     async def _run_application_flow(self, interaction: discord.Interaction, character: str):
+        """The slash command and the Start button both end up here, after
+        deferring their interaction."""
+        if not config.REVIEW_CHANNEL_ID or self.bot.get_channel(config.REVIEW_CHANNEL_ID) is None:
+            log.error("Can't take applications: the review channel isn't set (Settings, Applications)")
+            await interaction.followup.send(
+                "Sorry, applications can't be submitted right now (the review channel isn't set up). Please let a "
+                "moderator know.", ephemeral=True)
+            return
         if getattr(self.bot, "blizzard", None) is None:
             await self._handle_not_found(interaction, character)
             return
-        class_names, _ = await self._class_names()
+        class_names, _ = await self._reference()
         try:
             summary = await gear.fetch(self.bot, wow_api.slug(character), class_names)
         except gear.GearError:
@@ -950,7 +1052,7 @@ class ApplyCog(commands.Cog):
             "gear": summary,
         }
         await self._add_warcraftlogs_id(char_data)
-        await self._continue_with_found_character(interaction, char_data)
+        await self._choose_specs(interaction, char_data)
 
     async def _add_warcraftlogs_id(self, char_data: dict):
         """With WarcraftLogs parses on: the character's WarcraftLogs id and
@@ -958,7 +1060,7 @@ class ApplyCog(commands.Cog):
         if not config.APPLICATION_WARCRAFTLOGS_ENABLED or getattr(self.bot, "wcl", None) is None:
             return
         try:
-            found = await self.bot.wcl.get_character(char_data["name"], self.server_slug, self.server_region)
+            found = await self.bot.wcl.get_character(char_data["name"], config.SERVER_SLUG, config.SERVER_REGION)
         except Exception:
             log.warning("WarcraftLogs lookup failed for %s", char_data["name"], exc_info=True)
             return
@@ -972,142 +1074,234 @@ class ApplyCog(commands.Cog):
         await interaction.followup.send(
             f"I couldn't find **{character}** on Blizzard. Check the spelling: your character's name and "
             f"surname, e.g. Eggmike Thewhite. Characters can be found from level {roster.PROFILE_MIN_LEVEL}, "
-            "after logging out once. If the name is right, you can continue anyway and a moderator will review "
-            "your application by hand.",
+            "after logging out once. If the name is right, you can continue anyway and a reviewer will check "
+            "your character by hand.",
             view=view,
             ephemeral=True,
         )
-
         try:
             await asyncio.wait_for(view.resolved.wait(), timeout=NOT_FOUND_TIMEOUT + 10)
         except asyncio.TimeoutError:
-            return  # view times out silently - they can just run /apply again
-
+            return  # the buttons time out quietly; they can start again
         if view.action == "retry":
-            # The button already opened a fresh CharacterNameModal - that
-            # submission (if any) kicks off its own independent flow. Nothing
-            # more to do on this one.
-            return
+            return  # the button opened a new name form, which starts its own flow
 
-        # action == "continue": no Blizzard data means no known class to build
-        # a spec dropdown from - ask for it manually, then everything else
-        # (role/spec/note/screenshot) is identical to the found-character
-        # flow, just with no pre-filled suggestions.
-        class_view = ClassSelectView(interaction.user.id, interaction.guild)
-        await interaction.followup.send(
-            "Since Blizzard has no data for this character, please select their class:",
-            view=class_view,
-            ephemeral=True,
-        )
-
+        class_names, _ = await self._reference()
+        class_view = ClassSelectView(interaction.user.id, interaction.guild,
+                                     sorted(class_names.values()) or list(config.CLASS_SPECS.keys()))
+        await interaction.followup.send("Since Blizzard has no data for this character, please pick its class:",
+                                        view=class_view, ephemeral=True)
         try:
             await asyncio.wait_for(class_view.done.wait(), timeout=DIALOG_TIMEOUT + 10)
         except asyncio.TimeoutError:
-            await interaction.followup.send(
-                "Timed out waiting for class selection - please run /apply again.",
-                ephemeral=True,
-            )
+            await interaction.followup.send("Timed out waiting for the class - please start again.", ephemeral=True)
             return
+        await self._choose_specs(interaction, {
+            "id": None, "name": character, "slug": wow_api.slug(character), "class_name": class_view.class_name,
+            "level": None, "guild_name": None, "profile_url": None, "gear": None,
+        })
 
-        char_data = {
-            "id": None,
-            "name": character,
-            "slug": wow_api.slug(character),
-            "class_name": class_view.class_name,
-            "level": None,
-            "guild_name": None,
-            "profile_url": None,
-            "gear": None,
-        }
-        await self._continue_with_found_character(interaction, char_data)
+    async def _suggest_spec(self, char_data, specs: List[str]) -> Optional[str]:
+        """The spec with the most talent points (Blizzard); with WarcraftLogs
+        parses on and no talents spent, the spec logged most this tier."""
+        suggested = (char_data.get("gear") or {}).get("suggested_spec")
+        if suggested in specs:
+            return suggested
+        if config.APPLICATION_WARCRAFTLOGS_ENABLED and char_data.get("id"):
+            for tier in (config.CURRENT_TIER, config.PREVIOUS_TIER):
+                if not tier or not tier.get("zone_id"):
+                    continue
+                try:
+                    tier_data = await self.bot.wcl.get_tier_data(char_data["id"], tier["zone_id"])
+                except Exception:
+                    log.exception("Failed to fetch tier data for the spec suggestion")
+                    continue
+                found = _match_known_spec(specs, (tier_data or {}).get("primary_spec"))
+                if found:
+                    return found
+        return None
 
-    async def _continue_with_found_character(self, interaction: discord.Interaction, char_data: dict):
-        _, class_specs = await self._class_names()
-        specs = class_specs.get(char_data["class_name"]) or config.CLASS_SPECS.get(char_data["class_name"], [])
-        suggested_spec, suggested_role = await self._suggest_spec_role(char_data, specs)
+    async def _choose_specs(self, interaction: discord.Interaction, char_data: dict):
+        """Main spec, role and offspec, by DM (or here when DMs are closed)."""
+        _, class_specs = await self._reference()
+        spec_objects = class_specs["by_name"].get(char_data["class_name"]) or [
+            {"id": None, "name": s, "role": None} for s in config.CLASS_SPECS.get(char_data["class_name"], [])]
+        specs = [s["name"] for s in spec_objects]
+        spec_roles = {s["name"]: s.get("role") for s in spec_objects}
+        suggested_spec = await self._suggest_spec(char_data, specs)
+        view = SpecChoiceView(interaction.user.id, interaction.guild, char_data["class_name"], specs, spec_roles,
+                              suggested_spec=suggested_spec,
+                              suggested_role=default_role(char_data["class_name"], suggested_spec, spec_roles))
 
-        view = RoleSpecView(
-            interaction.user.id,
-            interaction.guild,
-            char_data["class_name"],
-            specs,
-            suggested_role=suggested_role,
-            suggested_spec=suggested_spec,
-        )
-        suggestion_note = (
-            " I've pre-selected the spec your talent points are in - please confirm or change it."
-            if suggested_spec
-            else ""
-        )
+        summary = char_data.get("gear") or {}
+        found = f"**{char_data['name']}**"
+        if summary:
+            found += f", level {summary.get('level') or '?'} {char_data['class_name']}"
+            if summary.get("guild"):
+                found += f" of <{summary['guild']}>"
         prompt_text = (
-            f"Found **{char_data['name']}**! Pick your main role and spec "
-            f"(and any other specs you can play):{suggestion_note}"
+            f"Found {found}! "
+            + (f"Your talent points say **{suggested_spec}**, so that's selected as your main spec. "
+               if suggested_spec else "")
+            + "Confirm or change your **main spec** and **role**, pick an **offspec** if you play one, "
+              "then press **Continue**."
         )
 
-        # Try to do the whole rest of the flow (role/spec, note, screenshot)
-        # in one continuous DM conversation. If DMs are closed, fall back to
-        # role/spec here in-channel (ephemeral - still private) and skip
-        # note/screenshot, same as if DM failed later in the old flow.
+        # The rest of the flow (specs, note, screenshot) happens in one DM
+        # conversation. With DMs closed, the specs are asked here (only the
+        # applicant sees it) and the note/screenshot step is skipped.
         dm_channel = await self._try_open_dm(interaction.user)
-
         if dm_channel is not None:
-            await dm_channel.send(prompt_text, view=view)
-            await interaction.followup.send(
-                f"\nThanks! I found **{char_data['name']}** - please check your DMs to continue.",
-                ephemeral=True,
-            )
+            try:
+                await dm_channel.send(prompt_text, view=view)
+            except discord.Forbidden:
+                dm_channel = None
+        if dm_channel is not None:
+            await interaction.followup.send(f"Thanks! I found **{char_data['name']}** - please check your DMs to "
+                                            "continue.", ephemeral=True)
         else:
             await interaction.followup.send(prompt_text, view=view, ephemeral=True)
 
         try:
             await asyncio.wait_for(view.done.wait(), timeout=DIALOG_TIMEOUT + 10)
         except asyncio.TimeoutError:
-            await interaction.followup.send(
-                "Application timed out waiting for role/spec selection - please click the button again.",
-                ephemeral=True,
-            )
+            await interaction.followup.send("The application timed out waiting for your spec - please start again.",
+                                            ephemeral=True)
             return
+        ids = {s["name"]: s.get("id") for s in spec_objects}
+        choice = {"role": view.role, "spec": view.main_spec, "spec_id": ids.get(view.main_spec),
+                  "offspec": view.offspec, "off_spec_id": ids.get(view.offspec) if view.offspec else None}
+        await self._collect_note_screenshot_and_post(interaction, char_data, choice, dm_channel)
 
-        await self._collect_note_screenshot_and_post(
-            interaction, char_data, view.role, view.main_spec, view.other_specs, dm_channel
-        )
+    async def _try_open_dm(self, user: discord.User):
+        try:
+            return await user.create_dm()
+        except discord.HTTPException:
+            return None
 
-    # --- /update-application command --------------------------------------
-    # Separate from the review-channel Reset button on purpose: the
-    # applicant typically can't see the (mod-only) review channel, so a
-    # button there would be unusable for them. This command works from
-    # anywhere the bot can see the person - including DMs.
+    async def _collect_note_screenshot_and_post(self, interaction, char_data, choice: dict, dm_channel):
+        """Collects an optional note and screenshot(s) by DM, then posts the
+        application. Without a DM channel it posts right away; the applicant
+        can add them later with /update-application."""
+        note_text, screenshot_urls = None, []
+        if dm_channel is None:
+            await interaction.followup.send(
+                "I couldn't DM you to collect an optional note/screenshot - your DMs might be closed to server "
+                "members. Posting your application without them for now; you can add them later with "
+                "/update-application once you allow DMs.", ephemeral=True)
+        else:
+            skip_view = SkipNoteScreenshotView(interaction.user.id)
+            await dm_channel.send(bot_messages.text("note_prompt_dm"), view=skip_view)
+
+            def _is_applicant_dm_reply(m: discord.Message) -> bool:
+                return m.author.id == interaction.user.id and m.channel.id == dm_channel.id
+
+            message_task = asyncio.create_task(
+                self.bot.wait_for("message", check=_is_applicant_dm_reply, timeout=SCREENSHOT_TIMEOUT))
+            skip_task = asyncio.create_task(skip_view.skipped.wait())
+            done, pending = await asyncio.wait({message_task, skip_task}, return_when=asyncio.FIRST_COMPLETED)
+            for task in pending:
+                task.cancel()
+            if message_task in done:
+                try:
+                    msg = message_task.result()
+                    note_text = msg.content.strip() or None
+                    screenshot_urls = [a.url for a in msg.attachments
+                                       if (a.content_type or "").startswith("image/")][: config.MAX_SCREENSHOTS]
+                except asyncio.TimeoutError:
+                    try:
+                        await dm_channel.send(bot_messages.text("note_timeout_dm"))
+                    except discord.HTTPException:
+                        pass
+                except asyncio.CancelledError:
+                    pass
+        await self._post_application(interaction, char_data, choice, note_text, screenshot_urls)
+
+    async def _post_application(self, interaction, char_data, choice: dict, note, screenshot_urls):
+        offspec = choice.get("offspec")
+        tier_block = boss_block = hidden_block = None
+        if config.APPLICATION_WARCRAFTLOGS_ENABLED and char_data.get("id"):
+            tier_block, boss_block, hidden_block = await self._compute_tier_and_boss_blocks(char_data)
+
+        application = {
+            "applicant_id": interaction.user.id,
+            "character_name": char_data["name"],
+            "character_slug": char_data.get("slug"),
+            "status": "pending",
+            "class_name": char_data["class_name"],
+            "role": choice["role"],
+            "spec": choice["spec"],
+            "spec_id": choice.get("spec_id"),
+            "other_specs": [offspec] if offspec else [],
+            "off_spec_id": choice.get("off_spec_id"),
+            "note": note,
+            "class_color": config.CLASS_COLORS.get(char_data["class_name"], 0x2B2D31),
+            "last_decision": None,
+            "decision": None,
+            "class_block": self._build_class_block(interaction.guild, char_data["class_name"], choice["spec"],
+                                                   choice["role"], char_data.get("level"),
+                                                   char_data.get("guild_name"), offspec),
+            "tier_block": tier_block,
+            "boss_block": boss_block,
+            "hidden_block": hidden_block,
+            "profile_url": char_data.get("profile_url"),
+            "wcl_url": char_data.get("wcl_url"),
+            "screenshot_urls": screenshot_urls or [],
+            "channel_id": config.REVIEW_CHANNEL_ID,
+            "submitted_at": int(time.time()),
+            **await self._gear_fields(char_data.get("gear")),
+        }
+
+        review_channel = self.bot.get_channel(config.REVIEW_CHANNEL_ID)
+        if review_channel is None:
+            log.error("Can't post %s's application: the review channel isn't set to a channel the bot can see",
+                      application["character_name"])
+            await interaction.followup.send(
+                "Sorry, applications can't be submitted right now (the review channel isn't set up). "
+                "Please let a moderator know.", ephemeral=True)
+            return
+        message = await review_channel.send(view=self._render_application_view(application))
+        fields = {k: v for k, v in application.items() if k not in ("applicant_id", "character_name")}
+        self.bot.store.add(message.id, application["applicant_id"], application["character_name"], **fields)
+        applications.changed(message.id)
+
+        try:
+            await interaction.user.send(
+                f"✅ Your application for **{application['character_name']}** has been posted for review. "
+                "You'll get a DM once a reviewer makes a decision.")
+        except discord.HTTPException:
+            pass  # DMs closed - the confirmation below still covers this
+        await interaction.followup.send(
+            "Your application has been posted for review. You'll get a DM once a reviewer makes a decision.",
+            ephemeral=True)
+
+    # --- /update-application ---------------------------------------------------------------------------
+    # The applicant usually can't see the review channel, so this works from
+    # anywhere the bot can see them, DMs included.
 
     @app_commands.command(
         name="update-application",
-        description="Add or update the note/screenshot(s) on your latest pending application",
+        description="Add or change the note/screenshot(s) on your pending application",
     )
     async def update_application(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True, thinking=True)
 
-        result = self.bot.store.find_latest_by_applicant(interaction.user.id)
-        if result is None:
-            await interaction.followup.send(
-                "You don't have an application on file yet - use /apply first.",
-                ephemeral=True,
-            )
+        mine = [(mid, rec) for mid, rec in applications.records(self.bot.store)
+                if rec.get("applicant_id") == interaction.user.id]
+        if not mine:
+            await interaction.followup.send("You don't have an application yet - use the Start application button "
+                                            "or /apply first.", ephemeral=True)
             return
-        message_id, application = result
-
+        message_id, application = mine[0]  # newest
         if application["status"] != "pending":
             await interaction.followup.send(
-                f"Your application has already been **{application['status']}** and can no "
-                "longer be updated this way. If you'd like to be reconsidered, please reach "
-                "out to an officer.",
-                ephemeral=True,
-            )
+                f"Your application has already been **{application['status']}** and can't be updated this way. "
+                "If you'd like to be reconsidered, please reach out to an officer.", ephemeral=True)
             return
 
         await interaction.followup.send(
-            f"Reply here with an updated note and/or gear screenshot(s) (up to "
-            f"{config.MAX_SCREENSHOTS} images) within 3 minutes.",
-            ephemeral=True,
-        )
+            f"Reply here with an updated note and/or screenshot(s) (up to {config.MAX_SCREENSHOTS} images) within "
+            "3 minutes.", ephemeral=True)
 
         def check(m: discord.Message) -> bool:
             return m.author.id == interaction.user.id and m.channel.id == interaction.channel_id
@@ -1115,530 +1309,188 @@ class ApplyCog(commands.Cog):
         try:
             msg = await self.bot.wait_for("message", check=check, timeout=SCREENSHOT_TIMEOUT)
         except asyncio.TimeoutError:
-            await interaction.followup.send(
-                "Timed out waiting for a reply - run /update-application again to retry.",
-                ephemeral=True,
-            )
+            await interaction.followup.send("Timed out waiting for a reply - run /update-application again to retry.",
+                                            ephemeral=True)
             return
 
         note_text = msg.content.strip() or None
-        screenshot_urls = [
-            a.url for a in msg.attachments if (a.content_type or "").startswith("image/")
-        ]
+        screenshot_urls = [a.url for a in msg.attachments
+                           if (a.content_type or "").startswith("image/")][: config.MAX_SCREENSHOTS]
         if not note_text and not screenshot_urls:
-            await interaction.followup.send(
-                "I didn't see a note or an image in that message - nothing updated.",
-                ephemeral=True,
-            )
+            await interaction.followup.send("I didn't see a note or an image in that message - nothing updated.",
+                                            ephemeral=True)
             return
 
-        # Re-check status - a moderator could have decided while we were
-        # waiting for the reply above. Never touch a decided application.
+        # A reviewer may have decided while we waited; never touch a decided application.
         application = self.bot.store.get(message_id)
         if application is None or application["status"] != "pending":
-            await interaction.followup.send(
-                "Your application was decided while waiting for your reply, so this "
-                "update wasn't applied.",
-                ephemeral=True,
-            )
+            await interaction.followup.send("Your application was decided while waiting for your reply, so this "
+                                            "update wasn't applied.", ephemeral=True)
             return
 
-        review_channel = self.bot.get_channel(self.review_channel_id)
-        try:
-            if review_channel is None:
-                review_message = None
-            else:
-                review_message = await review_channel.fetch_message(message_id)
-        except (discord.NotFound, discord.Forbidden):
-            review_message = None
-        if review_message is None:
-            await interaction.followup.send(
-                "Couldn't find your application's message to update - please "
-                "let a moderator know.",
-                ephemeral=True,
-            )
-            return
-
+        changes = {}
         if note_text:
-            self.bot.store.update(message_id, note=note_text)
+            changes["note"] = note_text
         if screenshot_urls:
-            self.bot.store.update(message_id, screenshot_urls=screenshot_urls)
+            changes["screenshot_urls"] = screenshot_urls
+        self.bot.store.update(message_id, **changes)
+        await self._rerender(message_id)
 
-        updated = self.bot.store.get(message_id)
-        await self._refresh_review_message(review_message, updated)
-
-        updated_parts = []
-        if note_text:
-            updated_parts.append("note")
-        if screenshot_urls:
-            updated_parts.append(f"{len(screenshot_urls)} screenshot(s)")
+        updated_parts = (["note"] if note_text else []) + (
+            [f"{len(screenshot_urls)} screenshot(s)"] if screenshot_urls else [])
         await interaction.followup.send(f"Updated: {', '.join(updated_parts)}.", ephemeral=True)
 
-    # --- pinned explainers (texts editable on the dashboard) ----------------
+    # --- pinned explainers (texts editable on the dashboard) --------------------------------------------
 
     @commands.Cog.listener()
     async def on_ready(self):
-        log.info("Apply cog startup: checking gear-check and review-channel explainers...")
-        for key, updater in (("gear_check_explainer", self._sync_gear_check_explainer),
+        log.info("Applications: checking the apply and review channel explainers...")
+        for key, updater in (("gear_check_explainer", self._sync_apply_explainer),
                              ("review_explainer", self._sync_review_explainer)):
             try:
-                log.info("Apply cog startup: %s - %s", key, await updater())
+                log.info("Applications: %s - %s", key, await updater())
             except bot_messages.BotMessageError as exc:
-                log.warning("Apply cog startup: %s not posted: %s", key, exc)
-        log.info("Apply cog startup: complete")
+                log.warning("Applications: %s not posted: %s", key, exc)
 
     async def _sync_review_explainer(self) -> str:
-        channel = self.bot.get_channel(self.review_channel_id) if self.review_channel_id else None
+        channel = self.bot.get_channel(config.REVIEW_CHANNEL_ID) if config.REVIEW_CHANNEL_ID else None
         return await bot_messages.sync_pinned(channel, "review_explainer")
 
-    async def _sync_gear_check_explainer(self) -> str:
-        """The gear-check explainer carries the Start button (self.start_view)."""
+    async def _sync_apply_explainer(self) -> str:
+        """The apply channel's explainer carries the Start button (self.start_view)."""
         channel_id = config.GEAR_CHECK_CHANNEL_ID or None
         channel = self.bot.get_channel(int(channel_id)) if channel_id else None
         return await bot_messages.sync_pinned(channel, "gear_check_explainer", view=self.start_view)
 
-    # --- moderator approve/deny/reset --------------------------------------
+    # --- archive -------------------------------------------------------------------------------------
 
-
-    async def _is_approver(self, guild, user_id) -> bool:
-        """Gate for the Approve/Deny/Reset buttons specifically - see
-        config.APPROVER_ROLE_ID's comment for why this is separate from
-        the broader moderator check (permissions.py) every other action in this cog uses."""
-        member = guild.get_member(user_id) or await guild.fetch_member(user_id)
-        if member is None:
-            return False
-        return any(role.id == config.APPROVER_ROLE_ID for role in member.roles)
-
-    async def _on_refresh_gear_click(self, interaction: discord.Interaction):
-        application = self.bot.store.get(interaction.message.id)
-        if application is None or not application.get("character_slug"):
-            await interaction.response.send_message("Couldn't find this application's character.", ephemeral=True)
-            return
-        if not (is_moderator(interaction.user) or await self._is_approver(interaction.guild, interaction.user.id)):
-            await interaction.response.send_message("Only moderators and approvers can refresh the gear.",
-                                                    ephemeral=True)
-            return
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        class_names, _ = await self._class_names()
-        try:
-            summary = await gear.fetch(self.bot, application["character_slug"], class_names)
-        except (gear.GearError, wow_api.WowApiError) as exc:
-            await interaction.followup.send(f"Couldn't refresh the gear: {exc}", ephemeral=True)
-            return
-        self.bot.store.update(interaction.message.id, **await self._gear_fields(summary))
-        await self._refresh_review_message(interaction.message, self.bot.store.get(interaction.message.id))
-        await interaction.followup.send(
-            "Gear refreshed from Blizzard (as of the character's last logout).", ephemeral=True)
-
-    async def _on_reset_click(self, interaction: discord.Interaction):
-        application = self.bot.store.get(interaction.message.id)
-        if application is None:
-            await interaction.response.send_message(
-                "Couldn't find this application's record.", ephemeral=True
-            )
-            return
-        if not await self._is_approver(interaction.guild, interaction.user.id):
-            await interaction.response.send_message(
-                "Only approvers can reset an application.", ephemeral=True
-            )
-            return
-        if application["status"] == "pending":
-            await interaction.response.send_message(
-                "This application is already pending - nothing to reset.", ephemeral=True
-            )
-            return
-
-        self.bot.store.update(
-            interaction.message.id,
-            status="pending",
-            last_decision=application["status"],
-            decision_footer=f"Reset by {interaction.user} - use the buttons to re-decide",
-        )
-
-        updated = self.bot.store.get(interaction.message.id)
-        await self._refresh_review_message(interaction.message, updated)
-
-        await interaction.response.send_message(
-            "Application reset - the Approve/Deny buttons are active again.", ephemeral=True
-        )
-
-    async def _grant_role(self, guild, applicant, role_id, label, newly_assigned, already_had, reason):
-        """Assigns role_id to applicant if not already present, tracking the
-        outcome in the newly_assigned/already_had lists (both hold
-        display labels, e.g. an icon + name string)."""
-        if role_id is None:
-            return
-        role = guild.get_role(role_id)
-        if role is None:
-            return
-        if role in applicant.roles:
-            already_had.append(label)
-            return
-        try:
-            await applicant.add_roles(role, reason=reason)
-            newly_assigned.append(label)
-        except discord.Forbidden:
-            log.warning("Missing permission to assign role %s to %s", role.name, applicant)
-
-    def _class_or_role_label(self, guild, name: str, *, is_class: bool) -> str:
-        icon = (
-            icons.resolve_class_icon(guild, name)
-            if is_class
-            else icons.resolve_role_icon(guild, name)
-        )
-        return f"{icon} {name}".strip()
-
-    async def _on_approve_click(self, interaction: discord.Interaction):
-        application = self.bot.store.get(interaction.message.id)
-        if application is None:
-            await interaction.response.send_message(
-                "Couldn't find this application's record.", ephemeral=True
-            )
-            return
-        if application["status"] != "pending":
-            await interaction.response.send_message(
-                "This application has already been decided - use Reset first if you need "
-                "to change it.",
-                ephemeral=True,
-            )
-            return
-        if not await self._is_approver(interaction.guild, interaction.user.id):
-            await interaction.response.send_message(
-                "Only approvers can approve or deny applications.", ephemeral=True
-            )
-            return
-
-        # Deferred message update - silently acknowledges the click, no
-        # visible loading state, and gives us time for role/DM work before
-        # editing the message ourselves.
-        await interaction.response.defer()
-        await self._apply_approval(interaction, interaction.message.id)
-
-    async def _on_deny_click(self, interaction: discord.Interaction):
-        application = self.bot.store.get(interaction.message.id)
-        if application is None:
-            await interaction.response.send_message(
-                "Couldn't find this application's record.", ephemeral=True
-            )
-            return
-        if application["status"] != "pending":
-            await interaction.response.send_message(
-                "This application has already been decided - use Reset first if you need "
-                "to change it.",
-                ephemeral=True,
-            )
-            return
-        if not await self._is_approver(interaction.guild, interaction.user.id):
-            await interaction.response.send_message(
-                "Only approvers can approve or deny applications.", ephemeral=True
-            )
-            return
-
-        # A modal must be the FIRST response to an interaction, so this one
-        # can't defer first the way approve does - the modal's own
-        # on_submit defers instead, then calls _apply_denial.
-        await interaction.response.send_modal(DenyReasonModal(self, interaction.message.id))
-
-    async def _apply_approval(self, interaction: discord.Interaction, message_id: int):
-        application = self.bot.store.get(message_id)
-        if application is None or application["status"] != "pending":
-            return  # decided or removed while we were working - nothing to do
-
-        guild = interaction.guild
-        channel = interaction.channel
-        applicant = guild.get_member(application["applicant_id"])
-        reviewer = interaction.user
-        character_name = application["character_name"]
-        class_name = application.get("class_name")
-        role_name = application.get("role")
-        previous_decision = application.get("last_decision")
-
-        newly_assigned = []
-        already_had = []
-        nickname_line = "Name not changed - no applicant member found"
-
-        if applicant is not None:
-            applicant_role_ids = {r.id for r in applicant.roles}
-            held_exempt_roles = [
-                name for rid, name in config.FRESH_EXEMPT_ROLE_IDS.items()
-                if rid in applicant_role_ids
-            ]
-            is_exempt = bool(held_exempt_roles)
-            held_exempt_display = "/".join(_fresh_label(name) for name in held_exempt_roles)
-
-            if is_exempt:
-                already_had.append(held_exempt_display)
-            else:
-                await self._grant_role(
-                    guild, applicant, self.fresh_role_id, _fresh_label("Fresh"),
-                    newly_assigned, already_had, "Guild application approved",
-                )
-
-            # Auto class/role tags - independent of the Fresh exemption,
-            # a Regular/Organizer should still get tagged for their class/role.
-            if role_name and role_name in config.AUTO_ROLE_IDS:
-                label = self._class_or_role_label(guild, role_name, is_class=False)
-                await self._grant_role(
-                    guild, applicant, config.AUTO_ROLE_IDS[role_name], label,
-                    newly_assigned, already_had, "Guild application approved",
-                )
-            if class_name and class_name in config.AUTO_ROLE_IDS:
-                label = self._class_or_role_label(guild, class_name, is_class=True)
-                await self._grant_role(
-                    guild, applicant, config.AUTO_ROLE_IDS[class_name], label,
-                    newly_assigned, already_had, "Guild application approved",
-                )
-
-            original_name = applicant.display_name
-            if is_exempt:
-                nickname_line = f"Name not changed - already {held_exempt_display} ({original_name})"
-            else:
-                try:
-                    await applicant.edit(nick=character_name, reason="Guild application approved")
-                    nickname_line = f"Name changed: {original_name} → {character_name}"
-                except discord.Forbidden:
-                    log.warning("Missing permission to set nickname for %s", applicant)
-                    nickname_line = f"⚠️ Name NOT changed (missing permission) - still {original_name}"
-
-            # Notify on a first-ever approval, or when correcting a
-            # previous denial. Re-approving after an already-approved
-            # state (double reset) has nothing new to tell them.
-            should_dm = previous_decision is None or previous_decision == "denied"
-            if should_dm:
-                try:
-                    await applicant.send(bot_messages.text("approval_dm", character=application['character_name']))
-                except discord.Forbidden:
-                    await channel.send(
-                        f"(Couldn't DM {applicant.mention} - their DMs may be closed. "
-                        "Please let them know they've been accepted.)"
-                    )
-
-        roster_line = await self._link_on_roster(application)
-
-        now = discord.utils.utcnow().astimezone(AMSTERDAM_TZ)
-        timestamp_str = now.strftime("%Y-%m-%d %H:%M %Z")
-
-        assigned_display = ", ".join(newly_assigned) if newly_assigned else "None"
-        already_display = f"\nAlready had: {', '.join(already_had)}" if already_had else ""
-        self.bot.store.update(
-            message_id,
-            status="approved",
-            last_decision="approved",
-            decision_footer=(
-                f"✅ Approved by {reviewer} • {timestamp_str}\n"
-                f"Role(s) assigned: {assigned_display}{already_display}\n"
-                f"{nickname_line}" + (f"\n{roster_line}" if roster_line else "")
-            ),
-        )
-
-        updated = self.bot.store.get(message_id)
-        await self._refresh_review_message(interaction.message, updated)
-
-    async def _link_on_roster(self, application: dict):
-        """Links the approved character to the applicant on the guild roster
-        (when the roster is on). A line for the decision footer, or None."""
-        if self.bot.get_cog("RosterCog") is None or not application.get("character_slug"):
-            return None
-        try:
-            found = await roster.find_or_add(self.bot, application["character_slug"])
-            await asyncio.to_thread(roster.link, found["slug"], application["applicant_id"],
-                                    by="application approval", as_moderator=False)
-        except roster.RosterError as exc:
-            return f"Guild roster: not linked ({exc})"
-        except Exception:
-            log.exception("Linking %s on the guild roster failed", application["character_slug"])
-            return "Guild roster: not linked (see the System log)"
-        return "Guild roster: character linked to the applicant"
-
-    async def _apply_denial(self, interaction: discord.Interaction, message_id: int, reason: str):
-        application = self.bot.store.get(message_id)
-        if application is None or application["status"] != "pending":
-            await interaction.followup.send(
-                "This application is no longer pending - nothing changed.", ephemeral=True
-            )
-            return
-
-        guild = interaction.guild
-        channel = interaction.channel
-        applicant = guild.get_member(application["applicant_id"])
-        reviewer = interaction.user
-        character_name = application["character_name"]
-        previous_decision = application.get("last_decision")
-
-        if applicant is not None:
-            role = guild.get_role(self.fresh_role_id)
-            if role is not None and role in applicant.roles:
-                try:
-                    await applicant.remove_roles(role, reason="Guild application denied/corrected")
-                except discord.Forbidden:
-                    log.warning("Missing permission to remove role from %s", applicant)
-
-            # Only notify on a first-ever denial. If this is a
-            # correction of a previous approval, just revoke the role
-            # silently - no DM, per the correction rules.
-            should_dm = previous_decision is None
-            if should_dm:
-                try:
-                    await applicant.send(bot_messages.text("denial_dm", character=character_name))
-                except discord.Forbidden:
-                    await channel.send(
-                        f"(Couldn't DM {applicant.mention} - their DMs may be closed. "
-                        "Please let them know about the decision.)"
-                    )
-
-        now = discord.utils.utcnow().astimezone(AMSTERDAM_TZ)
-        timestamp_str = now.strftime("%Y-%m-%d %H:%M %Z")
-
-        footer = f"❌ Denied by {reviewer} • {timestamp_str}\nRoles assigned: None"
-        if reason:
-            footer += f"\nReason: {reason}"
-
-        self.bot.store.update(
-            message_id,
-            status="denied",
-            last_decision="denied",
-            decision_footer=footer,
-        )
-
-        updated = self.bot.store.get(message_id)
-        review_channel = self.bot.get_channel(self.review_channel_id)
+    async def _post_or_update_archive_confirmation(self, guild, initiator: str, moved, failed):
+        """One confirmation message in the review channel, edited in place on
+        later runs, so the latest archive run is always the one shown."""
+        review_channel = self.bot.get_channel(config.REVIEW_CHANNEL_ID)
         if review_channel is None:
             return
-        try:
-            message = await review_channel.fetch_message(message_id)
-        except (discord.NotFound, discord.Forbidden):
-            return
-        await self._refresh_review_message(message, updated)
-
-    # --- /gearcheck archive -------------------------------------------
-
-    async def _post_or_update_archive_confirmation(self, guild, initiator, moved, failed):
-        """Posts (or, on repeat runs, edits in place) a single confirmation
-        message in the review channel - only one such message should ever
-        be visible at a time, so mods always see the latest archive run."""
-        review_channel = self.bot.get_channel(self.review_channel_id)
-        if review_channel is None:
-            return
-
-        now = discord.utils.utcnow().astimezone(AMSTERDAM_TZ)
-        timestamp_str = now.strftime("%Y-%m-%d %H:%M %Z")
         archive_link = f"https://discord.com/channels/{guild.id}/{config.ARCHIVE_CHANNEL_ID}"
-
         content = (
             f"📦 **Archiving complete** - {moved} application(s) moved"
-            + (f", {failed} failed (see console log)" if failed else "")
-            + f"\nInitiated by {initiator.mention} at {timestamp_str}\n"
+            + (f", {failed} failed (see the System log)" if failed else "")
+            + f"\nBy {initiator} at {self._timestamp()}\n"
             + f"Archived applications: {archive_link}"
         )
-
         record = self.bot.store.get(ARCHIVE_CONFIRMATION_KEY)
         if record:
             try:
                 message = await review_channel.fetch_message(record["message_id"])
-                await message.edit(content=content)
+                await message.edit(content=content, allowed_mentions=discord.AllowedMentions.none())
                 return
             except (discord.NotFound, discord.Forbidden):
-                pass  # old confirmation is gone - fall through and post a fresh one
-
-        message = await review_channel.send(content=content)
+                pass  # the old confirmation is gone: post a new one
+        message = await review_channel.send(content=content, allowed_mentions=discord.AllowedMentions.none())
         self.bot.store.set(ARCHIVE_CONFIRMATION_KEY, message_id=message.id)
 
-    @gearcheck_group.command(name="character", description="Gear-check any character from Blizzard (moderators)")
+    def archive_problem(self) -> Optional[str]:
+        """Why archiving can't run now, or None."""
+        if not config.ARCHIVE_ENABLED or not config.ARCHIVE_CHANNEL_ID:
+            return ("Archiving isn't set up: turn it on and pick the archive channel in Settings (Features, "
+                    "Applications).")
+        if self.bot.get_channel(int(config.ARCHIVE_CHANNEL_ID)) is None:
+            return "The bot can't see the archive channel. Check the channel and the bot's permissions."
+        if self.bot.get_channel(config.REVIEW_CHANNEL_ID) is None:
+            return "The bot can't see the review channel."
+        return None
+
+    async def archive_decided(self, initiator: str) -> Tuple[int, int]:
+        """Moves every decided card from the review channel to the archive
+        channel (re-posted there, original deleted). (moved, failed)."""
+        problem = self.archive_problem()
+        if problem:
+            raise ApplicationError(problem)
+        archive_channel = self.bot.get_channel(int(config.ARCHIVE_CHANNEL_ID))
+        review_channel = self.bot.get_channel(config.REVIEW_CHANNEL_ID)
+        moved = failed = 0
+        # Oldest first, so the archive keeps the review channel's order.
+        async for message in review_channel.history(limit=None, oldest_first=True):
+            application = self.bot.store.get(message.id)
+            if not applications.is_application(application) or application.get("status") not in ("approved", "denied"):
+                continue
+            try:
+                new_message = await archive_channel.send(
+                    view=self._render_application_view(application, message_id=message.id))
+                self.bot.store.set(new_message.id, **{
+                    **application, "channel_id": archive_channel.id,
+                    "original_message_id": application.get("original_message_id") or message.id,
+                    "submitted_at": applications.submitted_at(message.id, application)})
+                self.bot.store.delete(message.id)
+                await message.delete()
+                applications.changed(new_message.id)
+                moved += 1
+                await asyncio.sleep(0.5)  # stay clear of rate limits on big batches
+            except Exception:
+                log.exception("Failed to archive application message %s", message.id)
+                failed += 1
+        await self._post_or_update_archive_confirmation(review_channel.guild, initiator, moved, failed)
+        return moved, failed
+
+    @applications_group.command(
+        name="archive", description="Move all approved/denied applications to the archive channel"
+    )
+    async def applications_archive(self, interaction: discord.Interaction):
+        if not await member_is_moderator(interaction.guild, interaction.user.id):
+            await interaction.response.send_message("Only moderators can archive applications.", ephemeral=True)
+            return
+        problem = self.archive_problem()
+        if problem:
+            await interaction.response.send_message(problem, ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            moved, failed = await self.archive_decided(interaction.user.mention)
+        except ApplicationError as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
+            return
+        summary = f"Archived {moved} application(s)."
+        if failed:
+            summary += f" {failed} failed - see the System log."
+        await interaction.followup.send(summary, ephemeral=True)
+
+    # --- /lookup -------------------------------------------------------------------------------------
+
+    @app_commands.command(name="lookup", description="Look up any character on Blizzard (moderators)")
     @app_commands.describe(name="The character's name and surname, e.g. Eggmike Thewhite",
                            public="Post it in this channel instead of only showing it to you")
-    async def gearcheck_character(self, interaction: discord.Interaction, name: str, public: bool = False):
+    async def lookup(self, interaction: discord.Interaction, name: str, public: bool = False):
         if not is_moderator(interaction.user):
-            await interaction.response.send_message("Only moderators can gear-check characters.", ephemeral=True)
+            await interaction.response.send_message("Only moderators can look up characters.", ephemeral=True)
             return
         if getattr(self.bot, "blizzard", None) is None:
             await interaction.response.send_message(
                 "Blizzard API keys aren't set up (Settings, General, Integrations).", ephemeral=True)
             return
         await interaction.response.defer(ephemeral=not public, thinking=True)
-        class_names, _ = await self._class_names()
+        class_names, _ = await self._reference()
         try:
             summary = await gear.fetch(self.bot, wow_api.slug(name), class_names)
         except (gear.GearError, wow_api.WowApiError) as exc:
-            await interaction.followup.send(f"Couldn't gear-check **{name.strip()}**: {exc}", ephemeral=True)
+            await interaction.followup.send(f"Couldn't look up **{name.strip()}**: {exc}", ephemeral=True)
             return
-        text = gear.render_lines(summary, await gear.item_icons(self.bot, summary))
-        container = discord.ui.Container(accent_color=discord.Color(
-            config.CLASS_COLORS.get(summary["class_name"], 0x2B2D31)))
-        details = " · ".join(filter(None, [f"Level {summary['level']}", summary.get("race"), summary["class_name"],
-                                           summary.get("guild")]))
-        profile_url = self._profile_url(summary["slug"])
-        title = f"[{summary['character']}]({profile_url})" if profile_url else summary["character"]
-        container.add_item(discord.ui.TextDisplay(f"## {title}\n{details}\n-# Gear as of the last logout"))
-        container.add_item(discord.ui.Separator())
-        container.add_item(discord.ui.TextDisplay(text["overview"]))
-        container.add_item(discord.ui.TextDisplay(_clip(text["gear"], 3000)))
-        if text["flags"]:
-            container.add_item(discord.ui.TextDisplay(text["flags"]))
-        view = discord.ui.LayoutView(timeout=None)
-        view.add_item(container)
+        view = application_card.lookup_view(
+            summary, icons_by_key=await self._card_icons(summary), profile_url=self._profile_url(summary["slug"]),
+            guild=interaction.guild, extra_facts=await self._roster_facts(summary["slug"]),
+            dashboard_url=dashboard_link(f"/lookup?name={quote(summary['character'])}"))
         await interaction.followup.send(view=view, ephemeral=not public,
                                         allowed_mentions=discord.AllowedMentions.none())
 
-    @gearcheck_group.command(
-        name="archive", description="Move all approved/denied applications to the archive channel"
-    )
-    async def gearcheck_archive(self, interaction: discord.Interaction):
-        if not await member_is_moderator(interaction.guild, interaction.user.id):
-            await interaction.response.send_message(
-                "Only moderators can archive applications.", ephemeral=True
-            )
-            return
-        if not config.ARCHIVE_ENABLED or not config.ARCHIVE_CHANNEL_ID:
-            await interaction.response.send_message(
-                "Archiving isn't set up: turn on the Archive command and pick the archive channel in Settings "
-                "(Features, Applications).",
-                ephemeral=True,
-            )
-            return
-
-        await interaction.response.defer(ephemeral=True, thinking=True)
-
-        archive_channel = self.bot.get_channel(config.ARCHIVE_CHANNEL_ID)
-        if archive_channel is None:
-            await interaction.followup.send(
-                "Couldn't find the configured archive channel.", ephemeral=True
-            )
-            return
-        review_channel = self.bot.get_channel(self.review_channel_id)
-        if review_channel is None:
-            await interaction.followup.send("Couldn't find the review channel.", ephemeral=True)
-            return
-
-        moved = 0
-        failed = 0
-        # oldest_first so the archive ends up in the same order the review
-        # channel had (oldest applicant at the top, most recent at the
-        # bottom) - the default is newest-first, which would reverse it.
-        async for message in review_channel.history(limit=None, oldest_first=True):
-            application = self.bot.store.get(message.id)
-            if application is None or application.get("status") not in ("approved", "denied"):
-                continue
-            try:
-                new_message = await archive_channel.send(
-                    view=self._render_application_view(application, message_id=message.id)
-                )
-                self.bot.store.set(new_message.id, **application)
-                self.bot.store.delete(message.id)
-                await message.delete()
-                moved += 1
-                await asyncio.sleep(0.5)  # stay clear of rate limits on big batches
-            except Exception:
-                log.exception("Failed to archive application message %s", message.id)
-                failed += 1
-
-        await self._post_or_update_archive_confirmation(interaction.guild, interaction.user, moved, failed)
-
-        summary = f"Archived {moved} application(s)."
-        if failed:
-            summary += f" {failed} failed - check the console log."
-        await interaction.followup.send(summary, ephemeral=True)
-
-    # --- Blizzard armory diagnostic -------------------------------------
+    async def _roster_facts(self, character_slug: str) -> List[str]:
+        """Where the character stands on the guild roster, as on the
+        dashboard's Character lookup (nothing when the roster is off)."""
+        if self.bot.get_cog("RosterCog") is None:
+            return []
+        c = await asyncio.to_thread(roster.get, character_slug)
+        if c is None:
+            return ["**Guild roster** not on it"]
+        if not c["discord_id"]:
+            return ["**Guild roster** on it, not linked to anyone"]
+        return [f"**Guild roster** <@{c['discord_id']}> · {'main' if c['is_main'] else 'alt'}"]
 
 
 async def setup(bot: commands.Bot):

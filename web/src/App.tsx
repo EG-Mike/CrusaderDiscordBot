@@ -22,6 +22,8 @@ import PollsPage from "./pages/Polls";
 import RosterPage from "./pages/Roster";
 import LevelingPage from "./pages/Leveling";
 import LookupPage from "./pages/Lookup";
+import CraftingPage from "./pages/Crafting";
+import { ApplicationPage, ApplicationsPage } from "./pages/Applications";
 import { ToastProvider } from "./components/Toast";
 
 // First visit after install: open the setup wizard once per browser session
@@ -87,6 +89,9 @@ export default function App() {
           <Route path="/roster" element={<RosterPage />} />
           <Route path="/leveling" element={<LevelingPage />} />
           <Route path="/lookup" element={<LookupPage />} />
+          <Route path="/crafting" element={<CraftingPage />} />
+          <Route path="/applications" element={<ApplicationsPage />} />
+          <Route path="/applications/:id" element={<ApplicationPage />} />
           {soon.map((item) => (
             <Route key={item.to} path={item.to} element={<ComingSoon item={item} />} />
           ))}
