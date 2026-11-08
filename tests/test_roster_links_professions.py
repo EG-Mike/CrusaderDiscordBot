@@ -106,13 +106,27 @@ class ProfessionTests(Scoped, unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(roster_cog.icons, "resolve_class_icon", lambda g, n: "<:priest:1>"), \
                 mock.patch.object(roster_cog.emoji_library, "ensure_icon", icon):
             await cog.publish_roster()
-            self.assertIn("· <:ench:1> 200/225 | Tailoring 45/75", text_of(channel.sent[0]))  # no icon: the name
-            self.assertNotIn("Cooking", text_of(channel.sent[0]))
+            text = text_of(channel.sent[0])
+            # Fixed-width cells before the member: a profession without an emoji keeps its place with a blank one.
+            self.assertIn("`30` <:priest:1> `Eggmike Thewhite` <:ench:1> `200/225` ▫️ ` 45/ 75` -", text)
+            self.assertIn("`Lv` ⚔️ `Character       ` ▫️ `Prof. 1` ▫️ `Prof. 2` **Discord**", text)
+            self.assertNotIn("Cooking", text)
             with mock.patch.object(config, "GUILD_ROSTER_POST_PROFESSIONS", False):
                 self.assertEqual(await cog._profession_icons(roster.characters()), {})
                 lines = cog._post_lines(roster.characters(), REF, channel.guild, {333: "<:ench:1>"})
         self.assertEqual([c.args[1] for c in icon.await_args_list], ["profession", "profession"])
         self.assertNotIn("200/225", "\n".join(lines))
+        self.assertNotIn("Prof.", lines[0])
+
+    def test_rows_with_fewer_professions_are_padded(self):
+        cog = roster_cog.RosterCog.__new__(roster_cog.RosterCog)
+        roster.store_roster([char(1, 30), char(2, 20, name="Jaina", surname="Proud")], "encore")
+        roster.store_professions("eggmike-thewhite", PROFESSIONS)
+        with mock.patch.object(roster_cog.icons, "resolve_class_icon", lambda g, n: ""), \
+                mock.patch.object(roster_cog.icons, "blank", lambda: "<:blank:9>"):
+            lines = cog._post_lines(roster.characters(), REF, None, {333: "<:ench:1>", 197: "<:tail:2>"})
+        self.assertEqual(lines[1], "`30` <:blank:9> `Eggmike Thewhite` <:ench:1> `200/225` <:tail:2> ` 45/ 75` -")
+        self.assertEqual(lines[2], "`20` <:blank:9> `Jaina Proud     ` <:blank:9> `   -   ` <:blank:9> `   -   ` -")
 
 
 if __name__ == "__main__":

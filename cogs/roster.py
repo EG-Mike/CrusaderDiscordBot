@@ -54,7 +54,7 @@ log = logging.getLogger("wow-apply-bot.roster")
 STATUS_META = "roster_last_sync"
 POST_META = "roster_post"         # {"channel_id", "message_ids", "hash", "updated"}
 POST_CHECK_MINUTES = 2
-POST_LAYOUT = "table-3"           # part of the post's hash: changing the layout updates old posts
+POST_LAYOUT = "table-4"           # part of the post's hash: changing the layout updates old posts
 CLAIM_ID = "roster:claim"
 MINE_ID = "roster:mine"
 NO_PINGS = discord.AllowedMentions.none()
@@ -113,34 +113,43 @@ class RosterCog(commands.Cog):
         return found
 
     @staticmethod
-    def _profession_text(c: dict, icons_by_id: Dict[int, str]) -> str:
-        """'<icon> 200/225 | <icon> 45/75' (the name when there's no icon)."""
-        parts = []
-        for p in roster.professions(c, primary_only=True):
-            label = icons_by_id.get(p.get("id")) or p.get("name") or "?"
-            parts.append(f"{label} {p.get('skill') if p.get('skill') is not None else '?'}/{p.get('max') or '?'}")
-        return " | ".join(parts)
+    def _profession_cells(c: dict, icons_by_id: Dict[int, str], columns: int) -> List[str]:
+        """'<icon> `158/225`' per primary profession, padded to `columns`
+        with blank cells, so every row's professions line up."""
+        cells = []
+        for p in roster.professions(c, primary_only=True)[:columns]:
+            skill = p.get("skill") if p.get("skill") is not None else "?"
+            cells.append(f"{icons_by_id.get(p.get('id')) or icons.blank()} `{skill:>3}/{p.get('max') or '?':>3}`")
+        cells += [f"{icons.blank()} `   -   `"] * (columns - len(cells))
+        return cells
 
     def _post_lines(self, rows: List[dict], ref: dict, guild, profession_icons: Optional[Dict[int, str]] = None
                     ) -> List[str]:
         """A header row and one aligned row per character. Discord has no
-        tables, so the level and name columns are padded inline code.
-        `profession_icons`: shown when professions are on (see _profession_icons)."""
+        tables, so every column before the Discord member has a fixed width:
+        level and name are padded inline code, icons are emoji (a blank one
+        where there's none), and professions are an icon with the skill in
+        fixed-width code. The member comes last, where its width doesn't
+        shift anything. `profession_icons`: shown when professions are on
+        (see _profession_icons)."""
         if not rows:
             return ["-# Nobody on the roster yet."]
         width = max(len("Character"), *(len(roster.display_name(c)) for c in rows))
-        lines = [f"`Lv` ⚔️ `{'Character':<{width}}` **Discord**"]
+        columns = (max(len(roster.professions(c, primary_only=True)) for c in rows)
+                   if config.GUILD_ROSTER_POST_PROFESSIONS else 0)
+        header = [f"`Lv` ⚔️ `{'Character':<{width}}`"] + [f"{icons.blank()} `Prof. {i + 1}`" for i in range(columns)]
+        lines = [" ".join(header + ["**Discord**"])]
         for c in rows:
             name = class_name(ref, c["class_id"])
-            icon = icons.resolve_class_icon(guild, name) if name else ""
+            icon = (icons.resolve_class_icon(guild, name) if name else "") or icons.blank()
             member = guild.get_member(c["discord_id"]) if guild and c["discord_id"] else None
             who = member.mention if member else "-"
             if member and not c["is_main"]:
                 who += " · alt"
             level = c["level"] if c["level"] is not None else "?"
-            line = f"`{level:>2}` {icon or '▫️'} `{roster.display_name(c):<{width}}` {who}"
-            trades = self._profession_text(c, profession_icons or {}) if config.GUILD_ROSTER_POST_PROFESSIONS else ""
-            lines.append(f"{line} · {trades}" if trades else line)
+            cells = [f"`{level:>2}` {icon} `{roster.display_name(c):<{width}}`"]
+            cells += self._profession_cells(c, profession_icons or {}, columns)
+            lines.append(" ".join(cells + [who]))
         return lines
 
     async def publish_roster(self, *, force: bool = False) -> Optional[str]:
