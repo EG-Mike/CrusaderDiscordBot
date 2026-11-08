@@ -63,7 +63,14 @@ the guild can make what, read from Blizzard when players log out:
 
 On the Crafting page you browse a profession's recipes by category (with
 how many crafters know each), add or remove featured recipes, and see every
-profession's crafters. The channel updates within moments of a change.
+profession's crafters. Featured recipes are listed hardest first within
+each profession; move them up or down to use your own order ("Back to
+hardest first" undoes it). Blizzard doesn't say which skill a recipe needs,
+so "hardest" follows the order of Blizzard's own recipe lists, which run
+from easiest to hardest within each category. With "Only list recipes
+someone can make" (Settings, Crafting), recipes nobody in the guild knows
+are left out of the channel. The channel updates within moments of a
+change.
 
 ### Announcements
 

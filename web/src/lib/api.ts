@@ -728,12 +728,22 @@ export interface FeaturedRecipe {
   item_icon_url: string | null;
   added_by: string | null;
   added_at: string;
+  category: string | null;
+  /** 0 = easiest .. 1 = hardest in its category (Blizzard's list order). */
+  difficulty: number | null;
+  /** A moderator's place for it in its profession; null = hardest first. */
+  position: number | null;
+  /** Left out of the channel: nobody knows it and the setting hides those. */
+  hidden_in_channel: boolean;
   crafters: Crafter[];
 }
 
 export interface CraftingOverview {
   professions: CraftingProfession[];
   featured: FeaturedRecipe[];
+  /** Professions whose featured recipes a moderator ordered by hand. */
+  custom_order: number[];
+  hide_unknown_recipes: boolean;
   characters: number;
   characters_with_recipes: number;
   channel_problem: string | null;

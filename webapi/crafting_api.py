@@ -7,6 +7,8 @@ Dashboard API for crafting (crafting.py, cogs/crafting.py).
                                              each and whether it's featured
   POST   /api/crafting/featured              {"recipe_id", "profession_id"}: feature a recipe
   DELETE /api/crafting/featured/{recipe_id}  stop featuring it
+  POST   /api/crafting/order                 {"profession_id", "recipe_ids": [...] | null}: a profession's
+                                             featured recipes in this order (null: hardest first again)
   POST   /api/crafting/post                  post or update the crafting channel now
 
 Moderators only. Featuring and removing recipes is audited, and the
@@ -16,6 +18,7 @@ crafting channel is updated right after.
 import asyncio
 from typing import Dict, List
 
+import config
 import crafting
 import gear
 import roster
@@ -64,9 +67,11 @@ async def overview(request):
         class_names = {c["id"]: c["name"] for c in (await wow_api.reference(bot)).get("classes", [])}
     except (crafting.CraftingError, wow_api.WowApiError) as exc:
         return error(str(exc), 502)
+    await crafting.fill_difficulty(bot)
     characters = await asyncio.to_thread(crafting.crafters)
     featured = await asyncio.to_thread(crafting.featured)
     by_profession = crafting.profession_overview(characters)
+    hide_unknown = bool(config.CRAFTING_HIDE_UNKNOWN_RECIPES)
     knows = crafting.who_knows(characters)
     icons: Dict[int, str] = {}
     if featured:
@@ -77,11 +82,15 @@ async def overview(request):
                         for p in sorted(professions, key=lambda p: p["name"])],
         "featured": [{**r, "item_url": gear.item_url(r["item_id"]),
                       "item_icon_url": icons.get(r["item_id"]) or r["icon_url"],
+                      "hidden_in_channel": hide_unknown and not knows.get(r["recipe_id"]),
                       "crafters": [_crafter(c, guild, class_names,
                                             skill=crafting.profession_of(c, r["profession_id"]).get("skill"),
                                             max=crafting.profession_of(c, r["profession_id"]).get("max"))
                                    for c in crafting.by_skill(knows.get(r["recipe_id"], []), r["profession_id"])]}
                      for r in featured],
+        "custom_order": sorted({r["profession_id"] for r in featured
+                                if crafting.custom_order(featured, r["profession_id"])}),
+        "hide_unknown_recipes": hide_unknown,
         "characters_with_recipes": sum(1 for c in characters if roster.known_recipes(c)),
         "characters": len(characters),
         "channel_problem": cog.channel_problem(),
@@ -121,7 +130,7 @@ async def add_featured(request):
         if not any(r["id"] == recipe_id for c in catalog["categories"] for r in c["recipes"]):
             raise BadRequest("That recipe isn't in this profession's list.")
         row = await crafting.add_featured(bot, recipe_id, {"id": catalog["id"], "name": catalog["name"]},
-                                          by=actor_label(request))
+                                          by=actor_label(request), place=crafting.place_in_catalog(catalog, recipe_id))
     except (BadRequest, crafting.CraftingError) as exc:
         return error(str(exc), 400)
     audit(request, "crafting", "crafting.feature", f"Featured the recipe {row['name']} ({row['profession_name']})",
@@ -147,6 +156,28 @@ async def remove_featured(request):
     return json_response({"ok": True})
 
 
+async def set_order(request):
+    denied, cog = _guard(request)
+    if denied:
+        return denied
+    try:
+        body = await read_json(request)
+        profession_id, recipe_ids = body.get("profession_id"), body.get("recipe_ids")
+        if not isinstance(profession_id, int):
+            raise BadRequest("Unknown profession.")
+        if recipe_ids is not None and (not isinstance(recipe_ids, list)
+                                       or not all(isinstance(i, int) for i in recipe_ids)):
+            raise BadRequest("The order must be a list of recipes.")
+        await asyncio.to_thread(crafting.set_order, profession_id, recipe_ids)
+    except (BadRequest, crafting.CraftingError) as exc:
+        return error(str(exc), 400)
+    audit(request, "crafting", "crafting.order",
+          "Ordered featured recipes by hand" if recipe_ids is not None else "Ordered featured recipes hardest first",
+          details={"profession_id": profession_id})
+    await _changed(request, cog)
+    return json_response({"ok": True})
+
+
 async def post_now(request):
     denied, cog = _guard(request)
     if denied:
@@ -161,4 +192,5 @@ def register(app):
     app.router.add_get("/api/crafting/professions/{id}", profession_recipes)
     app.router.add_post("/api/crafting/featured", add_featured)
     app.router.add_delete("/api/crafting/featured/{recipe_id}", remove_featured)
+    app.router.add_post("/api/crafting/order", set_order)
     app.router.add_post("/api/crafting/post", post_now)

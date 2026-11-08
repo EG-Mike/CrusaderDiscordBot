@@ -319,6 +319,9 @@ CATALOG: Dict[str, Entry] = {
     "CRAFTING_SHOW_PROFESSIONS": Entry("crafting", "List every profession",
                                        "Each profession with its crafters and their skill. Off: only the featured "
                                        "recipes."),
+    "CRAFTING_HIDE_UNKNOWN_RECIPES": Entry("crafting", "Only list recipes someone can make",
+                                           "Featured recipes nobody in the guild knows yet are left out of the "
+                                           "channel. They stay on the Crafting page, marked as hidden."),
     "CRAFTING_CRAFTERS_PER_PROFESSION": Entry("crafting", "Crafters per profession",
                                               "At most this many per profession in the channel, highest skill first. "
                                               "The Crafting page shows them all.", unit="crafters", advanced=True),

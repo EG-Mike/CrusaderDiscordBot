@@ -96,6 +96,54 @@ class RulesTests(Scoped, unittest.IsolatedAsyncioTestCase):
             crafting.remove_featured(6577)
 
 
+class OrderTests(Scoped, unittest.IsolatedAsyncioTestCase):
+    CATALOG = {"id": 164, "name": "Blacksmithing", "categories": [
+        {"name": "Rods", "recipes": [{"id": 1, "name": "Copper Rod"}, {"id": 2, "name": "Silver Rod"},
+                                     {"id": 3, "name": "Arcanite Rod"}]},
+        {"name": "Odd", "recipes": [{"id": 4, "name": "Only One"}]}]}
+
+    async def feature(self, recipe_id, name, profession=("Blacksmithing", 164)):
+        details = {"recipe_id": recipe_id, "name": name, "item_id": None, "item_name": None, "quantity": 1.0,
+                   "reagents": [], "icon_url": None}
+        with mock.patch.object(crafting, "recipe_details", mock.AsyncMock(return_value=details)):
+            return await crafting.add_featured(object(), recipe_id, {"id": profession[1], "name": profession[0]},
+                                               by="Mike", place=crafting.place_in_catalog(self.CATALOG, recipe_id))
+
+    def test_difficulty_is_the_place_in_blizzards_list(self):
+        self.assertEqual(crafting.place_in_catalog(self.CATALOG, 1), {"category": "Rods", "difficulty": 0.0})
+        self.assertEqual(crafting.place_in_catalog(self.CATALOG, 3), {"category": "Rods", "difficulty": 1.0})
+        self.assertEqual(crafting.place_in_catalog(self.CATALOG, 4)["difficulty"], 1.0)  # alone in its category
+        self.assertIsNone(crafting.place_in_catalog(self.CATALOG, 99))
+
+    async def test_hardest_first_then_a_moderators_order(self):
+        for recipe_id, name in ((1, "Copper Rod"), (3, "Arcanite Rod"), (2, "Silver Rod")):
+            await self.feature(recipe_id, name)
+        await self.feature(6577, "Simple Linen Boots", ("Alchemy", 171))
+        names = lambda: [r["name"] for r in crafting.featured()]  # noqa: E731
+        self.assertEqual(names(), ["Simple Linen Boots", "Arcanite Rod", "Silver Rod", "Copper Rod"])
+        self.assertFalse(crafting.custom_order(crafting.featured(), 164))
+
+        crafting.set_order(164, [1, 3, 2])
+        self.assertEqual(names()[1:], ["Copper Rod", "Arcanite Rod", "Silver Rod"])
+        self.assertTrue(crafting.custom_order(crafting.featured(), 164))
+        await self.feature(4, "Only One")  # added to an ordered profession: last
+        self.assertEqual(names()[-1], "Only One")
+        with self.assertRaises(crafting.CraftingError):
+            crafting.set_order(164, [1, 3])  # every recipe of the profession, once
+
+        crafting.set_order(164, None)
+        self.assertEqual(names()[1:], ["Arcanite Rod", "Only One", "Silver Rod", "Copper Rod"])
+
+    async def test_older_rows_get_their_difficulty(self):
+        await self.feature(1, "Copper Rod")
+        await self.feature(3, "Arcanite Rod")
+        roster.db.execute("UPDATE crafting_featured SET difficulty = NULL, category = NULL")
+        with mock.patch.object(crafting, "recipe_catalog", mock.AsyncMock(return_value=self.CATALOG)):
+            await crafting.fill_difficulty(object())
+        self.assertEqual([(r["name"], r["difficulty"]) for r in crafting.featured()],
+                         [("Arcanite Rod", 1.0), ("Copper Rod", 0.0)])
+
+
 class ChannelTests(Scoped):
     def guild(self):
         member = SimpleNamespace(mention="<@111>")
@@ -128,6 +176,11 @@ class ChannelTests(Scoped):
             "▫️ **Rare Thing** ×2",
             "-# Nobody in the guild knows this recipe yet."])
         self.assertEqual(crafting_cog.featured_lines([], {}, None, {}, {}), [])
+        hidden = crafting_cog.featured_lines(featured, crafting.who_knows(crafting.crafters()), self.guild(),
+                                             {197: "<:tail:2>"}, {6577: "<:boots:3>"}, hide_unknown=True)
+        self.assertNotIn("Rare Thing", "\n".join(hidden))
+        self.assertIn("Simple Linen Boots", "\n".join(hidden))
+        self.assertEqual(crafting_cog.featured_lines(featured[1:], {}, None, {}, {}, hide_unknown=True), [])
 
 
 class ApiTests(Scoped, unittest.IsolatedAsyncioTestCase):
@@ -187,6 +240,19 @@ class ApiTests(Scoped, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(featured["crafters"][0]["class_name"], "Priest")
         self.assertEqual(body["professions"][0]["crafters"][0]["skill"], 160)
         self.assertEqual((featured["crafters"][0]["skill"], featured["crafters"][0]["max"]), (160, 225))
+
+        self.assertFalse(featured["hidden_in_channel"])  # someone knows it
+        self.assertEqual(body["custom_order"], [])
+        resp = await self.client.post("/api/crafting/order", json={"profession_id": 197, "recipe_ids": [6577]},
+                                      headers=self.headers)
+        self.assertEqual(resp.status, 200)
+        self.assertEqual((await (await self.client.get("/api/crafting")).json())["custom_order"], [197])
+        resp = await self.client.post("/api/crafting/order", json={"profession_id": 197, "recipe_ids": [1]},
+                                      headers=self.headers)
+        self.assertEqual(resp.status, 400)  # not this profession's recipes
+        resp = await self.client.post("/api/crafting/order", json={"profession_id": 197, "recipe_ids": None},
+                                      headers=self.headers)
+        self.assertEqual(resp.status, 200)
 
         resp = await self.client.delete("/api/crafting/featured/6577", headers=self.headers)
         self.assertEqual(resp.status, 200)

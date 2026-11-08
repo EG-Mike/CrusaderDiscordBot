@@ -178,7 +178,11 @@ version or raid tier is a configuration change.
   (`webapi/crafting_api.py`, table `crafting_featured`); `cogs/crafting.py`
   keeps the crafting channel (`CRAFTING_CHANNEL_ID`) posted: every
   profession with its crafters, then each featured recipe with its crafters
-  (highest skill first) and materials. It runs the profile checks itself
+  (highest skill first) and materials. Featured recipes are ordered per
+  profession by a moderator (`position`) or else hardest first: Blizzard
+  gives no required skill, so `difficulty` is the recipe's place in its
+  category of Blizzard's list (easiest to hardest). Recipes nobody knows
+  can be left out of the channel (`CRAFTING_HIDE_UNKNOWN_RECIPES`). It runs the profile checks itself
   when Leveling is off. `channel_posts.py`: the shared "keep these messages
   posted, edit only on change" logic of the roster and crafting channels.
 - `wow_api.py`: Blizzard game data for the configured game version
