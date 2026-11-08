@@ -51,6 +51,7 @@ GROUPS: List[Tuple[str, str, str, str]] = [
     ("polls", "features", "Polls", "Defaults for new polls."),
     ("roster", "features", "Guild roster", "Characters linked to Discord members."),
     ("leveling", "features", "Leveling", "The leveling leaderboard and milestone announcements."),
+    ("crafting", "features", "Crafting", "Who in the guild can make what, and the recipes you feature."),
     ("notifications", "features", "Notifications", "Alerts the bot posts for moderators. Changes apply immediately."),
     ("api_keys", "general", "API keys", "Keys for Blizzard and WarcraftLogs. Stored encrypted and never shown again."),
     ("blizzard", "general", "Blizzard", "Which game Blizzard's API is asked about."),
@@ -131,6 +132,8 @@ CATALOG: Dict[str, Entry] = {
                                                                 "Roster page."),
     "FEATURE_LEVELING_ENABLED": Entry("features", "Leveling", "Leveling leaderboard and milestone announcements. "
                                                               "Needs the guild roster."),
+    "FEATURE_CRAFTING_ENABLED": Entry("features", "Crafting", "The crafting channel and the Crafting page: who in "
+                                                              "the guild can make what. Needs the guild roster."),
     "FEATURE_ATTENDANCE_ENABLED": Entry("features", "Attendance", "/checkattendance and the attendance messages."),
     "FEATURE_RAID_SUMMARY_ENABLED": Entry("features", "Raid summaries", "/raidsummary and the raid recaps."),
     "FEATURE_RAID_LOGS_ENABLED": Entry("features", "Raid logs", "Reposting and tagging new WarcraftLogs reports. "
@@ -309,6 +312,16 @@ CATALOG: Dict[str, Entry] = {
     "GUILD_ROSTER_POST_MIN_LEVEL": Entry("roster", "List characters from level",
                                          "The posted roster leaves out lower characters, except members' mains.",
                                          unit="level"),
+    "CRAFTING_CHANNEL_ID": Entry("crafting", "Crafting channel",
+                                 "The bot keeps the guild's crafting posted here: professions with their crafters "
+                                 "and the featured recipes (Crafting page). Best a channel only the bot can post in. "
+                                 "Empty: not posted."),
+    "CRAFTING_SHOW_PROFESSIONS": Entry("crafting", "List every profession",
+                                       "Each profession with its crafters and their skill. Off: only the featured "
+                                       "recipes."),
+    "CRAFTING_CRAFTERS_PER_PROFESSION": Entry("crafting", "Crafters per profession",
+                                              "At most this many per profession in the channel, highest skill first. "
+                                              "The Crafting page shows them all.", unit="crafters", advanced=True),
     "GUILD_ROSTER_POST_PROFESSIONS": Entry("roster", "Show professions",
                                            "Each character's professions with their skill, e.g. Enchanting 200/225, "
                                            "on the posted roster. Updated after the player logs out."),

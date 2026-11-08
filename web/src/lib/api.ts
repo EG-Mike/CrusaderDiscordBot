@@ -204,6 +204,7 @@ export type AuditKind =
   | "maintenance"
   | "poll"
   | "roster"
+  | "crafting"
   | "audit"
   | "other";
 
@@ -690,4 +691,56 @@ export interface ApplicationDetail extends ApplicationRow {
   decision_text: string | null;
   legacy_text: string | null;
   warcraftlogs: { enabled: boolean; text: string | null };
+}
+
+// --- crafting (webapi/crafting_api.py) ----------------------------------------------
+
+export interface Crafter {
+  slug: string;
+  display_name: string;
+  class_name: string | null;
+  level: number | null;
+  in_guild: boolean;
+  is_main: boolean;
+  member: { id: string; name: string; avatar_url: string } | null;
+  skill?: number | null;
+  max?: number | null;
+}
+
+export interface CraftingProfession {
+  id: number;
+  name: string;
+  icon_url: string | null;
+  crafters: Crafter[];
+}
+
+export interface FeaturedRecipe {
+  recipe_id: number;
+  name: string;
+  profession_id: number | null;
+  profession_name: string | null;
+  item_id: number | null;
+  item_name: string | null;
+  quantity: number | null;
+  reagents: { id: number | null; name: string; quantity: number | null }[];
+  icon_url: string | null;
+  item_url: string | null;
+  item_icon_url: string | null;
+  added_by: string | null;
+  added_at: string;
+  crafters: Crafter[];
+}
+
+export interface CraftingOverview {
+  professions: CraftingProfession[];
+  featured: FeaturedRecipe[];
+  characters: number;
+  characters_with_recipes: number;
+  channel_problem: string | null;
+}
+
+export interface RecipeCatalog {
+  id: number;
+  name: string;
+  categories: { name: string; recipes: { id: number; name: string; known_by: number; featured: boolean }[] }[];
 }

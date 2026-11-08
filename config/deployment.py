@@ -155,6 +155,9 @@ FEATURE_ROSTER_ENABLED = True
 # cogs/leveling.py: leveling leaderboard and level milestone announcements.
 # Needs the roster.
 FEATURE_LEVELING_ENABLED = True
+# cogs/crafting.py: the crafting channel (who in the guild can make what,
+# and the featured recipes picked on the dashboard). Needs the roster.
+FEATURE_CRAFTING_ENABLED = True
 
 # cogs/web_dashboard.py: the browser-based management dashboard (see the
 # README's "Web dashboard" section). Off by default - turn it on in
@@ -268,6 +271,20 @@ GUILD_ROSTER_CHANNEL_ID = 0
 # skill/maximum, e.g. Enchanting 200/225). Read from Blizzard after the
 # player logs out.
 GUILD_ROSTER_POST_PROFESSIONS = True
+
+# --- Crafting (crafting.py, cogs/crafting.py) ---
+# Channel where the bot keeps the guild's crafting posted: every
+# profession with its crafters, and the featured recipes (picked on the
+# dashboard's Crafting page) with who can make them and the materials.
+# Best a channel only the bot can post in. Empty: not posted.
+CRAFTING_CHANNEL_ID = 0
+
+# List every profession and its crafters (off: only the featured recipes).
+CRAFTING_SHOW_PROFESSIONS = True
+
+# At most this many crafters per profession in the channel (highest skill
+# first); the dashboard shows them all.
+CRAFTING_CRAFTERS_PER_PROFESSION = 10
 
 # --- Leveling (cogs/leveling.py) ---
 # Channel where level milestones are announced. Empty: no announcements

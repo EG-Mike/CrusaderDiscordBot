@@ -318,6 +318,22 @@ DEFINITIONS.append(Definition(
     feature="FEATURE_ROSTER_ENABLED",
 ))
 DEFINITIONS.append(Definition(
+    key="crafting_header",
+    label="Crafting header",
+    group="Crafting",
+    description="The heading of the crafting channel (Settings, Crafting: Crafting channel).",
+    kind="text",
+    where="At the top of the crafting channel",
+    default_body="## {guild} crafting\nWho in the guild can make what. Need something? Send the materials to one "
+                 "of the crafters and ask them.\n-# Professions and recipes update when a player logs out · "
+                 "updated {updated}",
+    variables=[
+        Variable("guild", "The guild's name in the game", "Encore"),
+        Variable("updated", "When the channel last changed (shown as e.g. \"5 minutes ago\")", "5 minutes ago"),
+    ],
+    feature="FEATURE_CRAFTING_ENABLED",
+))
+DEFINITIONS.append(Definition(
     key="level_milestone",
     label="Level milestone",
     group="Leveling",

@@ -314,11 +314,15 @@ _ICON_URLS: Dict[int, Optional[str]] = {}  # item id -> icon image (per process;
 
 
 async def item_icon_urls(bot, summary: dict) -> Dict[int, Optional[str]]:
+    """{item id: icon image URL} of a summary's items (icon_urls_for)."""
+    return await icon_urls_for(bot, [i["item_id"] for i in summary.get("items", []) if i.get("item_id")])
+
+
+async def icon_urls_for(bot, item_ids: List[int]) -> Dict[int, Optional[str]]:
     """{item id: icon image URL} from Blizzard's item media, for the
     dashboard. Cached for the life of the process. Never raises."""
     client = wow_api._client(bot)
-    missing = [i["item_id"] for i in summary.get("items", [])
-               if i.get("item_id") and i["item_id"] not in _ICON_URLS]
+    missing = sorted({i for i in item_ids if i and i not in _ICON_URLS})
 
     async def one(item_id, session):
         try:
@@ -341,7 +345,7 @@ async def item_icon_urls(bot, summary: dict) -> Dict[int, Optional[str]]:
     if missing:
         async with aiohttp.ClientSession(trust_env=True, timeout=aiohttp.ClientTimeout(total=15)) as session:
             await asyncio.gather(*(one(i, session) for i in missing))
-    return {i["item_id"]: _ICON_URLS.get(i["item_id"]) for i in summary.get("items", []) if i.get("item_id")}
+    return {i: _ICON_URLS.get(i) for i in item_ids if i}
 
 
 async def item_icons(bot, summary: dict) -> Dict[int, str]:

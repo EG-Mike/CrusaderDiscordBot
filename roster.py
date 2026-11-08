@@ -28,9 +28,10 @@ whose character Blizzard doesn't know yet (below level 10) leaves a
 pending link (remember_link), applied as soon as the character shows up
 from the guild roster or its profile.
 
-Professions (primary ones, with skill and maximum) are read from the
-character's professions document after a profile check finds the player
-logged out since the last read, and shown on the posted roster.
+Professions (with skill and maximum; primary and secondary) and the recipes the
+character knows are read from the character's professions document after a
+profile check finds the player logged out since the last read; they're
+shown on the posted roster and in the crafting channel (crafting.py).
 """
 
 import asyncio
@@ -133,12 +134,17 @@ def display_name(c: dict) -> str:
     return f"{c['name']} {c['surname']}" if c.get("surname") else c["name"]
 
 
-def professions(c: dict) -> List[dict]:
-    """A stored character's primary professions: [{id, name, skill, max}]."""
+def professions(c: dict, *, primary_only: bool = False) -> List[dict]:
+    """A stored character's professions: [{id, name, skill, max, primary}].
+    Stored before secondary ones were kept, an entry without "primary" is a
+    primary one."""
     try:
-        return json.loads(c.get("professions") or "[]")
+        found = json.loads(c.get("professions") or "[]")
     except ValueError:
         return []
+    for p in found:
+        p.setdefault("primary", True)
+    return [p for p in found if p["primary"]] if primary_only else found
 
 
 # --- storing what Blizzard says -------------------------------------------------------------------
@@ -213,13 +219,33 @@ def store_profile(found: dict) -> Optional[dict]:
     return event
 
 
+def parse_known_recipes(data: Optional[dict]) -> List[int]:
+    """Every recipe ID the character knows, in all professions."""
+    found = set()
+    for kind in ("primaries", "secondaries"):
+        for p in (data or {}).get(kind) or []:
+            for tier in p.get("tiers") or []:
+                found.update(r["id"] for r in tier.get("known_recipes") or [] if isinstance(r.get("id"), int))
+    return sorted(found)
+
+
 def store_professions(character_slug: str, data: Optional[dict]):
-    """Keeps the primary professions from Blizzard's professions document."""
-    primary = [{"id": p["id"], "name": p["name"], "skill": p["skill"], "max": p["max"]}
-               for p in gear.parse_professions(data) if p["primary"]]
+    """Keeps the primary professions and every known recipe from Blizzard's
+    professions document."""
+    found = [{"id": p["id"], "name": p["name"], "skill": p["skill"], "max": p["max"], "primary": p["primary"]}
+             for p in gear.parse_professions(data)]
     game, region = _scope()
-    db.execute("UPDATE roster_characters SET professions = ? WHERE game = ? AND region = ? AND slug = ?",
-               (json.dumps(primary), game, region, character_slug))
+    db.execute("UPDATE roster_characters SET professions = ?, known_recipes = ? "
+               "WHERE game = ? AND region = ? AND slug = ?",
+               (json.dumps(found), json.dumps(parse_known_recipes(data)), game, region, character_slug))
+
+
+def known_recipes(c: dict) -> List[int]:
+    """A stored character's known recipe IDs."""
+    try:
+        return json.loads(c.get("known_recipes") or "[]")
+    except ValueError:
+        return []
 
 
 def _profile_missing(character_slug: str):
@@ -283,7 +309,8 @@ async def refresh_profiles(bot, rows: Optional[List[dict]] = None) -> dict:
             if event:
                 events.append(event)
             # Professions change only in game, so they're read again only after a logout.
-            if c.get("professions") is None or found.get("last_login") != c.get("last_login"):
+            if (c.get("professions") is None or c.get("known_recipes") is None
+                    or found.get("last_login") != c.get("last_login")):
                 try:
                     data = await wow_api.character_professions(bot, c["slug"], session=session)
                 except (wow_api.WowApiError, aiohttp.ClientError, asyncio.TimeoutError) as exc:

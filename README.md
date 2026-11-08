@@ -51,6 +51,20 @@ moderator-driven announcement system.
 8. Applicants can add or update their note/screenshot(s) with
    **`/update-application`** while their application is pending.
 
+### Crafting
+
+The bot keeps a crafting channel posted (Settings, Crafting) with who in
+the guild can make what, read from Blizzard when players log out:
+
+- every profession with its crafters and their skill, highest first;
+- the **featured recipes** moderators pick on the dashboard's **Crafting**
+  page (e.g. high-value ones): what each makes (linked to Wowhead), who in
+  the guild knows it, and the materials to send them.
+
+On the Crafting page you browse a profession's recipes by category (with
+how many crafters know each), add or remove featured recipes, and see every
+profession's crafters. The channel updates within moments of a change.
+
 ### Announcements
 
 1. A moderator runs **`/announce`**, fills in a modal (optional title +

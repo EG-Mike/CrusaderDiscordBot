@@ -44,7 +44,7 @@ log = logging.getLogger("wow-apply-bot.emoji_library")
 
 MAX_APP_EMOJI = 2000          # Discord's limit of emoji per bot application
 KINDS = ("item", "spell")             # searchable on the Emoji page
-ICON_KINDS = KINDS + ("profession",)  # anything with a Blizzard icon (professions: the posted guild roster)
+ICON_KINDS = KINDS + ("profession", "recipe")  # with a Blizzard icon (guild roster, crafting channel)
 SEARCH_LIMIT_PER_KIND = 12
 CACHE_SECONDS = 60
 WOWHEAD_TOOLTIP_URL = "https://nether.wowhead.com/tooltip/{kind}/{id}"
@@ -184,7 +184,7 @@ async def resolve(bot, kind: str, game_id: int) -> Resolved:
     icons that only Wowhead knows (e.g. Amplify Magic shares Flash Heal's
     spell_holy_flashheal) and to give the emoji a readable name."""
     if kind not in ICON_KINDS:
-        raise EmojiError("Only items, spells and professions have icons.")
+        raise EmojiError("Only items, spells, professions and recipes have icons.")
     errors = []
     try:
         found = await _from_blizzard(bot, kind, game_id)
@@ -490,7 +490,7 @@ async def add(bot, kind: str, game_id: int, by: str, *, fallback_image_url: Opti
 
 
 async def ensure_icon(bot, kind: str, game_id: int, image_url: Optional[str] = None, by: str = "automatic") -> str:
-    """The emoji text for an item/spell/profession's icon, creating or reusing the
+    """The emoji text for an item/spell/profession/recipe's icon, creating or reusing the
     emoji as needed; '' if that isn't possible. Never raises - for features
     that just want to decorate a line with an icon."""
     existing = find_alias(kind, game_id)

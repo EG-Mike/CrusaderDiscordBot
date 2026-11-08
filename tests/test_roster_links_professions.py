@@ -72,9 +72,13 @@ class ProfessionTests(Scoped, unittest.IsolatedAsyncioTestCase):
     def test_primary_professions_are_stored(self):
         roster.store_roster([char(1, 30)], "encore")
         roster.store_professions("eggmike-thewhite", PROFESSIONS)
-        self.assertEqual(roster.professions(roster.get("eggmike-thewhite")),
-                         [{"id": 333, "name": "Enchanting", "skill": 200, "max": 225},
-                          {"id": 197, "name": "Tailoring", "skill": 45, "max": 75}])
+        stored = roster.get("eggmike-thewhite")
+        self.assertEqual(roster.professions(stored, primary_only=True),
+                         [{"id": 333, "name": "Enchanting", "skill": 200, "max": 225, "primary": True},
+                          {"id": 197, "name": "Tailoring", "skill": 45, "max": 75, "primary": True}])
+        self.assertEqual([p["name"] for p in roster.professions(stored)], ["Enchanting", "Tailoring", "Cooking"])
+        older = {"professions": '[{"id": 333, "name": "Enchanting", "skill": 1, "max": 75}]'}  # before secondaries
+        self.assertTrue(roster.professions(older, primary_only=True)[0]["primary"])
         self.assertEqual(roster.professions({"professions": "not json"}), [])
 
     async def test_read_only_after_a_logout(self):

@@ -170,6 +170,17 @@ version or raid tier is a configuration change.
   tables go in `db._ADDED_COLUMNS`. `permissions.py`:
   the shared Discord moderator check (`is_moderator(member)`,
   `member_is_moderator(guild, user_id)`); every cog uses it.
+- `crafting.py`: who in the guild can make what. Characters' professions
+  (primary and secondary) and known recipes come from their professions
+  document (`roster.store_professions`, after a logout); Blizzard's recipe
+  catalog per profession and recipe details (crafted item, reagents) are
+  cached. Moderators feature recipes on the dashboard's Crafting page
+  (`webapi/crafting_api.py`, table `crafting_featured`); `cogs/crafting.py`
+  keeps the crafting channel (`CRAFTING_CHANNEL_ID`) posted: every
+  profession with its crafters, then each featured recipe with its crafters
+  (highest skill first) and materials. It runs the profile checks itself
+  when Leveling is off. `channel_posts.py`: the shared "keep these messages
+  posted, edit only on change" logic of the roster and crafting channels.
 - `wow_api.py`: Blizzard game data for the configured game version
   (WoW Forever by default): reference data for pickers, a player's
   characters from their Battle.net account, character lookups by name, and
@@ -259,6 +270,8 @@ set in the dashboard.
   Blizzard, `/character` linking, milestone congratulations, leaderboard,
   Roster and Leveling pages. Achievements can reuse `roster_events` once
   Blizzard reliably reports them.
+- Crafting (done): crafting channel and Crafting page with featured
+  recipes.
 - Phase 4 (in progress): applications moved to Blizzard data (gear check
   with gear, enchants and talents; roster link on approval; WarcraftLogs
   optional). Applications page done (list, detail with gear/stats,
