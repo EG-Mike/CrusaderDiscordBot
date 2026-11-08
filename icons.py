@@ -22,6 +22,8 @@ a missing/failed icon just means plain text for that one item.
 """
 
 import logging
+import struct
+import zlib
 from typing import Dict, Optional
 
 import aiohttp
@@ -35,6 +37,25 @@ log = logging.getLogger("wow-apply-bot.icons")
 # Cache of namespaced key -> discord.Emoji (application-owned), e.g.
 # "class:Mage", "role:Tank", "spec:Mage:Arcane".
 _app_emoji_cache: Dict[str, discord.Emoji] = {}
+
+BLANK_KEY = "blank"          # a transparent emoji: an empty, emoji-wide column in aligned text
+BLANK_FALLBACK = "▫️"         # when the blank emoji couldn't be made
+
+
+def transparent_png(size: int = 32) -> bytes:
+    """A fully transparent square PNG (the blank emoji's image), made
+    without an image library."""
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+
+    rows = b"".join(b"\x00" + b"\x00\x00\x00\x00" * size for _ in range(size))  # filter byte + RGBA pixels
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 6, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
+
+
+def blank() -> str:
+    """The transparent emoji, to keep columns aligned where a row has no icon."""
+    return _resolve_app_emoji(BLANK_KEY) or BLANK_FALLBACK
 
 
 def resolve_guild_emoji(guild: Optional[discord.Guild], emoji_name: Optional[str]) -> str:
@@ -110,6 +131,18 @@ async def provision_app_emojis(client: discord.Client):
         "role": config.ROLE_ICON_URLS,
         "spec": config.SPEC_ICON_URLS,
     }
+
+    blank_name = _emoji_safe_name(BLANK_KEY)
+    if blank_name in existing_by_name:
+        _app_emoji_cache[BLANK_KEY] = existing_by_name[blank_name]
+    else:
+        try:
+            _app_emoji_cache[BLANK_KEY] = await client.create_application_emoji(name=blank_name,
+                                                                                 image=transparent_png())
+            log.info("Provisioned the blank application emoji")
+        except Exception:
+            log.exception("Couldn't create the blank application emoji - aligned lists use %s instead",
+                          BLANK_FALLBACK)
 
     async with aiohttp.ClientSession(trust_env=True) as session:
         for prefix, url_map in sources.items():

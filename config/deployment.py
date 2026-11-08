@@ -286,6 +286,10 @@ CRAFTING_SHOW_PROFESSIONS = True
 # first); the dashboard shows them all.
 CRAFTING_CRAFTERS_PER_PROFESSION = 10
 
+# Leave featured recipes nobody in the guild knows out of the channel (they
+# stay on the Crafting page, marked as hidden).
+CRAFTING_HIDE_UNKNOWN_RECIPES = False
+
 # --- Leveling (cogs/leveling.py) ---
 # Channel where level milestones are announced. Empty: no announcements
 # (the leaderboard still works).

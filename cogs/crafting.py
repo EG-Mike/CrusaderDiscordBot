@@ -11,7 +11,9 @@ The post has:
     each);
   - each featured recipe, by profession: what it makes (linked like items
     on applications), who knows it (Discord member and character), and the
-    materials to send them.
+    materials to send them. Within a profession in a moderator's order, or
+    hardest first (crafting.order_key). With CRAFTING_HIDE_UNKNOWN_RECIPES,
+    recipes nobody in the guild knows are left out.
 Every few minutes it checks whether anything changed and only then edits
 the message(s) (channel_posts.py); a long post spans several messages.
 
@@ -84,8 +86,12 @@ def profession_lines(professions: List[dict], overview: Dict[int, List[dict]], g
 
 
 def featured_lines(featured: List[dict], knows: Dict[int, List[dict]], guild, profession_icons: Dict[int, str],
-                   recipe_icons: Dict[int, str]) -> List[str]:
-    """Each featured recipe, by profession: what it makes, who knows it and the materials."""
+                   recipe_icons: Dict[int, str], *, hide_unknown: bool = False) -> List[str]:
+    """Each featured recipe, by profession (in crafting.featured's order):
+    what it makes, who knows it and the materials. hide_unknown: leave out
+    recipes nobody knows (and a profession left with none)."""
+    if hide_unknown:
+        featured = [r for r in featured if knows.get(r["recipe_id"])]
     if not featured:
         return []
     lines, current = ["## ⭐ Featured recipes", "-# Send the materials to one of the crafters and ask them here."], None
@@ -152,6 +158,7 @@ class CraftingCog(commands.Cog):
             return problem if force else None
         channel = self.bot.get_channel(int(config.CRAFTING_CHANNEL_ID))
         characters = await asyncio.to_thread(crafting.crafters)
+        await crafting.fill_difficulty(self.bot)
         featured = await asyncio.to_thread(crafting.featured)
         try:
             professions = await crafting.professions(self.bot) if config.CRAFTING_SHOW_PROFESSIONS else []
@@ -163,7 +170,8 @@ class CraftingCog(commands.Cog):
         recipe_icons = await self._icons("recipe", [r["recipe_id"] for r in featured])
         lines = (profession_lines(professions, crafting.profession_overview(characters), channel.guild,
                                   profession_icons) if professions else [])
-        lines += featured_lines(featured, crafting.who_knows(characters), channel.guild, profession_icons, recipe_icons)
+        lines += featured_lines(featured, crafting.who_knows(characters), channel.guild, profession_icons, recipe_icons,
+                                hide_unknown=bool(config.CRAFTING_HIDE_UNKNOWN_RECIPES))
         if not lines:
             lines = ["-# Nothing to show yet: professions appear once members log out in the game, and featured "
                      "recipes are picked on the dashboard (Crafting)."]

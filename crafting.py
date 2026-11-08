@@ -16,6 +16,12 @@ Where it comes from:
 Moderators pick "featured" recipes (e.g. high-value ones) on the
 dashboard. The crafting channel lists every profession with its crafters
 and each featured recipe with who can make it and what to send them.
+
+Order of the featured recipes within a profession: a moderator's own
+order, or else hardest first. Blizzard gives no required skill for a
+recipe, but lists each category's recipes from easiest to hardest (as the
+game's profession window does), so a recipe's place in its category is
+its difficulty (0 easiest, 1 hardest; `difficulty`).
 """
 
 import asyncio
@@ -117,6 +123,18 @@ async def recipe_catalog(bot, profession_id: int) -> dict:
     return catalog
 
 
+def place_in_catalog(catalog: dict, recipe_id: int) -> Optional[dict]:
+    """{category, difficulty} of a recipe in a profession's catalog: its
+    place in its category, 0 for the first (easiest) to 1 for the last
+    (hardest). None when it isn't in the catalog."""
+    for category in catalog.get("categories") or []:
+        ids = [r["id"] for r in category["recipes"]]
+        if recipe_id in ids:
+            index = ids.index(recipe_id)
+            return {"category": category["name"], "difficulty": index / (len(ids) - 1) if len(ids) > 1 else 1.0}
+    return None
+
+
 def parse_recipe(data: dict) -> dict:
     """What a recipe makes and needs, from Blizzard's recipe document."""
     item = data.get("crafted_item") or data.get("alliance_crafted_item") or data.get("horde_crafted_item") or {}
@@ -149,25 +167,76 @@ def _featured_row(row) -> dict:
     return found
 
 
+def order_key(row: dict) -> tuple:
+    """A moderator's order first; the rest hardest first, then by name."""
+    if row.get("position") is not None:
+        return (0, row["position"], 0.0, row["name"])
+    return (1, 0, -(row.get("difficulty") if row.get("difficulty") is not None else -1.0), row["name"])
+
+
 def featured() -> List[dict]:
-    """The featured recipes, by profession and name."""
-    rows = db.query("SELECT * FROM crafting_featured WHERE game = ? ORDER BY profession_name, name", (_game(),))
-    return [_featured_row(r) for r in rows]
+    """The featured recipes, by profession name, each profession in its order (order_key)."""
+    rows = [_featured_row(r) for r in db.query("SELECT * FROM crafting_featured WHERE game = ?", (_game(),))]
+    return sorted(rows, key=lambda r: ((r.get("profession_name") or "").lower(), order_key(r)))
 
 
-async def add_featured(bot, recipe_id: int, profession: dict, *, by: str) -> dict:
+def custom_order(rows: List[dict], profession_id: Optional[int]) -> bool:
+    """Whether a moderator ordered this profession's featured recipes."""
+    return any(r.get("position") is not None for r in rows if r.get("profession_id") == profession_id)
+
+
+def set_order(profession_id: int, recipe_ids: Optional[List[int]]):
+    """A moderator's order of a profession's featured recipes (every one of
+    them, top first), or None to go back to hardest first."""
+    rows = [r for r in featured() if r["profession_id"] == profession_id]
+    if recipe_ids is None:
+        db.execute("UPDATE crafting_featured SET position = NULL WHERE game = ? AND profession_id = ?",
+                   (_game(), profession_id))
+        return
+    if sorted(recipe_ids) != sorted(r["recipe_id"] for r in rows):
+        raise CraftingError("The order has to list every featured recipe of that profession once. Reload the page "
+                            "and try again.")
+    with db.transaction() as conn:
+        for position, recipe_id in enumerate(recipe_ids):
+            conn.execute("UPDATE crafting_featured SET position = ? WHERE game = ? AND recipe_id = ?",
+                         (position, _game(), recipe_id))
+
+
+async def fill_difficulty(bot):
+    """Recipes featured before their difficulty was kept get it from the
+    catalog (once). Failures are left for the next time."""
+    missing = [r for r in await asyncio.to_thread(featured) if r.get("difficulty") is None and r["profession_id"]]
+    for profession_id in {r["profession_id"] for r in missing}:
+        try:
+            catalog = await recipe_catalog(bot, profession_id)
+        except CraftingError:
+            continue
+        for r in missing:
+            place = place_in_catalog(catalog, r["recipe_id"]) if r["profession_id"] == profession_id else None
+            if place:
+                await asyncio.to_thread(
+                    db.execute, "UPDATE crafting_featured SET category = ?, difficulty = ? WHERE game = ? "
+                                "AND recipe_id = ?", (place["category"], place["difficulty"], _game(), r["recipe_id"]))
+
+
+async def add_featured(bot, recipe_id: int, profession: dict, *, by: str, place: Optional[dict] = None) -> dict:
     """Features a recipe; `profession` is {id, name} from the catalog it was
-    picked from (Blizzard's recipe document doesn't name its profession)."""
+    picked from (Blizzard's recipe document doesn't name its profession),
+    `place` its {category, difficulty} there. In a profession a moderator
+    ordered, it goes last."""
     if any(r["recipe_id"] == int(recipe_id) for r in await asyncio.to_thread(featured)):
         raise CraftingError("That recipe is already featured.")
     details = await recipe_details(bot, recipe_id)
     await asyncio.to_thread(
         db.execute,
         "INSERT INTO crafting_featured (game, recipe_id, name, profession_id, profession_name, item_id, item_name, "
-        "quantity, reagents, icon_url, added_by, added_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "quantity, reagents, icon_url, added_by, added_at, category, difficulty, position) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT MAX(position) + 1 FROM crafting_featured "
+        "WHERE game = ? AND profession_id = ?))",
         (_game(), int(recipe_id), details["name"], profession.get("id"), profession.get("name"), details["item_id"],
          details["item_name"], details["quantity"], json.dumps(details["reagents"]), details["icon_url"], by,
-         roster.timestamp()))
+         roster.timestamp(), (place or {}).get("category"), (place or {}).get("difficulty"), _game(),
+         profession.get("id")))
     return next(r for r in await asyncio.to_thread(featured) if r["recipe_id"] == int(recipe_id))
 
 

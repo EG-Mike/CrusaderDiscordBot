@@ -160,7 +160,10 @@ version or raid tier is a configuration change.
   `webapi/roster_api.py` (Roster and Leveling pages). The roster is also
   kept posted in a Discord channel (`GUILD_ROSTER_CHANNEL_ID`; edited only
   when its content changes; header is the "guild_roster_header" bot
-  message; aligned columns with a header row; alts below
+  message; aligned columns with a header row: every column before the
+  member has a fixed width (padded code, emoji, `icons.blank()` - a
+  transparent bot emoji - for a missing icon or profession), the member
+  last; alts below
   `GUILD_ROSTER_POST_MIN_LEVEL` left out; persistent "Claim a character" /
   "My characters" buttons for main/alt self-service). Level milestones
   found together are grouped into as few messages as fit. Primary
@@ -178,7 +181,11 @@ version or raid tier is a configuration change.
   (`webapi/crafting_api.py`, table `crafting_featured`); `cogs/crafting.py`
   keeps the crafting channel (`CRAFTING_CHANNEL_ID`) posted: every
   profession with its crafters, then each featured recipe with its crafters
-  (highest skill first) and materials. It runs the profile checks itself
+  (highest skill first) and materials. Featured recipes are ordered per
+  profession by a moderator (`position`) or else hardest first: Blizzard
+  gives no required skill, so `difficulty` is the recipe's place in its
+  category of Blizzard's list (easiest to hardest). Recipes nobody knows
+  can be left out of the channel (`CRAFTING_HIDE_UNKNOWN_RECIPES`). It runs the profile checks itself
   when Leveling is off. `channel_posts.py`: the shared "keep these messages
   posted, edit only on change" logic of the roster and crafting channels.
 - `wow_api.py`: Blizzard game data for the configured game version

@@ -28,7 +28,7 @@ from threading import RLock
 _LOCK = RLock()
 _CONN = None
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 _SCHEMA = [
     # Generic key -> JSON record store, one "store" per former JSON file
@@ -347,6 +347,9 @@ _SCHEMA = [
 _ADDED_COLUMNS = [
     ("roster_characters", "professions", "TEXT"),  # JSON: [{id, name, skill, max}], primary professions
     ("roster_characters", "known_recipes", "TEXT"),  # JSON: [recipe id, ...] of every profession (crafting.py)
+    ("crafting_featured", "category", "TEXT"),       # the recipe's category in Blizzard's list
+    ("crafting_featured", "difficulty", "REAL"),     # 0 (easiest) .. 1 (hardest) within its category
+    ("crafting_featured", "position", "INTEGER"),    # a moderator's order within the profession; NULL = by difficulty
 ]
 
 

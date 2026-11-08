@@ -4,7 +4,7 @@
 // the materials to send.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, Hammer, Plus, Search, Send, Star, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, EyeOff, Hammer, Plus, RotateCcw, Search, Send, Star, Trash2 } from "lucide-react";
 import { ApiError, api, type CraftingOverview, type Crafter, type FeaturedRecipe, type RecipeCatalog } from "../lib/api";
 import { useLive } from "../lib/live";
 import { CLASS_COLORS } from "../lib/wow";
@@ -35,10 +35,32 @@ function RecipeIcon({ url }: { url: string | null }) {
   );
 }
 
-function FeaturedCard({ r, onRemove, busy }: { r: FeaturedRecipe; onRemove: () => void; busy: boolean }) {
+function FeaturedCard({
+  r,
+  onRemove,
+  onMove,
+  first,
+  last,
+  busy,
+}: {
+  r: FeaturedRecipe;
+  onRemove: () => void;
+  onMove: (by: -1 | 1) => void;
+  first: boolean;
+  last: boolean;
+  busy: boolean;
+}) {
   const name = r.item_name ?? r.name;
   return (
     <li className="flex items-start gap-3 px-4 py-3 md:px-5">
+      <div className="flex shrink-0 flex-col">
+        <button type="button" onClick={() => onMove(-1)} disabled={busy || first} aria-label={`Move ${name} up`} className="rounded p-0.5 text-faint transition hover:bg-raised hover:text-fg disabled:opacity-30 disabled:hover:bg-transparent">
+          <ArrowUp className="h-3.5 w-3.5" />
+        </button>
+        <button type="button" onClick={() => onMove(1)} disabled={busy || last} aria-label={`Move ${name} down`} className="rounded p-0.5 text-faint transition hover:bg-raised hover:text-fg disabled:opacity-30 disabled:hover:bg-transparent">
+          <ArrowDown className="h-3.5 w-3.5" />
+        </button>
+      </div>
       <RecipeIcon url={r.item_icon_url} />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-baseline gap-x-2">
@@ -50,7 +72,12 @@ function FeaturedCard({ r, onRemove, busy }: { r: FeaturedRecipe; onRemove: () =
             <span className="font-semibold">{name}</span>
           )}
           {r.quantity && r.quantity > 1 && <span className="text-2xs text-muted">×{r.quantity}</span>}
-          <span className="text-2xs text-faint">{r.profession_name}</span>
+          {r.category && <span className="text-2xs text-faint">{r.category}</span>}
+          {r.hidden_in_channel && (
+            <Badge>
+              <EyeOff className="h-2.5 w-2.5" /> Hidden in the channel
+            </Badge>
+          )}
         </div>
         <div className="mt-1.5 flex flex-wrap gap-1.5">
           {r.crafters.length ? (
@@ -224,6 +251,37 @@ export default function CraftingPage() {
 
   const withCrafters = data?.professions.filter((p) => p.crafters.length) ?? [];
 
+  // The featured recipes per profession, in the order the API gives (the channel's order).
+  const groups = useMemo(() => {
+    const found: { id: number | null; name: string; rows: FeaturedRecipe[] }[] = [];
+    for (const r of data?.featured ?? []) {
+      const last = found[found.length - 1];
+      if (last && last.id === r.profession_id) last.rows.push(r);
+      else found.push({ id: r.profession_id, name: r.profession_name ?? "Other", rows: [r] });
+    }
+    return found;
+  }, [data]);
+
+  const saveOrder = async (professionId: number, recipeIds: number[] | null) => {
+    setBusy(true);
+    try {
+      await api.post("/api/crafting/order", { profession_id: professionId, recipe_ids: recipeIds });
+      if (recipeIds === null) toast("ok", "Back to hardest first.");
+      load();
+    } catch (e) {
+      toast("error", e instanceof ApiError ? e.message : "Couldn't save the order");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const move = (professionId: number | null, rows: FeaturedRecipe[], index: number, by: -1 | 1) => {
+    if (professionId == null) return;
+    const ids = rows.map((r) => r.recipe_id);
+    [ids[index], ids[index + by]] = [ids[index + by], ids[index]];
+    void saveOrder(professionId, ids);
+  };
+
   return (
     <>
       <SectionHeader
@@ -270,13 +328,47 @@ export default function CraftingPage() {
               <section className="card">
                 <header className="border-b border-line px-4 py-3 md:px-5">
                   <div className="label">Featured recipes</div>
+                  <p className="mt-0.5 text-2xs text-faint">
+                    {data.hide_unknown_recipes
+                      ? "Recipes nobody in the guild knows are left out of the channel."
+                      : "Every featured recipe is in the channel, also ones nobody knows yet."}{" "}
+                    <Link to="/settings?group=crafting#CRAFTING_HIDE_UNKNOWN_RECIPES" className="text-gold hover:underline">
+                      Change
+                    </Link>
+                  </p>
                 </header>
                 {data.featured.length ? (
-                  <ul className="divide-y divide-line">
-                    {data.featured.map((r) => (
-                      <FeaturedCard key={r.recipe_id} r={r} busy={busy} onRemove={() => setRemoving(r)} />
-                    ))}
-                  </ul>
+                  groups.map((g) => {
+                    const custom = data.custom_order.includes(g.id ?? -1);
+                    const icon = data.professions.find((p) => p.id === g.id)?.icon_url;
+                    return (
+                      <div key={g.id ?? "other"} className="border-b border-line last:border-b-0">
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 bg-raised/30 px-4 py-2 md:px-5">
+                          {icon && <img src={icon} alt="" className="h-4 w-4 rounded-sm" />}
+                          <span className="font-semibold">{g.name}</span>
+                          <span className="text-2xs text-faint">{custom ? "Your order" : "Hardest first"}</span>
+                          {custom && g.id != null && (
+                            <button type="button" onClick={() => saveOrder(g.id!, null)} disabled={busy} className="ml-auto inline-flex items-center gap-1 text-2xs text-gold hover:underline disabled:opacity-50">
+                              <RotateCcw className="h-3 w-3" /> Back to hardest first
+                            </button>
+                          )}
+                        </div>
+                        <ul className="divide-y divide-line">
+                          {g.rows.map((r, i) => (
+                            <FeaturedCard
+                              key={r.recipe_id}
+                              r={r}
+                              busy={busy}
+                              first={i === 0}
+                              last={i === g.rows.length - 1}
+                              onRemove={() => setRemoving(r)}
+                              onMove={(by) => move(g.id, g.rows, i, by)}
+                            />
+                          ))}
+                        </ul>
+                      </div>
+                    );
+                  })
                 ) : (
                   <EmptyState icon={<Star className="h-6 w-6" />} title="No featured recipes yet">
                     Add the recipes people should know about, e.g. high-value ones, below.
