@@ -11,6 +11,8 @@ Read-only: nothing is stored, so lookups aren't audited.
 
 import asyncio
 
+import card_stats
+import config
 import gear
 import roster
 import wow_api
@@ -60,6 +62,8 @@ async def lookup(request):
         "off_ruleset": gear.off_ruleset(summary),
         "requirement_problems": gear.requirement_problems(summary),
         "stat_groups": gear.stat_groups(summary.get("stats") or {}),
+        "statistics": {"title": config.APPLICATION_STATISTICS_TITLE or None,
+                       "groups": card_stats.lines(summary.get("achievement_stats"))},
         "roster": entry,
         "warcraftlogs": None,  # once WarcraftLogs covers WoW Forever
     })

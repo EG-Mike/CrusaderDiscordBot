@@ -541,6 +541,11 @@ GEARCHECK_PROFILE_URL = ""
 # plays; the tier settings (Raid tiers) say which raids count.
 APPLICATION_WARCRAFTLOGS_ENABLED = False
 
+# Heading of the statistics section on the application card (which
+# statistics: the dashboard's Applications, Card statistics). Empty: no
+# heading.
+APPLICATION_STATISTICS_TITLE = "Raid boss kills"
+
 # --- Attendance tracking (Regular-role eligibility) ---
 # Regular role - separate from FRESH_EXEMPT_ROLE_IDS above (that list is
 # about skipping the Fresh assignment/nickname on approval; this is the

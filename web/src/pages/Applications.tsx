@@ -9,6 +9,7 @@ import {
   AlertTriangle,
   Archive,
   ArrowLeft,
+  BarChart3,
   Check,
   ClipboardList,
   ExternalLink,
@@ -25,7 +26,7 @@ import { useLive } from "../lib/live";
 import { fullDateTime, timeAgo, useNow } from "../lib/time";
 import { CLASS_COLORS } from "../lib/wow";
 import { Avatar } from "../components/Audit";
-import { GearCard, ProfessionsCard, StatsCard, TalentsCard } from "../components/Gear";
+import { CardStatisticsCard, GearCard, ProfessionsCard, StatsCard, TalentsCard } from "../components/Gear";
 import { useToast } from "../components/Toast";
 import { Badge, Button, Dialog, EmptyState, SectionHeader, Segmented, Skeleton, StatTile } from "../components/ui";
 
@@ -150,9 +151,14 @@ export function ApplicationsPage() {
         title="Applications"
         description="New members apply in Discord; the bot reads their character from Blizzard. Decide here or on the card in the review channel."
         actions={
-          <Button icon={<Archive className="h-3.5 w-3.5" />} onClick={() => setArchiveOpen(true)} disabled={!data || Boolean(data.archive_problem) || decided === 0} title={data?.archive_problem ?? undefined}>
-            Archive decided
-          </Button>
+          <>
+            <Link to="/applications/statistics" className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-raised/60 px-3.5 text-[13px] font-medium transition hover:border-faint hover:bg-raised">
+              <BarChart3 className="h-3.5 w-3.5" /> Card statistics
+            </Link>
+            <Button icon={<Archive className="h-3.5 w-3.5" />} onClick={() => setArchiveOpen(true)} disabled={!data || Boolean(data.archive_problem) || decided === 0} title={data?.archive_problem ?? undefined}>
+              Archive decided
+            </Button>
+          </>
         }
       />
 
@@ -555,6 +561,7 @@ export function ApplicationPage() {
             </section>
           )}
           {g && <TalentsCard talents={g.talents} />}
+          {g && <CardStatisticsCard statistics={a.statistics} />}
           {g && <StatsCard groups={g.stat_groups} />}
           {g && <ProfessionsCard professions={g.professions} />}
           <section className="card px-4 py-3 md:px-5">

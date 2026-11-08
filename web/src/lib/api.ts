@@ -612,6 +612,28 @@ export interface StatValue {
   text: string;
 }
 
+/** The chosen achievement statistics (e.g. raid boss kills), grouped per instance as on the card. */
+export interface CardStatistics {
+  title: string | null;
+  groups: { group: string | null; items: { label: string; value: number }[] }[];
+}
+
+export interface CardStatistic {
+  id: number;
+  name: string;
+  category: string | null;
+  label: string;
+  group: string | null;
+  chosen?: boolean;
+}
+
+export interface CardStatisticsConfig {
+  title: string | null;
+  chosen: CardStatistic[];
+  catalog: CardStatistic[];
+  can_scan: boolean;
+}
+
 export interface StatGroup {
   title: string;
   stats: StatValue[];
@@ -623,6 +645,7 @@ export interface LookupResult {
   requirement_problems: string[];
   roster: { on_roster: boolean; in_guild: boolean; is_main: boolean; member: RosterMember | null } | null;
   stat_groups: StatGroup[];
+  statistics: CardStatistics;
   warcraftlogs: null;
 }
 
@@ -690,6 +713,7 @@ export interface ApplicationDetail extends ApplicationRow {
   decision: ApplicationDecision | null;
   decision_text: string | null;
   legacy_text: string | null;
+  statistics: CardStatistics;
   warcraftlogs: { enabled: boolean; text: string | null };
 }
 

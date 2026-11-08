@@ -28,7 +28,7 @@ from threading import RLock
 _LOCK = RLock()
 _CONN = None
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 _SCHEMA = [
     # Generic key -> JSON record store, one "store" per former JSON file
@@ -308,6 +308,26 @@ _SCHEMA = [
         added_by        TEXT,
         added_at        TEXT NOT NULL,
         PRIMARY KEY (game, recipe_id)
+    )
+    """,
+    # Statistics on the application card (card_stats.py): every statistic
+    # the bot has seen on a character (Blizzard has no list of them), and
+    # the ones moderators chose, in order. Per game version.
+    """
+    CREATE TABLE IF NOT EXISTS card_stats_seen (
+        game     TEXT NOT NULL,
+        stat_id  INTEGER NOT NULL,
+        name     TEXT NOT NULL,
+        category TEXT,
+        PRIMARY KEY (game, stat_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS card_stats_chosen (
+        game     TEXT NOT NULL,
+        stat_id  INTEGER NOT NULL,
+        position INTEGER NOT NULL,
+        PRIMARY KEY (game, stat_id)
     )
     """,
     # Links waiting for their character (roster.py): an approved applicant

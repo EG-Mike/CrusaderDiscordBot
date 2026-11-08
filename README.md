@@ -35,7 +35,12 @@ moderator-driven announcement system.
    professions; the gear (item level first, names linked to Wowhead); the
    note and screenshots; and, once decided, what the bot did. Its colour
    shows the status (class colour, green approved, red denied), and it
-   only shows the buttons that fit, plus "Open on dashboard". WarcraftLogs parses are added once
+   only shows the buttons that fit, plus "Open on dashboard".
+   Statistics of your choice can be added, e.g. raid boss kills: on the
+   dashboard, **Applications → Card statistics**, pick them from the
+   statistics the bot has seen on characters ("Scan the guild" reads your
+   members). Bosses of one instance share a line; a boss the applicant
+   hasn't killed shows 0. WarcraftLogs parses are added once
    WarcraftLogs covers WoW Forever (Settings, Applications).
 5. **Approve** / **Deny** / **Reset** work on the card *and* on the
    dashboard, for moderators and members with the approver role (checked by

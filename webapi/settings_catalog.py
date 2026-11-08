@@ -190,6 +190,10 @@ CATALOG: Dict[str, Entry] = {
     "GEARCHECK_PROFILE_URL": Entry("applications", "Character profile link",
                                    "A link on the review card, e.g. to the armory. {region} and {slug} (like "
                                    "eggmike-thewhite) are filled in. Empty: no link.", advanced=True),
+    "APPLICATION_STATISTICS_TITLE": Entry(
+        "applications", "Statistics heading",
+        "The heading above the statistics on the application card, e.g. Raid boss kills. Which statistics: "
+        "Applications, Card statistics. Empty: no heading."),
     "APPLICATION_WARCRAFTLOGS_ENABLED": Entry(
         "applications", "Include WarcraftLogs parses",
         "Adds per-boss parses for the current and previous tier (Raid tiers) to applications. Turn on once "

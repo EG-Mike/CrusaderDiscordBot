@@ -13,6 +13,8 @@ Layout, top to bottom:
               denials, the guild's minimums, empty slots, missing enchants,
               empty sockets, another ruleset
   stats       the statistics that matter for the role, and professions
+  kills       the achievement statistics moderators chose (card_stats.py),
+              e.g. raid boss kills, one line per instance
   gear        item level first, linked names, enchants and gems below
   parses      WarcraftLogs blocks, once WarcraftLogs covers the game
   note        the applicant's note as a quote, screenshots as a gallery
@@ -33,6 +35,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 import discord
 
 import applications
+import card_stats
 import config
 import gear
 import icons
@@ -155,6 +158,15 @@ def stats_block(application: dict) -> Optional[str]:
     return "### Stats\n" + "\n".join(lines) if lines else None
 
 
+def statistics_block(application: dict) -> Optional[str]:
+    """The chosen achievement statistics (card_stats.py), when the record
+    has Blizzard data."""
+    summary = application.get("gear")
+    if not summary:
+        return None
+    return card_stats.card_text(summary.get("achievement_stats"))
+
+
 def gear_lines(application: dict, limit: int,
                more: str = "-# … the rest is on the dashboard's Applications page") -> Optional[str]:
     """The gear list within `limit` characters, or None without Blizzard data."""
@@ -244,6 +256,7 @@ def build(application: dict, *, prior_denials: List[Tuple[int, dict]], callbacks
         "facts": facts(application, guild),
         "attention": attention(application, prior_denials),
         "stats": stats_block(application),
+        "kills": statistics_block(application),
         "parses": "\n\n".join(filter(None, (application.get(k) for k in ("tier_block", "boss_block",
                                                                           "hidden_block")))) or None,
         "note": note_block(application),
@@ -263,7 +276,7 @@ def build(application: dict, *, prior_denials: List[Tuple[int, dict]], callbacks
     if parts["attention"]:
         container.add_item(discord.ui.TextDisplay(parts["attention"]))
     container.add_item(discord.ui.Separator(spacing=discord.SeparatorSpacing.large))
-    for key in ("stats", "gear", "parses"):
+    for key in ("stats", "kills", "gear", "parses"):
         if parts[key]:
             container.add_item(discord.ui.TextDisplay(parts[key]))
     if application.get("wcl_url"):
@@ -316,6 +329,7 @@ def lookup_view(summary: dict, *, icons_by_key: Optional[Dict[str, str]] = None,
         "facts": facts(record, guild),
         "attention": attention(record, []),
         "stats": stats_block(record),
+        "kills": statistics_block(record),
     }
     room = max(MIN_GEAR_TEXT, CARD_TEXT_LIMIT - sum(len(p or "") for p in parts.values()))
     parts["gear"] = gear_lines(record, room, "-# … the rest is on the dashboard's Character lookup")
@@ -331,7 +345,7 @@ def lookup_view(summary: dict, *, icons_by_key: Optional[Dict[str, str]] = None,
     if parts["attention"]:
         container.add_item(discord.ui.TextDisplay(parts["attention"]))
     container.add_item(discord.ui.Separator(spacing=discord.SeparatorSpacing.large))
-    for key in ("stats", "gear"):
+    for key in ("stats", "kills", "gear"):
         if parts[key]:
             container.add_item(discord.ui.TextDisplay(parts[key]))
     view = discord.ui.LayoutView(timeout=None)

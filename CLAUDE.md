@@ -142,6 +142,15 @@ version or raid tier is a configuration change.
   `/lookup` uses the same parts (`lookup_view`: no applicant, note,
   decision or action buttons; a roster line and "Open in Character
   lookup" instead), so the two always look alike.
+- `card_stats.py`: statistics on the application card, `/lookup` and the
+  application pages, e.g. raid boss kills, from the character's
+  achievement statistics (read by `gear.fetch`, stored as
+  `achievement_stats`). Blizzard has no list of all statistics, so the
+  choice (Applications, Card statistics page; table `card_stats_chosen`)
+  is made from those seen on characters (`card_stats_seen`, filled by every
+  character read and by "Scan the guild"). "<Boss> kills (<Instance>)" are
+  grouped per instance, one line each; missing ones count as 0. Heading:
+  `APPLICATION_STATISTICS_TITLE`. The card's gear list gets the room left.
 - `gear.py`: the gear check: a character's gear (item level, enchants,
   gems, sets), talents and profile from Blizzard, flags (empty slots,
   missing enchants, empty sockets) and the guild's minimum level/item

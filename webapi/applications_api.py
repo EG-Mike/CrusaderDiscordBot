@@ -8,6 +8,9 @@ Dashboard API for applications (cogs/apply.py, applications.py).
   POST /api/applications/{id}/reset           back to pending (moderators and approvers)
   POST /api/applications/{id}/refresh-gear    read the character from Blizzard again (moderators)
   POST /api/applications/archive              move decided cards to the archive channel (moderators)
+  GET  /api/applications/statistics           the card's statistics: chosen ones and every one seen (moderators)
+  PUT  /api/applications/statistics           {"stat_ids": [...]}: the statistics on the card, in order
+  POST /api/applications/statistics/scan      read the guild's characters to find more statistics
 
 Moderators see applications (as they can in the review channel); only
 moderators and approvers decide, the same rule as the card's buttons (a
@@ -20,13 +23,17 @@ applicant's note or the reviewer's reason.
 import asyncio
 
 import applications
+import card_stats
+import config
 import gear
+import roster
 from applications import ApplicationError, Reviewer
 from webapi import auth
 from webapi.common import BOT_KEY, HUB_KEY, BadRequest, audit, error, forbidden_unless, json_response, read_json
 
 LEVEL = "moderator"
 DECIDE = "decide"  # see DECIDE_LEVELS
+MAX_CARD_STATISTICS = 60  # far more than fit nicely; the card gives the gear what's left
 DECIDE_LEVELS = {"moderator", "approver"}  # any of these may approve, deny and reset
 WHAT = "applications"
 
@@ -153,6 +160,50 @@ async def archive(request):
     return json_response({"moved": moved, "failed": failed})
 
 
+async def get_statistics(request):
+    denied = forbidden_unless(request, LEVEL, WHAT)
+    if denied:
+        return denied
+    chosen, catalog = await asyncio.to_thread(card_stats.chosen), await asyncio.to_thread(card_stats.catalog)
+    return json_response({"title": config.APPLICATION_STATISTICS_TITLE or None, "chosen": chosen, "catalog": catalog,
+                          "can_scan": getattr(request.app[BOT_KEY], "blizzard", None) is not None
+                          and request.app[BOT_KEY].get_cog("RosterCog") is not None})
+
+
+async def put_statistics(request):
+    denied = forbidden_unless(request, LEVEL, WHAT)
+    if denied:
+        return denied
+    try:
+        body = await read_json(request)
+        stat_ids = body.get("stat_ids")
+        if not isinstance(stat_ids, list) or not all(isinstance(i, int) for i in stat_ids):
+            raise BadRequest("stat_ids must be a list of statistics.")
+        if len(stat_ids) > MAX_CARD_STATISTICS:
+            raise BadRequest(f"At most {MAX_CARD_STATISTICS} statistics fit on the card.")
+        await asyncio.to_thread(card_stats.set_chosen, stat_ids)
+    except (BadRequest, ValueError) as exc:
+        return error(str(exc), 400)
+    audit(request, "application", "applications.statistics", f"Chose {len(stat_ids)} statistic(s) for the "
+          "application card", details={"stat_ids": stat_ids})
+    return json_response({"chosen": await asyncio.to_thread(card_stats.chosen)})
+
+
+async def scan_statistics(request):
+    denied = forbidden_unless(request, LEVEL, WHAT)
+    if denied:
+        return denied
+    bot = request.app[BOT_KEY]
+    if getattr(bot, "blizzard", None) is None or bot.get_cog("RosterCog") is None:
+        return error("Scanning needs the Blizzard API keys and the guild roster (Settings).", 409)
+    characters = [c for c in await asyncio.to_thread(roster.characters)
+                  if c["guild_slug"] and (c["level"] or 0) >= roster.PROFILE_MIN_LEVEL]
+    result = await card_stats.scan(bot, characters)
+    audit(request, "application", "applications.statistics_scan",
+          f"Scanned {result['read']} characters for statistics")
+    return json_response(result)
+
+
 def register(app):
     hub = app[HUB_KEY]
 
@@ -167,5 +218,8 @@ def register(app):
     applications.on_change("dashboard", changed)
     app.router.add_get("/api/applications", list_applications)
     app.router.add_post("/api/applications/archive", archive)
+    app.router.add_get("/api/applications/statistics", get_statistics)
+    app.router.add_put("/api/applications/statistics", put_statistics)
+    app.router.add_post("/api/applications/statistics/scan", scan_statistics)
     app.router.add_get("/api/applications/{id}", get_application)
     app.router.add_post("/api/applications/{id}/{action}", application_action)

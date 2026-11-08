@@ -30,6 +30,7 @@ import logging
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple
 
+import card_stats
 import config
 import gear
 
@@ -208,6 +209,9 @@ def public_detail(store, guild, message_id: int, record: dict, *,
         "legacy_text": None if summary else "\n\n".join(filter(None, (
             record.get("class_block"), record.get("armory_block"), record.get("tier_block"),
             record.get("boss_block")))) or None,
+        # The chosen achievement statistics (card_stats.py), e.g. raid boss kills, grouped as on the card.
+        "statistics": {"title": config.APPLICATION_STATISTICS_TITLE or None,
+                       "groups": card_stats.lines((summary or {}).get("achievement_stats")) if summary else []},
         # Parses join here once WarcraftLogs covers the game version (APPLICATION_WARCRAFTLOGS_ENABLED).
         "warcraftlogs": {"enabled": bool(config.APPLICATION_WARCRAFTLOGS_ENABLED),
                          "text": "\n\n".join(filter(None, (record.get("tier_block"), record.get("boss_block"))))
