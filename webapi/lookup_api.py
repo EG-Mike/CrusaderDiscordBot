@@ -58,6 +58,7 @@ async def lookup(request):
         "character": {**summary, "items": [{**i, "icon_url": icons.get(i["item_id"])} for i in summary["items"]]},
         "off_ruleset": gear.off_ruleset(summary),
         "requirement_problems": gear.requirement_problems(summary),
+        "stat_groups": gear.stat_groups(summary.get("stats") or {}),
         "roster": entry,
         "warcraftlogs": None,  # once WarcraftLogs covers WoW Forever
     })

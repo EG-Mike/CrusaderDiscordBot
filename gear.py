@@ -16,6 +16,12 @@ What's flagged:
 Slot lists are settings, since which slots take enchants depends on the
 game version.
 
+Character statistics (the character sheet: health, primary stats, hit,
+crit, spell power, armor, defense, ...) come from the statistics document.
+The review card shows the ones that matter for the applicant's role
+(stat_highlights); the dashboard shows them all, grouped (STAT_GROUPS).
+Blizzard leaves out fields a game version doesn't have, and so do we.
+
 The summary is plain data (stored with an application, so a re-render
 never needs Blizzard); render_lines() turns it into Discord text, with
 item icons from the emoji library when available.
@@ -42,6 +48,59 @@ SLOT_NAMES = {"HEAD": "Head", "NECK": "Neck", "SHOULDER": "Shoulders", "BACK": "
               "TRINKET_2": "Trinket", "MAIN_HAND": "Main hand", "OFF_HAND": "Off hand", "RANGED": "Ranged"}
 EMPTY_SLOT_NAMES = {"FINGER_1": "Ring 1", "FINGER_2": "Ring 2", "TRINKET_1": "Trinket 1", "TRINKET_2": "Trinket 2"}
 COSMETIC_SLOTS = {"SHIRT", "TABARD"}  # not counted for item level or flags
+
+
+# Statistics: (key in our summary, label, Blizzard field, how to read it, unit). "effective" reads
+# {"base", "effective"}, "value" reads {"value", ...} (a percentage), "plain" a bare number.
+STAT_DEFS = [
+    ("health", "Health", "health", "plain", ""), ("power", "Mana / power", "power", "plain", ""),
+    ("strength", "Strength", "strength", "effective", ""), ("agility", "Agility", "agility", "effective", ""),
+    ("stamina", "Stamina", "stamina", "effective", ""), ("intellect", "Intellect", "intellect", "effective", ""),
+    ("spirit", "Spirit", "spirit", "effective", ""),
+    ("attack_power", "Attack power", "attack_power", "plain", ""),
+    ("melee_hit", "Melee hit", "melee_hit", "value", "%"), ("melee_crit", "Melee crit", "melee_crit", "value", "%"),
+    ("melee_haste", "Melee haste", "melee_haste", "value", "%"), ("expertise", "Expertise", "expertise", "plain", ""),
+    ("armor_penetration", "Armor penetration", "armor_penetration", "plain", ""),
+    ("main_hand_dps", "Main hand DPS", "main_hand_dps", "plain", ""),
+    ("ranged_attack_power", "Ranged attack power", "ranged_attack_power", "plain", ""),
+    ("ranged_hit", "Ranged hit", "ranged_hit", "value", "%"), ("ranged_crit", "Ranged crit", "ranged_crit", "value", "%"),
+    ("ranged_haste", "Ranged haste", "ranged_haste", "value", "%"),
+    ("spell_power", "Spell power", "spell_power", "plain", ""), ("spell_healing", "Bonus healing", "spell_healing", "plain", ""),
+    ("spell_hit", "Spell hit", "spell_hit", "value", "%"), ("spell_crit", "Spell crit", "spell_crit", "value", "%"),
+    ("spell_haste", "Spell haste", "spell_haste", "value", "%"),
+    ("spell_penetration", "Spell penetration", "spell_penetration", "plain", ""),
+    ("mana_regen", "Mana regen (not casting)", "mana_regen", "plain", ""),
+    ("mana_regen_combat", "Mana regen (casting)", "mana_regen_combat", "plain", ""),
+    ("armor", "Armor", "armor", "effective", ""), ("defense", "Defense", "defense", "effective", ""),
+    ("dodge", "Dodge", "dodge", "value", "%"), ("parry", "Parry", "parry", "value", "%"),
+    ("block", "Block", "block", "value", "%"),
+    ("fire_resistance", "Fire resistance", "fire_resistance", "effective", ""),
+    ("frost_resistance", "Frost resistance", "frost_resistance", "effective", ""),
+    ("nature_resistance", "Nature resistance", "nature_resistance", "effective", ""),
+    ("shadow_resistance", "Shadow resistance", "shadow_resistance", "effective", ""),
+    ("arcane_resistance", "Arcane resistance", "arcane_resistance", "effective", ""),
+]
+STAT_LABELS = {key: (label, unit) for key, label, _field, _kind, unit in STAT_DEFS}
+STAT_GROUPS = [
+    ("General", ["health", "power", "strength", "agility", "stamina", "intellect", "spirit"]),
+    ("Melee", ["attack_power", "melee_hit", "melee_crit", "melee_haste", "expertise", "armor_penetration",
+               "main_hand_dps"]),
+    ("Ranged", ["ranged_attack_power", "ranged_hit", "ranged_crit", "ranged_haste"]),
+    ("Spell", ["spell_power", "spell_healing", "spell_hit", "spell_crit", "spell_haste", "spell_penetration",
+               "mana_regen", "mana_regen_combat"]),
+    ("Defense", ["armor", "defense", "dodge", "parry", "block"]),
+    ("Resistances", ["fire_resistance", "frost_resistance", "nature_resistance", "shadow_resistance",
+                     "arcane_resistance"]),
+]
+# What the review card shows per role. DPS is split by what the character's sheet says it is:
+# casters have more spell power than attack power, hunters more ranged than melee attack power.
+ROLE_STATS = {
+    "Tank": ["health", "armor", "defense", "dodge", "parry", "block", "melee_hit"],
+    "Healer": ["power", "intellect", "spirit", "spell_healing", "spell_crit", "mana_regen_combat"],
+    "caster": ["power", "intellect", "spell_power", "spell_hit", "spell_crit", "spell_haste"],
+    "melee": ["health", "attack_power", "strength", "agility", "melee_hit", "melee_crit", "melee_haste"],
+    "ranged": ["ranged_attack_power", "agility", "ranged_hit", "ranged_crit", "ranged_haste", "intellect"],
+}
 
 
 class GearError(Exception):
@@ -97,6 +156,56 @@ def parse_professions(data: Optional[dict]) -> List[dict]:
     return found
 
 
+def parse_stats(data: Optional[dict]) -> Dict[str, float]:
+    """{our stat key: number} from the statistics document; fields it
+    doesn't have are left out."""
+    stats: Dict[str, float] = {}
+    for key, _label, field_name, kind, _unit in STAT_DEFS:
+        value = (data or {}).get(field_name)
+        if kind == "effective" and isinstance(value, dict):
+            value = value.get("effective", value.get("base"))
+        elif kind == "value" and isinstance(value, dict):
+            value = value.get("value")
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            stats[key] = round(float(value), 2)
+    return stats
+
+
+def format_stat(key: str, value) -> str:
+    unit = STAT_LABELS.get(key, ("", ""))[1]
+    if unit == "%":
+        return f"{value:.2f}%"
+    return f"{value:,.0f}" if float(value).is_integer() or abs(value) >= 100 else f"{value:.1f}"
+
+
+def stat_profile(stats: Dict[str, float], role: Optional[str]) -> str:
+    """Which ROLE_STATS list fits: the role, or for DPS caster/melee/ranged."""
+    if role in ("Tank", "Healer"):
+        return role
+    if (stats.get("spell_power") or 0) > max(stats.get("attack_power") or 0, stats.get("ranged_attack_power") or 0):
+        return "caster"
+    if (stats.get("ranged_attack_power") or 0) > (stats.get("attack_power") or 0):
+        return "ranged"
+    return "melee"
+
+
+def stat_highlights(stats: Dict[str, float], role: Optional[str]) -> List[dict]:
+    """[{key, label, value, text}] of the stats that matter for the role."""
+    return [{"key": k, "label": STAT_LABELS[k][0], "value": stats[k], "text": format_stat(k, stats[k])}
+            for k in ROLE_STATS[stat_profile(stats, role)] if k in stats]
+
+
+def stat_groups(stats: Dict[str, float]) -> List[dict]:
+    """Every stat the character has, grouped for the dashboard."""
+    groups = []
+    for title, keys in STAT_GROUPS:
+        rows = [{"key": k, "label": STAT_LABELS[k][0], "value": stats[k], "text": format_stat(k, stats[k])}
+                for k in keys if k in stats]
+        if rows:
+            groups.append({"title": title, "stats": rows})
+    return groups
+
+
 def off_ruleset(summary: dict) -> bool:
     """True when the character plays on a ruleset that isn't one of the guild's."""
     allowed = [int(r) for r in config.CHARACTER_RULESETS or []]
@@ -104,7 +213,7 @@ def off_ruleset(summary: dict) -> bool:
 
 
 def summarise(profile: dict, equipment: dict, specializations: Optional[dict], *,
-              class_name: str = "", professions: Optional[dict] = None) -> dict:
+              class_name: str = "", professions: Optional[dict] = None, statistics: Optional[dict] = None) -> dict:
     """Plain-data gear summary from Blizzard's character documents."""
     items = sorted((parse_item(it) for it in (equipment or {}).get("equipped_items") or []),
                    key=lambda i: SLOT_ORDER.index(i["slot"]) if i["slot"] in SLOT_ORDER else len(SLOT_ORDER))
@@ -125,12 +234,14 @@ def summarise(profile: dict, equipment: dict, specializations: Optional[dict], *
         "ruleset_id": (profile.get("ruleset") or {}).get("id"),
         "ruleset": _name((profile.get("ruleset") or {}).get("name")) or None,
         "professions": parse_professions(professions),
+        "stats": parse_stats(statistics),
         "average_item_level": profile.get("average_item_level"),
         "equipped_item_level": profile.get("equipped_item_level"),
         "last_login": profile.get("last_login_timestamp"),
         "items": items,
         "talents": talents,
         "suggested_spec": talents[0]["spec"] if talents and talents[0]["points"] else None,
+        "suggested_spec_id": talents[0]["spec_id"] if talents and talents[0]["points"] else None,
         "empty_slots": [EMPTY_SLOT_NAMES.get(s) or SLOT_NAMES.get(s, s.title()) for s in expected if s not in worn],
         "missing_enchants": [i["slot_name"] for i in items if i["slot"] in enchant_slots and not i["enchants"]],
         "empty_sockets": sum(1 for i in items for s in i["sockets"] if not s["gem"]),
@@ -150,7 +261,8 @@ def requirement_problems(summary: dict) -> List[str]:
 
 
 async def fetch(bot, character_slug: str, class_names: Optional[Dict[int, str]] = None) -> dict:
-    """Reads the character's profile, gear and talents from Blizzard and
+    """Reads the character's profile, gear, talents, professions and
+    statistics from Blizzard and
     summarises them. GearError when there's nothing to read."""
     client = wow_api._client(bot)
     namespace = wow_api.namespace("profile")
@@ -159,17 +271,18 @@ async def fetch(bot, character_slug: str, class_names: Optional[Dict[int, str]] 
         try:
             answers = await asyncio.gather(*(
                 client.request(base + sub, namespace, session=session, locale=config.BLIZZARD_LOCALE)
-                for sub in ("", "/equipment", "/specializations", "/professions")))
+                for sub in ("", "/equipment", "/specializations", "/professions", "/statistics")))
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             raise GearError(f"Couldn't reach Blizzard ({type(exc).__name__}). Try again in a minute.") from None
-    (p_status, p_headers, profile), (e_status, _, equipment), (_s, _, specializations), (_p, _, professions) = answers
+    ((p_status, p_headers, profile), (e_status, _, equipment), (_s, _, specializations), (_p, _, professions),
+     (_st, _, statistics)) = answers
     if p_status == 404:
         raise GearError("Blizzard has no profile for this character. Characters can be looked up from level "
                         "10, after logging out once.")
     if p_status != 200 or e_status != 200:
         raise GearError(f"Blizzard answered {p_status if p_status != 200 else e_status}. Try again in a minute.")
     class_id = (profile.get("character_class") or {}).get("id")
-    summary = summarise(profile, equipment, specializations, professions=professions,
+    summary = summarise(profile, equipment, specializations, professions=professions, statistics=statistics,
                         class_name=(class_names or {}).get(class_id, ""))
     summary["profile_updated"] = p_headers.get("Last-Modified") or p_headers.get("last-modified")
     return summary
@@ -228,9 +341,10 @@ async def item_icons(bot, summary: dict) -> Dict[int, str]:
     return dict(pairs)
 
 
-def render_lines(summary: dict, icons: Optional[Dict[int, str]] = None) -> Dict[str, str]:
+def render_lines(summary: dict, icons: Optional[Dict[int, str]] = None, role: Optional[str] = None) -> Dict[str, str]:
     """Discord text for a summary: {"overview", "gear", "flags"}. Compact
-    on purpose: a review card has 4000 characters for everything."""
+    on purpose: a review card has 4000 characters for everything. `role`
+    picks which statistics are shown (stat_highlights)."""
     icons = icons or {}
     talents = " / ".join(f"{t['spec']} {t['points']}" for t in summary.get("talents") or []) or "none spent"
     overview = [
@@ -240,6 +354,9 @@ def render_lines(summary: dict, icons: Optional[Dict[int, str]] = None) -> Dict[
                "equipped_item_level") else ""),
         f"**Talents:** {talents}",
     ]
+    highlights = stat_highlights(summary.get("stats") or {}, role)
+    if highlights:
+        overview.append("**Stats:** " + " · ".join(f"{h['label']} {h['text']}" for h in highlights))
     trades = [f"{p['name']} {p['skill']}/{p['max']}" for p in summary.get("professions") or [] if p["primary"]]
     if trades:
         overview.append("**Professions:** " + " · ".join(trades))

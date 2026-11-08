@@ -150,13 +150,15 @@ CATALOG: Dict[str, Entry] = {
     # --- Applications --------------------------------------------------------------------
     "GEAR_CHECK_CHANNEL_ID": Entry(
         "applications", "Apply channel",
-        "Where new members apply. The bot pins a short explainer with an Apply button here."),
+        "Where new members apply. The bot pins a short explainer with a Start application button here. You can "
+        "rename the channel in Discord freely."),
     "REVIEW_CHANNEL_ID": Entry(
-        "applications", "Review channel", "Where applications are posted for approval."),
+        "applications", "Review channel",
+        "Where applications are posted for approval. They're also on the dashboard's Applications page."),
     "APPROVER_ROLE_ID": Entry(
         "applications", "Approver role",
-        "Only members with this role can approve or deny applications, so others can read the review channel "
-        "without acting on it."),
+        "Only members with this role can approve, deny or reset applications, in Discord and on the dashboard, so "
+        "others can read applications without acting on them."),
     "FRESH_ROLE_ID": Entry("applications", "Role for approved applicants", "Given when an application is approved."),
     "FRESH_EXEMPT_ROLE_IDS": Entry(
         "applications", "Roles that skip the approval role",
@@ -165,11 +167,11 @@ CATALOG: Dict[str, Entry] = {
     "AUTO_ROLE_IDS": Entry(
         "applications", "Class and role roles",
         "Given on approval, matching the main role and class the applicant picked.", widget="role_map"),
-    "MAX_SCREENSHOTS": Entry("applications", "Gear screenshots per application",
+    "MAX_SCREENSHOTS": Entry("applications", "Screenshots per application",
                              "How many screenshots an applicant can attach (1 to 9)."),
     "ARCHIVE_ENABLED": Entry("applications", "Archive command",
-                             "/gearcheck archive moves decided applications to the archive channel."),
-    "ARCHIVE_CHANNEL_ID": Entry("applications", "Archive channel", "Where /gearcheck archive moves them."),
+                             "/applications archive (or Archive on the dashboard) moves decided applications to the archive channel."),
+    "ARCHIVE_CHANNEL_ID": Entry("applications", "Archive channel", "Where archived applications are moved to."),
     "GEARCHECK_MIN_LEVEL": Entry("applications", "Minimum level",
                                  "The review card shows whether the applicant meets it. 0: no minimum.",
                                  unit="level"),

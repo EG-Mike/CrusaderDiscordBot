@@ -22,7 +22,7 @@ def texts(view) -> str:
 class ReviewCardTests(unittest.TestCase):
     def setUp(self):
         self.cog = apply.ApplyCog.__new__(apply.ApplyCog)
-        self.cog.bot = SimpleNamespace(store=SimpleNamespace(find_all_by_applicant=lambda _id: []))
+        self.cog.bot = SimpleNamespace(store=SimpleNamespace(items=lambda: []))
 
     def card(self, **extra):
         record = {"applicant_id": 1, "character_name": "Eggmike Thewhite", "status": "pending", **extra}

@@ -1,58 +1,51 @@
 # WoW TBC Fresh Guild Application Bot
 
 A Discord bot for a World of Warcraft TBC Classic ("Fresh") guild. It runs a
-gear-check/application process backed by WarcraftLogs data, and a
+guild application process backed by Blizzard's character data, and a
 moderator-driven announcement system.
 
 ## What the bot does
 
-### Guild applications (gear-check)
+### Guild applications
 
-1. A prospective member clicks a **"Start Gear-Check procedure"** button
-   posted in a locked-down landing channel (or runs `/apply` directly). A
-   button click only needs *View Channel* - not *Send Messages* - so this
-   works even in a channel where regular members can't post, keeping it
-   clutter-free.
-2. A modal asks for their character's exact name. The bot looks it up on
-   WarcraftLogs.
-   - **Not found?** They get the option to re-enter the name (typo fix) or
-     confirm it's correct and continue anyway - in which case they're asked
-     to pick their class manually (no WCL data to infer it from), and the
-     rest of the flow proceeds identically, just with no pre-filled
-     suggestions.
-3. **Found?** The bot suggests a main role/spec based on which spec they've
-   logged the most kills with, then hands them a dropdown dialog (main
-   role, main spec, any other specs they can play) to confirm or override.
-   The role list is filtered to what their class can actually perform (a
-   Priest never sees "Tank"), and "other specs" excludes whatever's
-   currently picked as the main one.
-4. The rest of the flow - role/spec dialog, an optional note, optional gear
-   screenshot(s) - happens over **DM**, not in the public channel, so one
-   applicant never sees another's note or screenshot. If DMs are closed,
-   it degrades gracefully: role/spec happens ephemerally in-channel instead,
-   and note/screenshot just gets skipped (still addable later, see below).
-5. A summary card posts to the review channel: class/spec/role (with
-   icons), guild, level, tier performance (falling back to the previous
-   tier if current-tier logs are too sparse, and saying so explicitly), a
-   full per-boss breakdown, any note, and any screenshots - plus a warning
-   if this same person has been denied before. **Approve**/**Deny** buttons
-   on the card decide it - only members with the approver role
-   (`config.APPROVER_ROLE_ID`) can click them; see "Restricting who can
-   approve applications" below for opening the channel up read-only to a
-   wider audience.
-6. **Approve**: assigns the "Fresh" role, renames the applicant to their
-   character name, and DMs them (including a clickable `/register` mention
-   for OXM.gg's raid sign-up bot, if configured). **Deny**: DMs them and
-   does nothing else.
-7. A **Reset** button on every application (same approver-only gate) undoes
-   a mistaken decision and puts it back to pending. The correction rules
-   are deliberate: fixing a wrong denial into an approval still sends the
-   acceptance DM; fixing a wrong approval into a denial just silently
-   revokes the Fresh role, no DM (they were never told they were in, so
-   there's nothing to walk back).
-8. Applicants can add or update their note/screenshot(s) at any time - even
-   after the initial flow - with **`/update-application`**, as long as
-   their application is still pending.
+1. A prospective member clicks **"Start application"** in the apply channel
+   (pinned explainer; the channel can be renamed freely in Discord) or runs
+   `/apply`. A button click only needs *View Channel*, so this works in a
+   channel where members can't post.
+2. A form asks for their character's **name and surname in one field**
+   (e.g. "Eggmike Thewhite"). The bot reads the character from Blizzard's
+   API: class, level, guild, ruleset, talents, statistics, professions and
+   every equipped item with item level, enchants, gems and set (as of the
+   character's last logout).
+   - **Not found?** (below level 10, never logged out, or a typo) They can
+     re-enter the name, or continue anyway and pick their class by hand.
+3. Over **DM**: the main spec is pre-selected from where their talent
+   points are, with a matching role; they confirm or change both and can
+   pick an **offspec** (optional). Then an optional note and/or
+   screenshot(s), or Skip. With DMs closed, the spec step happens privately
+   in the channel and the note step is skipped.
+4. A card posts to the review channel and shows on the dashboard's
+   **Applications** page: class, spec, role, offspec, level, guild, item
+   level, talents, the statistics that matter for their role (tank,
+   healer, caster, melee or ranged), the gear list, flags (empty slots,
+   missing enchants, empty sockets, wrong ruleset, below the guild's
+   minimum level/item level), note, screenshots, and a warning if the same
+   person was denied before. WarcraftLogs parses are added once
+   WarcraftLogs covers WoW Forever (Settings, Applications).
+5. **Approve** / **Deny** / **Reset** work on the card *and* on the
+   dashboard, for members with the approver role only (checked by the bot,
+   in both places). **Refresh gear** (moderators and approvers) reads the
+   gear again, e.g. after they logged out in their raid gear.
+6. **Approve**: the "Fresh" role (unless they already hold an exempt role),
+   their class and role roles, their nickname set to the character name,
+   the character linked to them on the guild roster with main spec and
+   offspec, and the approval DM. **Deny**: an optional reason only
+   reviewers see, and the denial DM.
+7. **Reset** puts a decision back to pending. Fixing a wrong denial into an
+   approval still sends the acceptance DM; fixing a wrong approval into a
+   denial just removes the Fresh role, no DM.
+8. Applicants can add or update their note/screenshot(s) with
+   **`/update-application`** while their application is pending.
 
 ### Announcements
 
@@ -279,7 +272,7 @@ Every poll carries the footer from `config.POLL_FOOTER`.
 |---|---|
 | `/announce` | Draft an announcement in the sandbox channel, with Edit/Publish buttons. |
 | `/gearcheck character <name> [public]` | Gear-check any character from Blizzard: item level, gear, enchants, gems, talents and what's missing. Only you see it unless `public`. |
-| `/gearcheck archive` | Move all approved/denied applications to the archive channel. |
+| `/applications archive` | Move all approved/denied applications to the archive channel (also on the dashboard's Applications page). |
 | `/checkattendance run` | Generate/refresh the attendance overview (no cooldown). |
 | `/checkattendance addlog <date> <tier> <link>` | Add a main-raid log to the tracked list. |
 | `/checkattendance removelog <id>` | Remove a log from the tracked list by its `#ID`. |
@@ -510,7 +503,7 @@ along on who's applying) without letting them act on applications:
    the role in Server Settings -> Roles, Copy ID). This is deliberately
    separate from `MOD_ROLE_ID`/`Manage Roles` - a moderator who isn't
    also an approver can still use every other moderator action in the bot
-   (`/gearcheck archive`, the diagnostic commands), just not these three
+   (`/applications archive`, the diagnostic commands), just not these three
    buttons.
 
 ## Setting up on a new server
@@ -547,7 +540,7 @@ along on who's applying) without letting them act on applications:
 - A **moderator role** (or just rely on anyone with `Manage Roles` - both
   work; the mod role is for people who should be able to approve/deny
   without needing full role-management permissions generally). This gates
-  most moderator actions in the bot (`/gearcheck archive`, the diagnostic
+  most moderator actions in the bot (`/applications archive`, the diagnostic
   commands) but NOT the review card's Approve/Deny/Reset buttons
   specifically - those have their own separate gate, see below.
 - An **approver role** - who can actually click Approve/Deny/Reset on a

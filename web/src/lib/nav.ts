@@ -52,7 +52,7 @@ export const NAV: { group: string; items: NavItem[] }[] = [
       { to: "/roster", label: "Guild roster", icon: Users },
       { to: "/leveling", label: "Leveling", icon: TrendingUp },
       { to: "/lookup", label: "Character lookup", icon: UserSearch },
-      { to: "/applications", label: "Applications", icon: ClipboardList, soon: true },
+      { to: "/applications", label: "Applications", icon: ClipboardList, count: (status) => status.counts.pending_applications },
       { to: "/attendance", label: "Attendance", icon: CalendarCheck, soon: true },
     ],
   },

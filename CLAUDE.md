@@ -113,13 +113,25 @@ version or raid tier is a configuration change.
   by Blizzard's icon file ID / icon name) with the items and spells that
   share it; Blizzard API first, Wowhead tooltip only as a fallback. Used by
   the Emoji page, the editor emoji picker and raid summaries.
+- `applications.py`: application records shared by `cogs/apply.py` and
+  `webapi/applications_api.py` (the Applications page): finding records
+  (also by their pre-archive ID), how a record looks to the dashboard, and
+  change notifications (`on_change`/`changed`, broadcast to the dashboard
+  as `applications.changed`). The decisions themselves (`approve`, `deny`,
+  `reset`, `refresh_gear`, `archive_decided`) are interaction-free methods
+  on the apply cog, called by the card's buttons and the dashboard alike;
+  only approvers (`APPROVER_ROLE_ID`, dashboard level "approver") decide.
+  The applicant enters "First Surname" in one field; the main spec is
+  suggested from talent points, plus an optional offspec.
 - `gear.py`: the gear check: a character's gear (item level, enchants,
   gems, sets), talents and profile from Blizzard, flags (empty slots,
   missing enchants, empty sockets) and the guild's minimum level/item
   level, as plain data plus Discord text. Used by `cogs/apply.py` (the
   review card, "Refresh gear", `/gearcheck character`) and the dashboard's
   Character lookup page (`webapi/lookup_api.py`), which also shows
-  professions and the character's place on the roster. Characters on a
+  professions and the character's place on the roster. Character
+  statistics (`parse_stats`; `stat_highlights` per role on the card,
+  `stat_groups` on the dashboard). Characters on a
   ruleset that isn't the guild's (`CHARACTER_RULESETS`) are flagged. Item
   icons: `wow_api.icon_urls` lists fallback addresses, since Blizzard's
   image server lacks some icons under the Forever path. WarcraftLogs
@@ -231,9 +243,10 @@ set in the dashboard.
   Blizzard reliably reports them.
 - Phase 4 (in progress): applications moved to Blizzard data (gear check
   with gear, enchants and talents; roster link on approval; WarcraftLogs
-  optional). Next: an Applications dashboard page, then the raid features
-  once WarcraftLogs covers Forever.
-- Phase 4 (remaining): Applications page, Raid summaries, Raid logs, Attendance, Tier recap,
+  optional). Applications page done (list, detail with gear/stats,
+  approve/deny/reset/refresh/archive). Next: WarcraftLogs parses on
+  applications and the raid features once WarcraftLogs covers Forever.
+- Phase 4 (remaining): Raid summaries, Raid logs, Attendance, Tier recap,
   Records, and the raid cache tools (`/raidsummary-refresh-cache`,
   `/raidsummary-refresh-report`). These all depend
   on TBC-era data sources, so plan them together with the WoW Forever data

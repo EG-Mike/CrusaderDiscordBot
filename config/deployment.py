@@ -353,7 +353,8 @@ ROLE_ICON_URLS = {
      "DPS": "https://wow.zamimg.com/images/wow/icons/large/ability_dualwield.jpg",
 }
 
-# Key format: "ClassName:SpecName" (must match CLASS_SPECS above exactly).
+# Key format: "ClassName:SpecName", the spec as Blizzard names it for the game
+# version (WoW Forever names some trees differently, e.g. "Shadow Magic").
 SPEC_ICON_URLS = {
     # Warrior
     "Warrior:Arms":       "https://wow.zamimg.com/images/wow/icons/large/ability_rogue_eviscerate.jpg",
@@ -379,9 +380,11 @@ SPEC_ICON_URLS = {
     "Priest:Discipline":   "https://wow.zamimg.com/images/wow/icons/large/spell_holy_powerwordshield.jpg",
     "Priest:Holy":         "https://wow.zamimg.com/images/wow/icons/large/spell_holy_holybolt.jpg",
     "Priest:Shadow":       "https://wow.zamimg.com/images/wow/icons/large/spell_shadow_shadowwordpain.jpg",
+    "Priest:Shadow Magic": "https://wow.zamimg.com/images/wow/icons/large/spell_shadow_shadowwordpain.jpg",  # Forever
 
     # Shaman
     "Shaman:Elemental":    "https://wow.zamimg.com/images/wow/icons/large/spell_nature_lightning.jpg",
+    "Shaman:Elemental Combat": "https://wow.zamimg.com/images/wow/icons/large/spell_nature_lightning.jpg",  # Forever
     "Shaman:Enhancement":  "https://wow.zamimg.com/images/wow/icons/large/spell_shaman_improvedstormstrike.jpg",
     "Shaman:Restoration":  "https://wow.zamimg.com/images/wow/icons/large/spell_nature_magicimmunity.jpg",
 
@@ -454,16 +457,16 @@ AUTO_ROLE_IDS = {
     "Rogue": 1526342262488043560,
 }
 
-# Archive: /gearcheck archive moves every approved/denied application out
-# of the review channel into a separate archive channel (re-posted there,
-# original deleted). Set ARCHIVE_ENABLED to False to disable the command
+# Archive: /applications archive (and the dashboard's Archive button) moves
+# every approved/denied application out of the review channel into a
+# separate archive channel (re-posted there, original deleted). Set ARCHIVE_ENABLED to False to disable the command
 # entirely without needing to remove the channel ID.
 ARCHIVE_ENABLED = True
 ARCHIVE_CHANNEL_ID = 1337906439066488914
 
-# Only members with this role can click Approve/Deny/Reset on an
-# application review card (see ApplyCog._is_approver) - lets
-# REVIEW_CHANNEL_ID be opened up read-only to a wider audience (e.g.
+# Only members with this role can Approve/Deny/Reset applications, on the
+# review card and on the dashboard (ApplyCog.is_approver,
+# webapi/applications_api.py) - lets REVIEW_CHANNEL_ID be opened up read-only to a wider audience (e.g.
 # Regulars) without letting them act on applications. This is a code-level
 # check, not a Discord permission: Discord has no native permission that
 # blocks clicking a message component separately from viewing it (unlike
@@ -471,7 +474,7 @@ ARCHIVE_CHANNEL_ID = 1337906439066488914
 # technically click the button - this check is what actually stops them.
 # Deliberately its own role rather than reusing MOD_ROLE_ID/Manage Roles
 # (the broader "moderator" gate every other action in this cog uses, e.g.
-# /gearcheck archive) - a moderator without this role can no longer
+# /applications archive) - a moderator without this role can no longer
 # approve/deny/reset either, by design.
 APPROVER_ROLE_ID = 1482653670855413822
 

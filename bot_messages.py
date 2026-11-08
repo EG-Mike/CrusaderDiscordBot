@@ -73,24 +73,19 @@ class Definition:
 
 # --- built-in default texts ----------------------------------------------------------
 
-_GEAR_CHECK_EXPLAINER = (
-    "Click the blue button below this message to start your gear-check process.\n"
+_APPLY_EXPLAINER = (
+    "Click the blue button below this message to apply.\n"
     "\n"
-    ":one:. You'll be asked for your character's name and surname (e.g. Eggmike Thewhite),\n"
-    ":two:. The bot looks your character up on Blizzard: your gear, enchants and talents as of your last "
-    "logout - so log out once in your raid gear before applying,\n"
-    ":three:. You will receive a DM, the bot suggests your main spec from your talents (this can "
-    "be changed)\n"
-    ":four:. You are (optionally) given the ability to provide a note and/or screenshots - or skip "
-    "this step\n"
-    ":five:. When you do not provide a note/screenshot and you do not press the 'skip' button - your "
-    "application will be posted automatically after 3 minutes.\n"
-    ":six:. You have the option to provide more information at any time by typing "
-    "`/update-application` to the bot's DM. \n"
-    ":seven:Your character will be reviewed by our recruitment-team and will be notified of the "
-    "outcome\n"
+    ":one:. Type your character's name and surname (e.g. Eggmike Thewhite). Log out once in your raid gear "
+    "first: the bot reads your character from Blizzard as of your last logout.\n"
+    ":two:. The bot looks up your gear, enchants, talents and stats, and DMs you: your main spec is "
+    "picked from your talents (you can change it), and you can add an offspec.\n"
+    ":three:. Optionally, reply with a note and/or screenshots - or press Skip. Without a reply, your "
+    "application is posted automatically after 3 minutes.\n"
+    ":four:. You can add more information at any time by typing `/update-application` in the bot's DM.\n"
+    ":five:. Our recruitment team reviews your application and you'll get a DM with the outcome.\n"
     "\n"
-    "When approved, you will be granted the correct roles and further instructions on how to sign "
+    "When approved, you will be granted the correct roles and further instructions on how to sign up "
     "for the raid(s)"
 )
 
@@ -98,29 +93,30 @@ _REVIEW_EXPLAINER = (
     "Here's the full flow, walked through with an example applicant, **Skullcrusher**:\n"
     "\n"
     "**1. Before a card ever shows up here**\n"
-    "Skullcrusher clicks the button in #gear-check, gives their character's name and surname, and the "
-    "bot reads their character from Blizzard: level, guild, talents, and every equipped item with its "
-    "item level, enchants and gems. Empty slots, missing enchants and empty sockets are flagged, and so "
-    "is anything below the guild's minimum level or item level. Over DM, they confirm their role/spec and "
-    "can add an optional note or screenshot(s). Once that's done (or skipped, or it times out), a summary "
-    "card posts right here - that's the point where it becomes your job.\n"
+    "Skullcrusher clicks the button in the apply channel, gives their character's name and surname, and "
+    "the bot reads their character from Blizzard: level, guild, talents, stats, and every equipped item "
+    "with its item level, enchants and gems. Empty slots, missing enchants and empty sockets are flagged, "
+    "and so is anything below the guild's minimum level or item level. Over DM, they confirm their main "
+    "spec and role (suggested from their talents), can pick an offspec, and can add an optional note or "
+    "screenshot(s). Once that's done (or skipped, or it times out), a card posts right here - and on the "
+    "dashboard's Applications page. That's the point where it becomes your job.\n"
     "Blizzard updates gear when a player logs out: 🛡️ **Refresh gear** reads it again, e.g. after they "
     "logged out in their raid gear.\n"
     "\n"
-    "**2. Clicking {approve_emoji} Approve**\n"
+    "**2. Clicking {approve_emoji} Approve** (here or on the dashboard)\n"
     "- They're assigned the Fresh role - unless they already hold Fresh, Regular, or Organizer, in "
     "which case that's skipped and the card says so instead of pretending something changed.\n"
     "- They're also auto-tagged with their class (e.g. Mage) and role (Tank/Healer/DPS) roles.\n"
-    "- Their character is linked to them on the guild roster (unless someone else already linked it).\n"
+    "- Their character is linked to them on the guild roster, with their main spec and offspec "
+    "(unless someone else already linked it).\n"
     "- Their server nickname is changed to their character name - again skipped for "
     "already-established members.\n"
     "- The card's footer shows exactly what was newly assigned vs. what they already had, plus the "
     "nickname change (or why it didn't happen).\n"
-    "- Skullcrusher gets a DM confirming they're in, with a note about registering for raid "
-    "sign-ups.\n"
+    "- Skullcrusher gets a DM confirming they're in.\n"
     "\n"
     "**3. Clicking {deny_emoji} Deny**\n"
-    "- A popup asks you for an optional reason. It's saved on the card for other mods to see - it's "
+    "- You're asked for an optional reason. It's saved for other reviewers to see - it's "
     "**never** shown to the applicant.\n"
     "- Skullcrusher gets a DM letting them know it didn't work out **only on a first-time denial**. "
     "If you're instead correcting an earlier approval into a denial, no DM is sent - their Fresh "
@@ -132,15 +128,14 @@ _REVIEW_EXPLAINER = (
     "DM as normal; denying after a wrong approval doesn't send a denial DM, since they were never "
     "told they were out.\n"
     "\n"
-    "**5. `/gearcheck archive`**\n"
-    "Run this anytime to move every already-decided card (approved or denied) out of this channel "
-    "into the archive channel, keeping this one focused on what's still pending. A single "
-    "confirmation message here tracks who last ran it and when - it gets updated in place, not "
-    "reposted, each time.\n"
+    "**5. `/applications archive`** (or Archive on the dashboard)\n"
+    "Moves every decided card (approved or denied) out of this channel into the archive channel, "
+    "keeping this one focused on what's still pending. A single confirmation message here tracks who "
+    "last ran it and when - it gets updated in place, not reposted, each time.\n"
     "\n"
     "**6. `/gearcheck character`**\n"
     "Gear-check anyone without an application: the same gear summary, shown only to you unless you "
-    "choose to post it."
+    "choose to post it. The dashboard's Character lookup does the same."
 )
 
 _ATTENDANCE_EXPLAINER = (
@@ -219,15 +214,15 @@ _CHARACTER = Variable("character", "The applicant's character name", "Skullcrush
 
 DEFINITIONS: List[Definition] = [
     Definition(
-        key="gear_check_explainer",
-        label="Gear-check explainer",
+        key="gear_check_explainer",  # key kept from the gear-check days, so saved texts stay
+        label="Application explainer",
         group="Applications",
         description="Explains how to apply. Carries the button that starts an application.",
         kind="embed",
-        where="Pinned in the gear-check channel",
-        default_title="How to Gear-check and get the permissions to sign up for raids",
-        default_body=_GEAR_CHECK_EXPLAINER,
-        marker="gear-check-explainer",
+        where="Pinned in the apply channel",
+        default_title="How to apply and get the permissions to sign up for raids",
+        default_body=_APPLY_EXPLAINER,
+        marker="gear-check-explainer",  # finds the message already pinned; don't rename
     ),
     Definition(
         key="review_explainer",
@@ -236,7 +231,7 @@ DEFINITIONS: List[Definition] = [
         description="Explains the review process to whoever approves or denies applications.",
         kind="embed",
         where="Pinned in the application review channel",
-        default_title="How the gear-check review process works",
+        default_title="How the application review process works",
         default_body=_REVIEW_EXPLAINER,
         variables=[
             Variable("approve_emoji", "The Approve button's emoji", "✅", lambda: "✅"),
