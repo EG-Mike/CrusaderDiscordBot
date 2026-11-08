@@ -270,7 +270,10 @@ def build(application: dict, *, prior_denials: List[Tuple[int, dict]], callbacks
         container.add_item(discord.ui.TextDisplay(f"-# [WarcraftLogs profile]({application['wcl_url']})"))
     container.add_item(discord.ui.Separator(spacing=discord.SeparatorSpacing.large))
     container.add_item(discord.ui.TextDisplay(parts["note"]))
-    screenshots = (application.get("screenshot_urls") or [])[: config.MAX_SCREENSHOTS]
+    # Screenshots are files on the card itself ("attachment://screenshot-1.png"); older applications
+    # only have links.
+    screenshots = ([f"attachment://{name}" for name in application.get("screenshot_files") or []]
+                   or application.get("screenshot_urls") or [])[: config.MAX_SCREENSHOTS]
     if screenshots:
         container.add_item(discord.ui.MediaGallery(*[discord.MediaGalleryItem(u) for u in screenshots]))
     container.add_item(discord.ui.Separator())

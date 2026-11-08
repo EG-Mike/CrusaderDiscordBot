@@ -19,11 +19,13 @@ moderator-driven announcement system.
    character's last logout).
    - **Not found?** (below level 10, never logged out, or a typo) They can
      re-enter the name, or continue anyway and pick their class by hand.
-3. Over **DM**: the main spec is pre-selected from where their talent
-   points are, with a matching role; they confirm or change both and can
-   pick an **offspec** (optional). Then an optional note and/or
-   screenshot(s), or Skip. With DMs closed, the spec step happens privately
-   in the channel and the note step is skipped.
+3. **Right there in the apply channel**, in a message only they can see
+   (no DMs): the main spec is pre-selected from where their talent points
+   are, with a matching role; they confirm or change both and can pick an
+   **offspec** (optional). **Add note & screenshots** opens a form with a
+   note and a file upload (up to the screenshot limit), and **Submit
+   application** posts it. The screenshots are re-attached to the review
+   card itself, because Discord only keeps form uploads for a while.
 4. A card posts to the review channel and shows on the dashboard's
    **Applications** page. The card has the character's portrait, class,
    level, guild and a status line; the main spec, role, offspec, item level
@@ -118,8 +120,9 @@ the Edit buttons on everything already posted keep working.
 
 The texts the bot posts on its own are editable on the dashboard
 (**Communication, Bot messages**): the pinned gear-check, review-channel
-and attendance explainers, and the DMs applicants get (note request,
-note timeout, approved, denied). Each has a live preview and its own
+and attendance explainers, what applicants see while applying ("Applying:
+what to do", "Application submitted") and the DMs they get (approved,
+denied). Each has a live preview and its own
 placeholders, e.g. `{character}` for the applicant's character name or
 `{min_attended}` for the attendance setting, filled in when the message is
 sent. Edited texts keep a history and can be reset to the built-in
@@ -534,9 +537,8 @@ along on who's applying) without letting them act on applications:
 1. https://discord.com/developers/applications -> New Application -> Bot tab.
 2. Under **Privileged Gateway Intents**, enable:
    - **Server Members Intent** (needed to assign roles/fetch members)
-   - **Message Content Intent** (needed so `message.attachments` is
-     populated for the note/screenshot DM step - without it, every message
-     looks like it has zero attachments to the bot)
+   - **Message Content Intent** (needed for raid summary loot uploads and
+     the raid log channel, which read messages; applications don't)
 3. Copy the bot token for later (`.env`'s `DISCORD_TOKEN`).
 4. OAuth2 -> URL Generator: scopes `bot` + `applications.commands`;
    permissions `View Channels`, `Send Messages`, `Embed Links`,

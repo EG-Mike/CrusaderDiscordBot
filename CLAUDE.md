@@ -122,8 +122,13 @@ version or raid tier is a configuration change.
   on the apply cog, called by the card's buttons and the dashboard alike;
   moderators and approvers (`APPROVER_ROLE_ID`, dashboard level
   "approver") decide (`ApplyCog.can_decide`, `DECIDE_LEVELS`).
-  The applicant enters "First Surname" in one field; the main spec is
-  suggested from talent points, plus an optional offspec. Item names link
+  The applicant enters "First Surname" in one field; the rest happens in
+  the apply channel in a message only they see (no DMs): the main spec is
+  suggested from talent points, plus an optional offspec, and a form for a
+  note and screenshots (file upload). Screenshots are re-attached to the
+  review card (`screenshot_files`), since form uploads expire; a card's own
+  files appear only in its gallery (`card_media_urls`), not in
+  `message.attachments`. Item names link
   to `ITEM_LINK_URL` (Wowhead's Forever pages by default). Approval links
   the character on the roster, or leaves a pending link
   (`roster.remember_link`) when Blizzard doesn't know it yet.

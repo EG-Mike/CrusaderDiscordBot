@@ -7,10 +7,15 @@ Flow:
      field. The bot reads the character from Blizzard's API (gear.py):
      class, level, guild, talents, statistics, and the equipped gear with
      enchants and gems.
-  2. By DM: the main spec is pre-selected from where the talent points
-     are, with a role to match; the applicant confirms or changes them and
-     can pick an offspec (optional).
-  3. An optional note and screenshots, collected by DM.
+  2. In the apply channel, in one message only the applicant sees
+     (ApplyDialog, no DMs): the main spec is pre-selected from where the
+     talent points are, with a role to match; the applicant confirms or
+     changes them and can pick an offspec (optional).
+  3. "Add note & screenshots" opens a form (NoteModal) with a note and a
+     file upload; "Submit application" posts it. Form uploads are only kept
+     by Discord for a while, so the screenshots are re-attached to the card
+     (screenshot_files; a card's own files are only listed in its gallery,
+     card_media_urls). /update-application opens the same form.
   4. The application is posted to the review channel: the gear summary,
      the statistics that matter for the role, requirements (Settings:
      minimum level and item level), and, once WarcraftLogs covers the game
@@ -18,8 +23,9 @@ Flow:
      shows on the dashboard's Applications page.
   5. A moderator or approver approves (roles, nickname, DM, and the character is linked
      to the applicant on the guild roster with their specs) or denies (DM),
-     on the card or on the dashboard. Reset undoes a decision, "Refresh
-     gear" reads the gear from Blizzard again.
+     on the card or on the dashboard. Reset undoes a decision, "Refresh"
+     reads the character from Blizzard again. The decision DMs are the only
+     DMs the bot sends applicants.
 
 Decisions are methods without a Discord interaction (approve, deny,
 reset, refresh_gear, archive_decided), so the card's buttons and the
@@ -31,6 +37,7 @@ Moderators can also look up any character without an application: /lookup
 """
 
 import asyncio
+import io
 import logging
 import time
 from typing import Dict, List, Optional, Tuple
@@ -59,9 +66,9 @@ log = logging.getLogger("wow-apply-bot.apply")
 FRESH_ROLE_EMOJI = "<:fresh_role:1542590697238962226>"
 NO_OFFSPEC = "__none__"
 
-DIALOG_TIMEOUT = 300       # spec/role selection
-SCREENSHOT_TIMEOUT = 180   # waiting for an optional note/screenshot reply
+DIALOG_TIMEOUT = 840       # the in-channel dialog; Discord lets the bot edit it for 15 minutes
 NOT_FOUND_TIMEOUT = 180    # waiting for the retry-name/continue-anyway choice
+NOTE_LIMIT = 1000          # characters in the applicant's note
 
 AMSTERDAM_TZ = ZoneInfo("Europe/Amsterdam")
 
@@ -124,15 +131,69 @@ def screenshot_expiry(url: str) -> Optional[int]:
         return None
 
 
-class SpecChoiceView(discord.ui.View):
-    """The applicant confirms their main spec (pre-selected from their
-    talent points) and role, and can pick an offspec. Works the same in a
-    DM and in a server channel. `specs`: the class's spec names for the game
-    version; `spec_roles`: Blizzard's role per spec name (may be empty)."""
+def screenshot_name(index: int, original: str) -> str:
+    """The file name a screenshot gets on the review card ("screenshot-1.png")."""
+    ext = original.rsplit(".", 1)[-1].lower() if "." in (original or "") else "png"
+    return f"screenshot-{index}.{ext if ext in ('png', 'jpg', 'jpeg', 'gif', 'webp') else 'png'}"
+
+
+def card_media_urls(message) -> List[str]:
+    """The addresses of the images in a card's gallery. A card's own files
+    (screenshots) aren't listed in message.attachments: Discord only gives
+    their addresses inside the components that show them."""
+    found: List[str] = []
+
+    def walk(components):
+        for c in components or []:
+            if getattr(c, "type", None) == discord.ComponentType.media_gallery:
+                found.extend(item.media.url for item in c.items if getattr(item.media, "url", None))
+            walk(getattr(c, "children", None) or getattr(c, "components", None))
+
+    walk(getattr(message, "components", None))
+    return found
+
+
+def image_uploads(attachments) -> list:
+    """The uploaded files that are images, at most MAX_SCREENSHOTS."""
+    return [a for a in attachments or [] if (a.content_type or "").startswith("image/")][: config.MAX_SCREENSHOTS]
+
+
+class NoteModal(discord.ui.Modal):
+    """An optional note and screenshots, as a form: used while applying (the
+    dialog's "Add note & screenshots") and by /update-application. Uploads
+    are only kept by Discord for a while, so the bot re-attaches them to the
+    review card (ApplyCog._screenshot_files)."""
+
+    def __init__(self, *, title: str, note: Optional[str], on_done):
+        super().__init__(title=title, timeout=DIALOG_TIMEOUT)
+        self.on_done = on_done
+        self.note = discord.ui.TextInput(style=discord.TextStyle.paragraph, required=False, max_length=NOTE_LIMIT,
+                                         default=note or None,
+                                         placeholder="Anything the reviewers should know, e.g. your experience")
+        self.uploads = discord.ui.FileUpload(required=False, max_values=max(1, int(config.MAX_SCREENSHOTS or 1)))
+        self.add_item(discord.ui.Label(text="Note (optional)", component=self.note))
+        self.add_item(discord.ui.Label(text="Screenshots (optional)", component=self.uploads,
+                                       description=f"Up to {config.MAX_SCREENSHOTS} images, e.g. your gear"))
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await self.on_done(interaction, str(self.note.value or "").strip() or None, image_uploads(self.uploads.values))
+
+
+class ApplyDialog(discord.ui.View):
+    """The whole application after the name, in one message only the
+    applicant sees, in the apply channel: main spec (pre-selected from their
+    talent points), role and an optional offspec, "Add note & screenshots"
+    (NoteModal) and "Submit application". `specs`: the class's spec names
+    for the game version; `spec_roles`: Blizzard's role per spec name (may be
+    empty); `intro`: the text above the status line."""
 
     def __init__(self, user_id, guild, class_name, specs, spec_roles=None, suggested_spec=None,
-                 suggested_role=None):
+                 suggested_role=None, intro: str = ""):
         super().__init__(timeout=DIALOG_TIMEOUT)
+        self.intro = intro
+        self.note: Optional[str] = None
+        self.uploads: list = []
+        self.submit_interaction: Optional[discord.Interaction] = None
         self.user_id = user_id
         self.guild = guild
         self.class_name = class_name
@@ -158,10 +219,23 @@ class SpecChoiceView(discord.ui.View):
             self.offspec_select.callback = self._on_offspec
             self.add_item(self.offspec_select)
 
-        continue_button = discord.ui.Button(label="Continue", style=discord.ButtonStyle.primary, row=3)
-        continue_button.callback = self._on_continue
-        self.add_item(continue_button)
+        note_button = discord.ui.Button(label="Add note & screenshots", emoji="📝", style=discord.ButtonStyle.secondary,
+                                        row=3)
+        note_button.callback = self._on_note
+        self.add_item(note_button)
+        submit_button = discord.ui.Button(label="Submit application", emoji="📨", style=discord.ButtonStyle.success,
+                                          row=3)
+        submit_button.callback = self._on_submit
+        self.add_item(submit_button)
         self._sync()
+
+    def text(self) -> str:
+        """The message: the intro, then what's attached so far."""
+        attached = [f"📝 note ({len(self.note)} characters)" if self.note else None,
+                    f"🖼️ {len(self.uploads)} screenshot{'s' if len(self.uploads) != 1 else ''}" if self.uploads
+                    else None]
+        status = " · ".join(filter(None, attached)) or "no note or screenshots (optional)"
+        return f"{self.intro}\n-# Attached: {status}"
 
     def _sync(self):
         """Rebuilds every dropdown from the current choices (Discord resends
@@ -219,7 +293,19 @@ class SpecChoiceView(discord.ui.View):
         self._sync()
         await interaction.response.edit_message(view=self)
 
-    async def _on_continue(self, interaction: discord.Interaction):
+    async def _on_note(self, interaction: discord.Interaction):
+        if not await self._guard(interaction):
+            return
+
+        async def done(modal_interaction: discord.Interaction, note, uploads):
+            self.note = note
+            if uploads or not self.uploads:  # an empty upload field keeps the screenshots added before
+                self.uploads = uploads
+            await modal_interaction.response.edit_message(content=self.text(), view=self)
+
+        await interaction.response.send_modal(NoteModal(title="Note & screenshots", note=self.note, on_done=done))
+
+    async def _on_submit(self, interaction: discord.Interaction):
         if not await self._guard(interaction):
             return
         if not self.role or not self.main_spec:
@@ -227,28 +313,9 @@ class SpecChoiceView(discord.ui.View):
             return
         for item in self.children:
             item.disabled = True
-        await interaction.response.edit_message(view=self)
+        await interaction.response.edit_message(content=f"{self.text()}\n\n⏳ Posting your application…", view=self)
+        self.submit_interaction = interaction
         self.done.set()
-        self.stop()
-
-
-class SkipNoteScreenshotView(discord.ui.View):
-    def __init__(self, user_id):
-        super().__init__(timeout=SCREENSHOT_TIMEOUT)
-        self.user_id = user_id
-        self.skipped = asyncio.Event()
-
-    @discord.ui.button(label="Skip", style=discord.ButtonStyle.secondary)
-    async def skip(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message("This isn't your application.", ephemeral=True)
-            return
-        await interaction.response.send_message(
-            "Skipped - no note or screenshot was attached.\n\n"
-            "Your application has been posted for review. You'll get a DM once a reviewer makes a decision.\n\n"
-            "**You can add a note and/or screenshot(s) at any time with `/update-application` in this chat.**",
-            ephemeral=True)
-        self.skipped.set()
         self.stop()
 
 
@@ -1122,16 +1189,15 @@ class ApplyCog(commands.Cog):
         return None
 
     async def _choose_specs(self, interaction: discord.Interaction, char_data: dict):
-        """Main spec, role and offspec, by DM (or here when DMs are closed)."""
+        """The rest of the application in one message only the applicant
+        sees, here in the channel (ApplyDialog): main spec, role, offspec, an
+        optional note and screenshots, then Submit."""
         _, class_specs = await self._reference()
         spec_objects = class_specs["by_name"].get(char_data["class_name"]) or [
             {"id": None, "name": s, "role": None} for s in config.CLASS_SPECS.get(char_data["class_name"], [])]
         specs = [s["name"] for s in spec_objects]
         spec_roles = {s["name"]: s.get("role") for s in spec_objects}
         suggested_spec = await self._suggest_spec(char_data, specs)
-        view = SpecChoiceView(interaction.user.id, interaction.guild, char_data["class_name"], specs, spec_roles,
-                              suggested_spec=suggested_spec,
-                              suggested_role=default_role(char_data["class_name"], suggested_spec, spec_roles))
 
         summary = char_data.get("gear") or {}
         found = f"**{char_data['name']}**"
@@ -1139,89 +1205,81 @@ class ApplyCog(commands.Cog):
             found += f", level {summary.get('level') or '?'} {char_data['class_name']}"
             if summary.get("guild"):
                 found += f" of <{summary['guild']}>"
-        prompt_text = (
-            f"Found {found}! "
-            + (f"Your talent points say **{suggested_spec}**, so that's selected as your main spec. "
-               if suggested_spec else "")
-            + "Confirm or change your **main spec** and **role**, pick an **offspec** if you play one, "
-              "then press **Continue**."
-        )
-
-        # The rest of the flow (specs, note, screenshot) happens in one DM
-        # conversation. With DMs closed, the specs are asked here (only the
-        # applicant sees it) and the note/screenshot step is skipped.
-        dm_channel = await self._try_open_dm(interaction.user)
-        if dm_channel is not None:
-            try:
-                await dm_channel.send(prompt_text, view=view)
-            except discord.Forbidden:
-                dm_channel = None
-        if dm_channel is not None:
-            await interaction.followup.send(f"Thanks! I found **{char_data['name']}** - please check your DMs to "
-                                            "continue.", ephemeral=True)
-        else:
-            await interaction.followup.send(prompt_text, view=view, ephemeral=True)
+        intro = (f"Found {found}! "
+                 + (f"Your talent points say **{suggested_spec}**, so that's selected as your main spec.\n"
+                    if suggested_spec else "\n")
+                 + bot_messages.text("apply_dialog"))
+        view = ApplyDialog(interaction.user.id, interaction.guild, char_data["class_name"], specs, spec_roles,
+                           suggested_spec=suggested_spec,
+                           suggested_role=default_role(char_data["class_name"], suggested_spec, spec_roles),
+                           intro=intro)
+        dialog = await interaction.followup.send(view.text(), view=view, ephemeral=True, wait=True)
 
         try:
             await asyncio.wait_for(view.done.wait(), timeout=DIALOG_TIMEOUT + 10)
         except asyncio.TimeoutError:
-            await interaction.followup.send("The application timed out waiting for your spec - please start again.",
-                                            ephemeral=True)
+            try:
+                await dialog.edit(content="⏱️ This application timed out. Press **Start application** to begin again.",
+                                  view=None)
+            except discord.HTTPException:
+                pass
             return
         ids = {s["name"]: s.get("id") for s in spec_objects}
         choice = {"role": view.role, "spec": view.main_spec, "spec_id": ids.get(view.main_spec),
                   "offspec": view.offspec, "off_spec_id": ids.get(view.offspec) if view.offspec else None}
-        await self._collect_note_screenshot_and_post(interaction, char_data, choice, dm_channel)
-
-    async def _try_open_dm(self, user: discord.User):
+        result = await self._post_application(interaction, char_data, choice, view.note, view.uploads)
         try:
-            return await user.create_dm()
+            await view.submit_interaction.edit_original_response(content=result, view=None)
         except discord.HTTPException:
-            return None
+            await interaction.followup.send(result, ephemeral=True)
 
-    async def _collect_note_screenshot_and_post(self, interaction, char_data, choice: dict, dm_channel):
-        """Collects an optional note and screenshot(s) by DM, then posts the
-        application. Without a DM channel it posts right away; the applicant
-        can add them later with /update-application."""
-        note_text, screenshot_urls = None, []
-        if dm_channel is None:
-            await interaction.followup.send(
-                "I couldn't DM you to collect an optional note/screenshot - your DMs might be closed to server "
-                "members. Posting your application without them for now; you can add them later with "
-                "/update-application once you allow DMs.", ephemeral=True)
-        else:
-            skip_view = SkipNoteScreenshotView(interaction.user.id)
-            await dm_channel.send(bot_messages.text("note_prompt_dm"), view=skip_view)
+    async def _screenshot_files(self, uploads, guild) -> Tuple[List[discord.File], Optional[str]]:
+        """The uploaded screenshots as files for the review card (uploads are
+        only kept by Discord for a while), within the server's upload limit.
+        (files, a line about the ones left out, or None)."""
+        limit = getattr(guild, "filesize_limit", None) or 10 * 1024 * 1024
+        files, total, left_out = [], 0, 0
+        for index, upload in enumerate(uploads, 1):
+            if total + (upload.size or 0) > limit:
+                left_out += 1
+                continue
+            try:
+                data = await upload.read()
+            except discord.HTTPException:
+                log.warning("Couldn't download an uploaded screenshot", exc_info=True)
+                left_out += 1
+                continue
+            total += len(data)
+            files.append(discord.File(io.BytesIO(data), filename=screenshot_name(index, upload.filename)))
+        problem = (f"{left_out} screenshot{'s were' if left_out != 1 else ' was'} too big or couldn't be read, so "
+                   "it's not on your application." if left_out else None)
+        return files, problem
 
-            def _is_applicant_dm_reply(m: discord.Message) -> bool:
-                return m.author.id == interaction.user.id and m.channel.id == dm_channel.id
+    async def _card_files(self, message, application: dict) -> List[discord.File]:
+        """A card's screenshot files (to post them again, e.g. when archiving),
+        downloaded from its gallery, under the names the card refers to."""
+        names = application.get("screenshot_files") or []
+        files = []
+        for name, url in zip(names, card_media_urls(message)):
+            try:
+                files.append(discord.File(io.BytesIO(await self.bot.http.get_from_cdn(url)), filename=name))
+            except discord.HTTPException:
+                log.warning("Couldn't copy screenshot %s of card %s", name, message.id, exc_info=True)
+        return files
 
-            message_task = asyncio.create_task(
-                self.bot.wait_for("message", check=_is_applicant_dm_reply, timeout=SCREENSHOT_TIMEOUT))
-            skip_task = asyncio.create_task(skip_view.skipped.wait())
-            done, pending = await asyncio.wait({message_task, skip_task}, return_when=asyncio.FIRST_COMPLETED)
-            for task in pending:
-                task.cancel()
-            if message_task in done:
-                try:
-                    msg = message_task.result()
-                    note_text = msg.content.strip() or None
-                    screenshot_urls = [a.url for a in msg.attachments
-                                       if (a.content_type or "").startswith("image/")][: config.MAX_SCREENSHOTS]
-                except asyncio.TimeoutError:
-                    try:
-                        await dm_channel.send(bot_messages.text("note_timeout_dm"))
-                    except discord.HTTPException:
-                        pass
-                except asyncio.CancelledError:
-                    pass
-        await self._post_application(interaction, char_data, choice, note_text, screenshot_urls)
-
-    async def _post_application(self, interaction, char_data, choice: dict, note, screenshot_urls):
+    async def _post_application(self, interaction, char_data, choice: dict, note, uploads) -> str:
+        """Posts the card in the review channel. Returns the text for the applicant."""
+        review_channel = self.bot.get_channel(config.REVIEW_CHANNEL_ID)
+        if review_channel is None:
+            log.error("Can't post %s's application: the review channel isn't set to a channel the bot can see",
+                      char_data["name"])
+            return ("Sorry, applications can't be submitted right now (the review channel isn't set up). Please let "
+                    "a moderator know.")
         offspec = choice.get("offspec")
         tier_block = boss_block = hidden_block = None
         if config.APPLICATION_WARCRAFTLOGS_ENABLED and char_data.get("id"):
             tier_block, boss_block, hidden_block = await self._compute_tier_and_boss_blocks(char_data)
+        files, problem = await self._screenshot_files(uploads, review_channel.guild)
 
         application = {
             "applicant_id": interaction.user.id,
@@ -1246,99 +1304,78 @@ class ApplyCog(commands.Cog):
             "hidden_block": hidden_block,
             "profile_url": char_data.get("profile_url"),
             "wcl_url": char_data.get("wcl_url"),
-            "screenshot_urls": screenshot_urls or [],
+            "screenshot_files": [f.filename for f in files],
+            "screenshot_urls": [],
             "channel_id": config.REVIEW_CHANNEL_ID,
             "submitted_at": int(time.time()),
             **await self._gear_fields(char_data.get("gear")),
         }
-
-        review_channel = self.bot.get_channel(config.REVIEW_CHANNEL_ID)
-        if review_channel is None:
-            log.error("Can't post %s's application: the review channel isn't set to a channel the bot can see",
-                      application["character_name"])
-            await interaction.followup.send(
-                "Sorry, applications can't be submitted right now (the review channel isn't set up). "
-                "Please let a moderator know.", ephemeral=True)
-            return
-        message = await review_channel.send(view=self._render_application_view(application))
+        message = await review_channel.send(view=self._render_application_view(application), files=files)
+        application["screenshot_urls"] = card_media_urls(message) if files else []  # for the dashboard
         fields = {k: v for k, v in application.items() if k not in ("applicant_id", "character_name")}
         self.bot.store.add(message.id, application["applicant_id"], application["character_name"], **fields)
         applications.changed(message.id)
-
-        try:
-            await interaction.user.send(
-                f"✅ Your application for **{application['character_name']}** has been posted for review. "
-                "You'll get a DM once a reviewer makes a decision.")
-        except discord.HTTPException:
-            pass  # DMs closed - the confirmation below still covers this
-        await interaction.followup.send(
-            "Your application has been posted for review. You'll get a DM once a reviewer makes a decision.",
-            ephemeral=True)
+        await self._rerender(message.id, message)  # adds the "Open on dashboard" link, which needs the message id
+        text = bot_messages.text("application_submitted", character=application["character_name"])
+        return f"{text}\n-# ⚠️ {problem}" if problem else text
 
     # --- /update-application ---------------------------------------------------------------------------
-    # The applicant usually can't see the review channel, so this works from
-    # anywhere the bot can see them, DMs included.
+    # The same form as while applying, from wherever the applicant types it.
 
     @app_commands.command(
         name="update-application",
         description="Add or change the note/screenshot(s) on your pending application",
     )
     async def update_application(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True, thinking=True)
-
         mine = [(mid, rec) for mid, rec in applications.records(self.bot.store)
                 if rec.get("applicant_id") == interaction.user.id]
         if not mine:
-            await interaction.followup.send("You don't have an application yet - use the Start application button "
-                                            "or /apply first.", ephemeral=True)
+            await interaction.response.send_message(
+                "You don't have an application yet - use the Start application button or /apply first.",
+                ephemeral=True)
             return
         message_id, application = mine[0]  # newest
         if application["status"] != "pending":
-            await interaction.followup.send(
+            await interaction.response.send_message(
                 f"Your application has already been **{application['status']}** and can't be updated this way. "
                 "If you'd like to be reconsidered, please reach out to an officer.", ephemeral=True)
             return
 
-        await interaction.followup.send(
-            f"Reply here with an updated note and/or screenshot(s) (up to {config.MAX_SCREENSHOTS} images) within "
-            "3 minutes.", ephemeral=True)
+        async def done(modal_interaction: discord.Interaction, note, uploads):
+            await modal_interaction.response.defer(ephemeral=True, thinking=True)
+            await modal_interaction.followup.send(await self._update_note(message_id, note, uploads), ephemeral=True)
 
-        def check(m: discord.Message) -> bool:
-            return m.author.id == interaction.user.id and m.channel.id == interaction.channel_id
+        await interaction.response.send_modal(
+            NoteModal(title="Update your application", note=application.get("note"), on_done=done))
 
-        try:
-            msg = await self.bot.wait_for("message", check=check, timeout=SCREENSHOT_TIMEOUT)
-        except asyncio.TimeoutError:
-            await interaction.followup.send("Timed out waiting for a reply - run /update-application again to retry.",
-                                            ephemeral=True)
-            return
-
-        note_text = msg.content.strip() or None
-        screenshot_urls = [a.url for a in msg.attachments
-                           if (a.content_type or "").startswith("image/")][: config.MAX_SCREENSHOTS]
-        if not note_text and not screenshot_urls:
-            await interaction.followup.send("I didn't see a note or an image in that message - nothing updated.",
-                                            ephemeral=True)
-            return
-
-        # A reviewer may have decided while we waited; never touch a decided application.
+    async def _update_note(self, message_id: int, note: Optional[str], uploads) -> str:
+        """Saves a new note (empty: removed) and, when files were uploaded,
+        replaces the screenshots on the card. Returns the text for the applicant."""
         application = self.bot.store.get(message_id)
         if application is None or application["status"] != "pending":
-            await interaction.followup.send("Your application was decided while waiting for your reply, so this "
-                                            "update wasn't applied.", ephemeral=True)
-            return
-
-        changes = {}
-        if note_text:
-            changes["note"] = note_text
-        if screenshot_urls:
-            changes["screenshot_urls"] = screenshot_urls
+            return "Your application was decided in the meantime, so this update wasn't applied."
+        message = await self._card_message(message_id, application)
+        if message is None:
+            return "Couldn't find your application's card to update - please let a moderator know."
+        changes, problem = {"note": note}, None
+        files = []
+        if uploads:
+            files, problem = await self._screenshot_files(uploads, message.guild)
+            changes["screenshot_files"] = [f.filename for f in files]
         self.bot.store.update(message_id, **changes)
-        await self._rerender(message_id)
-
-        updated_parts = (["note"] if note_text else []) + (
-            [f"{len(screenshot_urls)} screenshot(s)"] if screenshot_urls else [])
-        await interaction.followup.send(f"Updated: {', '.join(updated_parts)}.", ephemeral=True)
+        record = self.bot.store.get(message_id)
+        view = self._render_application_view(record, message_id=message_id)
+        try:
+            edited = await (message.edit(view=view, attachments=files) if uploads else message.edit(view=view))
+        except discord.HTTPException:
+            log.warning("Couldn't update the review card %s", message_id, exc_info=True)
+            return "Couldn't update your application's card - please try again in a minute."
+        if uploads:
+            self.bot.store.update(message_id, screenshot_urls=card_media_urls(edited))
+        applications.changed(message_id)
+        parts = ["note" if note else "note removed"] + ([f"{len(files)} screenshot(s)"] if uploads else [])
+        text = f"✅ Updated your application: {', '.join(parts)}."
+        return f"{text}\n-# ⚠️ {problem}" if problem else text
 
     # --- pinned explainers (texts editable on the dashboard) --------------------------------------------
 
@@ -1414,12 +1451,15 @@ class ApplyCog(commands.Cog):
             if not applications.is_application(application) or application.get("status") not in ("approved", "denied"):
                 continue
             try:
+                # The card's screenshots are its own files: they move along.
+                files = await self._card_files(message, application)
                 new_message = await archive_channel.send(
-                    view=self._render_application_view(application, message_id=message.id))
+                    view=self._render_application_view(application, message_id=message.id), files=files)
                 self.bot.store.set(new_message.id, **{
                     **application, "channel_id": archive_channel.id,
                     "original_message_id": application.get("original_message_id") or message.id,
-                    "submitted_at": applications.submitted_at(message.id, application)})
+                    "submitted_at": applications.submitted_at(message.id, application),
+                    **({"screenshot_urls": card_media_urls(new_message)} if files else {})})
                 self.bot.store.delete(message.id)
                 await message.delete()
                 applications.changed(new_message.id)
