@@ -133,7 +133,9 @@ Below that, lookups are 404; the guild roster and the account profile
 (user token) still list those characters with their level.
 
 Test character for checks: **Eggmike Thewhite**, EU, PvP ruleset (id 1),
-guild Encore. On 2026-11-05 every lookup was 404 while it was below level
+guild Encore (Horde). The guild's auction house is **113** (Horde, EU PvP):
+on 2026-11-09 players saw about 2,900 Runecloth and 18,000 Linen Cloth for
+sale in game, which matched house 113 and no other. On 2026-11-05 every lookup was 404 while it was below level
 10; at level 15, after logging out, `/profile/wow/character/eggmike-thewhite`
 answered with level 15 and the guild. To re-check:
 

@@ -216,7 +216,7 @@ version or raid tier is a configuration change.
   3 Roleplay, 15 Roleplay PvP). Auction house data works, per ruleset:
   `/data/wow/ruleset/{id}/auctions/index`, then
   `.../auctions/{house}/commodities` (unit_price) and `.../auctions/{house}`
-  (buyout), several houses per faction with the same name; a snapshot,
+  (buyout), several houses per faction with the same name (the guild's is 113, Horde, EU PvP); a snapshot,
   see `Last-Modified`. Try it with `scripts/auction_lookup.py`. Characters
   and guilds are looked up by name without a realm.
 - `cogs/notifications.py`: alerts in a moderator channel, built from the
