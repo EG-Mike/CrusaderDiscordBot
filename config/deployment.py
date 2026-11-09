@@ -158,6 +158,10 @@ FEATURE_LEVELING_ENABLED = True
 # cogs/crafting.py: the crafting channel (who in the guild can make what,
 # and the featured recipes picked on the dashboard). Needs the roster.
 FEATURE_CRAFTING_ENABLED = True
+# cogs/rank_sync.py: Discord roles against in-game guild ranks (the Rank
+# sync page, and the members to promote posted in a channel). Needs the
+# roster.
+FEATURE_RANK_SYNC_ENABLED = True
 # cogs/auction_prices.py: auction house prices from Blizzard (the Auction
 # prices page) and answers to "price [Item]" in the guild chat channel.
 FEATURE_AUCTION_PRICES_ENABLED = True
@@ -301,6 +305,13 @@ CRAFTING_CRAFTERS_PER_PROFESSION = 10
 # stay on the Crafting page, marked as hidden).
 CRAFTING_HIDE_UNKNOWN_RECIPES = False
 
+# --- Rank sync (rank_sync.py, cogs/rank_sync.py) ---
+# Channel where the bot keeps the members to promote in the game posted
+# (Discord role says a higher rank than they have in the guild; the rules
+# and rank names are set on the dashboard's Rank sync page). Best a
+# moderator-only channel. Empty: not posted.
+RANK_SYNC_CHANNEL_ID = 0
+
 # --- Auction prices (auction_prices.py, cogs/auction_prices.py) ---
 # Settings starting with AUCTION_ apply immediately (webapi/settings.py).
 # The guild's auction house: a ruleset (WoW Forever has no realms; 1 is
@@ -323,6 +334,21 @@ AUCTION_PRICE_CHANNEL_ID = 0
 # doesn't matter, "of"/"on" after them is allowed.
 AUCTION_PRICE_TRIGGERS = ["price", "price check", "pc", "what is the price of", "what's the price of",
                           "how much is", "how much are"]
+
+# Where the answer goes: "dm" (a direct message to whoever asked; everyone
+# posting in the linked guild chat channel has linked their account, so
+# it's their own Discord account) or "channel" (a reply in the answer
+# channel below).
+AUCTION_PRICE_ANSWER_IN = "dm"
+
+# The channel for "channel" answers (and failed DMs), e.g. a #price-check
+# channel; the asker is mentioned. 0: the guild chat channel itself
+# (where Blizzard's link may not show the bot's messages in the game).
+AUCTION_PRICE_ANSWER_CHANNEL_ID = 0
+
+# When a DM can't be delivered (the player doesn't accept DMs from server
+# members), answer in the channel instead.
+AUCTION_PRICE_DM_FALLBACK = True
 
 # Also answer when the phrase comes right after the item(s), at the end of
 # the message ("[Iron Bar] price?").

@@ -229,12 +229,27 @@ version or raid tier is a configuration change.
   and answers "price [Item]" (phrases: `AUCTION_PRICE_TRIGGERS`, also
   after the item with `AUCTION_PRICE_TRIGGER_AFTER_ITEM`) in the guild chat
   channel (`AUCTION_PRICE_CHANNEL_ID`) with the "Price answer" bot
-  messages. In that channel (Blizzard's guild chat link) linked players'
+  messages, by DM to the asker (`AUCTION_PRICE_ANSWER_IN`; in the channel
+  when the DM fails and `AUCTION_PRICE_DM_FALLBACK`) or in an answer
+  channel (`AUCTION_PRICE_ANSWER_CHANNEL_ID`, mentioning the asker; the
+  bot's messages in the linked channel don't reach the game).
+  Only linked players can post in that channel, so the asker is always
+  their own Discord account. In that channel (Blizzard's guild chat link) linked players'
   messages arrive as their own, linked items as "[Name]" without spaces
   between them, recipes as "[Profession: Item]" (counted as the item);
   unlinked players' text doesn't arrive. `webapi/auction_api.py` serves
   the page, including a dry run ("Try it") of the answer to a message. `AUCTION_*`
   settings apply immediately.
+- `rank_sync.py`: Discord roles against in-game guild ranks. Rules
+  (table `rank_sync_rules`: members with a role should have at least an
+  in-game rank) and rank names (`rank_sync_ranks`; Blizzard's roster gives
+  only numbers, 0 = guild master, higher = lower rank) are set on the
+  dashboard's Rank sync page (`webapi/rank_sync_api.py`). Each member with
+  a rule's role is judged by their main in the guild (else a claimed
+  character in the guild) and grouped: promote, unknown rank, not in the
+  guild, no character, ok. `cogs/rank_sync.py` keeps the members to
+  promote posted in `RANK_SYNC_CHANNEL_ID` (header: the "rank_sync_header"
+  bot message). Ranks only change with the roster sync.
 - `cogs/notifications.py`: alerts in a moderator channel, built from the
   System log and the audit trail. Settings named `NOTIFY_*` /
   `NOTIFICATIONS_*` (and `AUCTION_*`) apply immediately (`webapi/settings.LIVE_PREFIXES`):
@@ -333,6 +348,8 @@ set in the dashboard.
   recipes.
 - Auction prices (done): Auction prices page and price answers in the
   guild chat channel.
+- Rank sync (done: promotions): Rank sync page and channel. Possible next:
+  the other direction (in-game rank without the Discord role).
 - Phase 4 (in progress): applications moved to Blizzard data (gear check
   with gear, enchants and talents; roster link on approval; WarcraftLogs
   optional). Applications page done (list, detail with gear/stats,

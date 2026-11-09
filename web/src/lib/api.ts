@@ -208,6 +208,7 @@ export type AuditKind =
   | "roster"
   | "crafting"
   | "auction"
+  | "rank_sync"
   | "audit"
   | "other";
 
@@ -816,6 +817,8 @@ export interface AuctionOverview {
   chat_channel: { id: string; name: string } | null;
   triggers: string[];
   trigger_after_item: boolean;
+  answer_in: "dm" | "channel";
+  answer_channel: { id: string; name: string } | null;
 }
 
 export interface AuctionTry {
@@ -833,4 +836,36 @@ export interface AuctionHouses {
 export interface AuctionComparison {
   item: AuctionItem;
   houses: ({ house_id: number; quantity: number; listings: number; min_price: number | null; median_price: number | null })[];
+}
+
+// --- rank sync (webapi/rank_sync_api.py) -----------------------------------------------
+
+export type RankSyncStatus = "promote" | "unknown_rank" | "not_in_guild" | "no_character" | "ok";
+
+export interface RankSyncEntry {
+  member: { id: string; name: string; avatar_url: string };
+  role_name: string | null;
+  target_rank: number;
+  target_label: string;
+  status: RankSyncStatus;
+  character: {
+    slug: string;
+    display_name: string;
+    class_id: number | null;
+    level: number | null;
+    in_guild: boolean;
+    guild_rank: number | null;
+    rank_label: string | null;
+  } | null;
+}
+
+export interface RankSyncOverview {
+  guild_name: string | null;
+  rules?: { role_id: string; role_name: string | null; rank: number; rank_label: string }[];
+  ranks?: { rank: number; name: string | null; count: number; examples: string[] }[];
+  max_rank?: number;
+  entries?: RankSyncEntry[];
+  suggested_role_id?: string | null;
+  classes?: WowClass[];
+  post?: { channel_id: string; channel_name: string; updated: number | null; problem: string | null } | null;
 }

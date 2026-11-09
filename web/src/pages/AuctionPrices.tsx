@@ -300,7 +300,13 @@ function ChatAnswers({ overview }: { overview: AuctionOverview }) {
               <span className="text-muted">The bot wouldn't answer this: no phrase right next to a linked [Item].</span>
             ) : result.answer ? (
               <>
-                <div className="mb-1 text-2xs text-faint">The bot would answer (nothing was posted):</div>
+                <div className="mb-1 text-2xs text-faint">
+                  The bot would answer
+                  {overview.answer_in === "dm"
+                    ? " by DM to the player who asked"
+                    : ` in #${overview.answer_channel?.name ?? overview.chat_channel?.name ?? "the guild chat"}`}{" "}
+                  (nothing was sent):
+                </div>
                 <div className="whitespace-pre-line">{result.answer}</div>
               </>
             ) : (
@@ -438,7 +444,14 @@ export default function AuctionPricesPage() {
             <span className="inline-flex items-center gap-1.5 text-muted">
               <MessageSquare className="h-3.5 w-3.5 text-faint" />
               {overview.chat_channel ? (
-                <>Answers "price [Item]" in #{overview.chat_channel.name}</>
+                <>
+                  Answers "price [Item]" from #{overview.chat_channel.name}
+                  {overview.answer_in === "dm"
+                    ? " by DM to the player who asked"
+                    : overview.answer_channel
+                      ? ` in #${overview.answer_channel.name}`
+                      : " in the same channel"}
+                </>
               ) : (
                 <>
                   Not answering price questions in Discord.{" "}

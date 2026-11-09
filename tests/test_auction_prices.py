@@ -9,6 +9,8 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from tests.helpers import DatabaseTestCase
 
+import discord
+
 import auction_prices
 import config
 from cogs import auction_prices as auction_cog
@@ -67,7 +69,8 @@ class Scoped(DatabaseTestCase):
             config, GAME_VERSION="forever", SERVER_REGION="eu", BLIZZARD_LOCALE="en_GB", AUCTION_RULESET_ID=1,
             AUCTION_HOUSE_ID=113, AUCTION_PRICE_CHANNEL_ID=777, AUCTION_PRICE_COOLDOWN_SECONDS=30,
             AUCTION_PRICE_TRIGGERS=["price", "price check", "pc", "what is the price of"],
-            AUCTION_PRICE_TRIGGER_AFTER_ITEM=True,
+            AUCTION_PRICE_TRIGGER_AFTER_ITEM=True, AUCTION_PRICE_ANSWER_IN="channel", AUCTION_PRICE_DM_FALLBACK=True,
+            AUCTION_PRICE_ANSWER_CHANNEL_ID=0,
             ITEM_LINK_URL="https://wh/item={id}")
         self._scope.start()
         auction_prices._search.clear()
@@ -173,12 +176,46 @@ class ChatTests(Scoped, unittest.IsolatedAsyncioTestCase):
         self.bot.wait_until_ready = asyncio.Event().wait  # the refresh loop waits forever
         self.cog = auction_cog.AuctionPricesCog(self.bot)
         self.channel = SimpleNamespace(id=777, name="guild-chat", send=mock.AsyncMock())
+        self.answers = SimpleNamespace(id=888, name="price-check", send=mock.AsyncMock())
+        self.bot.get_channel = lambda cid: {777: self.channel, 888: self.answers}.get(cid)
 
     async def asyncTearDown(self):
         self.cog.cog_unload()
 
-    def message(self, text, author=2, channel=None):
-        return SimpleNamespace(content=text, author=SimpleNamespace(id=author), channel=channel or self.channel)
+    def message(self, text, author=2, channel=None, bot=False):
+        self.author = SimpleNamespace(id=author, bot=bot, send=mock.AsyncMock())
+        return SimpleNamespace(content=text, author=self.author, channel=channel or self.channel, webhook_id=None)
+
+    async def test_answers_in_the_chosen_channel_mentioning_the_asker(self):
+        with mock.patch.object(config, "AUCTION_PRICE_ANSWER_CHANNEL_ID", 888):
+            message = self.message("price [Runecloth]")
+            self.author.mention = "<@2>"
+            await self.cog.on_message(message)
+        self.channel.send.assert_not_awaited()
+        args, kwargs = self.answers.send.await_args
+        self.assertTrue(args[0].startswith("<@2> The auction house price for [Runecloth]"))
+        self.assertEqual(kwargs["allowed_mentions"].users, [self.author])
+
+    async def test_answers_by_dm(self):
+        with mock.patch.object(config, "AUCTION_PRICE_ANSWER_IN", "dm"):
+            await self.cog.on_message(self.message("[Runecloth] price?"))
+            self.assertIn("20s16c", self.author.send.await_args.args[0])
+            self.channel.send.assert_not_awaited()
+            # Someone who doesn't take DMs: answered in the channel, unless that's switched off.
+            message = self.message("price [Linen Cloth]", author=3)
+            self.author.send.side_effect = discord.Forbidden(SimpleNamespace(status=403, reason="Forbidden"),
+                                                             "Cannot send messages to this user")
+            await self.cog.on_message(message)
+            self.assertIn("[Linen Cloth]", self.channel.send.await_args.args[0])
+            with mock.patch.object(config, "AUCTION_PRICE_DM_FALLBACK", False):
+                message = self.message("price [Runecloth]", author=4)
+                self.author.send.side_effect = discord.Forbidden(SimpleNamespace(status=403, reason="Forbidden"), "")
+                await self.cog.on_message(message)
+            self.assertEqual(self.channel.send.await_count, 1)
+            # A bot or the link's notice gets no DM, the channel answer instead.
+            await self.cog.on_message(self.message("price [Runecloth]", author=5, bot=True))
+            self.author.send.assert_not_awaited()
+            self.assertEqual(self.channel.send.await_count, 2)
 
     async def test_answers_with_the_age(self):
         with mock.patch("auction_prices.time.time", return_value=1_762_690_335.0 + 365 * 86400 + 3 * 3600 + 60):

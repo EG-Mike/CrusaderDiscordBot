@@ -73,6 +73,7 @@ OPTIONAL_EXTENSIONS = [
     ("cogs.leveling", config.FEATURE_LEVELING_ENABLED and config.FEATURE_ROSTER_ENABLED),
     ("cogs.crafting", config.FEATURE_CRAFTING_ENABLED and config.FEATURE_ROSTER_ENABLED),
     ("cogs.auction_prices", config.FEATURE_AUCTION_PRICES_ENABLED),
+    ("cogs.rank_sync", config.FEATURE_RANK_SYNC_ENABLED and config.FEATURE_ROSTER_ENABLED),
     ("cogs.audit_log", config.FEATURE_AUDIT_LOG_ENABLED),
     ("cogs.notifications", config.FEATURE_NOTIFICATIONS_ENABLED),
     ("cogs.web_dashboard", config.FEATURE_WEB_DASHBOARD_ENABLED),

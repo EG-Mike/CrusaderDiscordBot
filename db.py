@@ -346,6 +346,30 @@ _SCHEMA = [
         PRIMARY KEY (game, region, slug)
     )
     """,
+    # Rank sync (rank_sync.py): names for the guild's in-game ranks (Blizzard
+    # only gives numbers, 0 = guild master) and which in-game rank members
+    # with a Discord role should have. Per game, region and guild.
+    """
+    CREATE TABLE IF NOT EXISTS rank_sync_ranks (
+        game       TEXT NOT NULL,
+        region     TEXT NOT NULL,
+        guild_slug TEXT NOT NULL,
+        rank       INTEGER NOT NULL,
+        name       TEXT NOT NULL,
+        PRIMARY KEY (game, region, guild_slug, rank)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS rank_sync_rules (
+        game       TEXT NOT NULL,
+        region     TEXT NOT NULL,
+        guild_slug TEXT NOT NULL,
+        role_id    INTEGER NOT NULL,
+        rank       INTEGER NOT NULL,
+        added_by   TEXT,
+        PRIMARY KEY (game, region, guild_slug, role_id)
+    )
+    """,
     # Auction house prices (auction_prices.py): per auction house, each
     # item's cheapest and median price per unit (copper) and how many are
     # for sale, from Blizzard's latest snapshot; plus when that snapshot was

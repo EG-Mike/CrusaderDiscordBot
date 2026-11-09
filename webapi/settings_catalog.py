@@ -52,6 +52,7 @@ GROUPS: List[Tuple[str, str, str, str]] = [
     ("roster", "features", "Guild roster", "Characters linked to Discord members."),
     ("leveling", "features", "Leveling", "The leveling leaderboard and milestone announcements."),
     ("crafting", "features", "Crafting", "Who in the guild can make what, and the recipes you feature."),
+    ("rank_sync", "features", "Rank sync", "Who to promote in the game, from their Discord roles."),
     ("auction", "features", "Auction prices", "Auction house prices, and answering price questions in the guild "
                                                "chat. Changes apply immediately."),
     ("notifications", "features", "Notifications", "Alerts the bot posts for moderators. Changes apply immediately."),
@@ -136,6 +137,9 @@ CATALOG: Dict[str, Entry] = {
                                                               "Needs the guild roster."),
     "FEATURE_CRAFTING_ENABLED": Entry("features", "Crafting", "The crafting channel and the Crafting page: who in "
                                                               "the guild can make what. Needs the guild roster."),
+    "FEATURE_RANK_SYNC_ENABLED": Entry("features", "Rank sync",
+                                       "The Rank sync page: members whose Discord role says a higher rank than they "
+                                       "have in the guild. Needs the guild roster."),
     "FEATURE_AUCTION_PRICES_ENABLED": Entry("features", "Auction prices",
                                             "The Auction prices page, and answers to \"price [Item]\" in the guild "
                                             "chat channel."),
@@ -334,6 +338,10 @@ CATALOG: Dict[str, Entry] = {
     "CRAFTING_CRAFTERS_PER_PROFESSION": Entry("crafting", "Crafters per profession",
                                               "At most this many per profession in the channel, highest skill first. "
                                               "The Crafting page shows them all.", unit="crafters", advanced=True),
+    "RANK_SYNC_CHANNEL_ID": Entry("rank_sync", "Rank sync channel",
+                                  "The bot keeps the members to promote in the game posted here, and updates it when "
+                                  "it changes. Best a channel only moderators see. The rules are on the Rank sync "
+                                  "page. Empty: not posted."),
     "AUCTION_PRICE_CHANNEL_ID": Entry("auction", "Guild chat channel",
                                       "The channel linked to the in-game guild chat. When someone writes e.g. "
                                       "\"price [Linen Cloth]\" there, the bot answers with the auction house "
@@ -342,6 +350,17 @@ CATALOG: Dict[str, Entry] = {
                                     "Words that ask for a price when they come right before an [Item], e.g. "
                                     "price, price check, what is the price of. Case doesn't matter. Try messages "
                                     "on the Auction prices page.", widget="text_list"),
+    "AUCTION_PRICE_ANSWER_IN": Entry("auction", "Answer by",
+                                     "A direct message keeps the guild chat clean: only the player who asked sees "
+                                     "the price.", choices=[("dm", "Direct message to the player who asked"),
+                                                            ("channel", "A reply in a channel (below)")]),
+    "AUCTION_PRICE_ANSWER_CHANNEL_ID": Entry("auction", "Answer channel",
+                                             "Where answers go when they're not a direct message (and when a direct "
+                                             "message can't be delivered), mentioning the player who asked. Empty: "
+                                             "the guild chat channel itself."),
+    "AUCTION_PRICE_DM_FALLBACK": Entry("auction", "Answer in the channel when a DM fails",
+                                       "Some players don't accept direct messages from server members. On: they get "
+                                       "the answer in the answer channel instead. Off: they get no answer."),
     "AUCTION_PRICE_TRIGGER_AFTER_ITEM": Entry("auction", "Also after the item",
                                               "Answer too when the words end the message after the item, e.g. "
                                               "\"[Iron Bar] price?\". Try messages on the Auction prices page."),

@@ -326,13 +326,29 @@ DEFINITIONS.append(Definition(
     feature="FEATURE_CRAFTING_ENABLED",
 ))
 DEFINITIONS.append(Definition(
+    key="rank_sync_header",
+    label="Rank sync header",
+    group="Rank sync",
+    description="The heading of the members to promote, posted in the rank sync channel (Settings, Rank sync).",
+    kind="text",
+    where="At the top of the rank sync channel",
+    default_body="## Promotions in {guild}\nThese members have a Discord role that comes with a higher rank in the "
+                 "guild. Promote them in the game; they drop off the list after the next roster update.\n"
+                 "-# updated {updated}",
+    variables=[
+        Variable("guild", "The guild's name in the game", "Encore"),
+        Variable("updated", "When the list last changed (shown as e.g. \"5 minutes ago\")", "5 minutes ago"),
+    ],
+    feature="FEATURE_RANK_SYNC_ENABLED",
+))
+DEFINITIONS.append(Definition(
     key="auction_price",
     label="Price answer",
     group="Auction prices",
     description="The answer to \"price [Item]\" in the guild chat channel (Settings, Auction prices). One line "
                 "per item asked about.",
     kind="text",
-    where="In the guild chat channel",
+    where="By DM to the player who asked, or in the guild chat channel (Settings, Auction prices)",
     default_body="The auction house price for [{item}] is {price} ({age})",
     variables=[
         Variable("item", "The item's name", "Linen Cloth"),
@@ -349,7 +365,7 @@ DEFINITIONS.append(Definition(
     group="Auction prices",
     description="The answer when nobody is selling the item.",
     kind="text",
-    where="In the guild chat channel",
+    where="By DM to the player who asked, or in the guild chat channel (Settings, Auction prices)",
     default_body="Nobody is selling [{item}] on the auction house ({age})",
     variables=[
         Variable("item", "The item's name", "Black Lotus"),
@@ -363,7 +379,7 @@ DEFINITIONS.append(Definition(
     group="Auction prices",
     description="The answer when no item has that name.",
     kind="text",
-    where="In the guild chat channel",
+    where="By DM to the player who asked, or in the guild chat channel (Settings, Auction prices)",
     default_body="I don't know an item called [{item}]",
     variables=[Variable("item", "The name as written", "Linen Clth")],
     feature="FEATURE_AUCTION_PRICES_ENABLED",
