@@ -1,7 +1,8 @@
 // A character's gear, talents, statistics and professions from Blizzard
 // (gear.py), shared by the Character lookup and Applications pages.
 import { Gem, Sparkles } from "lucide-react";
-import type { CharacterSummary, GearItem, StatGroup } from "../lib/api";
+import { Link } from "react-router-dom";
+import type { CardStatistics, CharacterSummary, GearItem, StatGroup } from "../lib/api";
 import { QUALITY_COLORS } from "../lib/wow";
 
 export const COSMETIC_SLOTS = new Set(["SHIRT", "TABARD"]);
@@ -131,6 +132,39 @@ export function StatsCard({ groups }: { groups: StatGroup[] }) {
                   </div>
                 ))}
               </dl>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** The achievement statistics moderators chose for the card (e.g. raid boss kills). */
+export function CardStatisticsCard({ statistics }: { statistics: CardStatistics }) {
+  return (
+    <section className="card">
+      <header className="flex items-center justify-between gap-2 border-b border-line px-4 py-3 md:px-5">
+        <div className="label">{statistics.title || "Statistics"}</div>
+        <Link to="/applications/statistics" className="text-2xs text-gold hover:underline">
+          Choose
+        </Link>
+      </header>
+      {statistics.groups.length === 0 ? (
+        <p className="px-4 py-3 text-faint md:px-5">No statistics chosen for the card yet.</p>
+      ) : (
+        <div className="space-y-2 px-4 py-3 md:px-5">
+          {statistics.groups.map((g, i) => (
+            <div key={`${g.group}-${i}`}>
+              {g.group && <div className="mb-0.5 text-2xs font-semibold uppercase tracking-wide text-faint">{g.group}</div>}
+              <div className="flex flex-wrap gap-1.5">
+                {g.items.map((item) => (
+                  <span key={item.label} className={`inline-flex items-center gap-1.5 rounded-md border border-line px-2 py-0.5 text-xs ${item.value ? "bg-raised/40" : "opacity-50"}`}>
+                    {item.label}
+                    <span className="font-semibold tabular-nums">{item.value}</span>
+                  </span>
+                ))}
+              </div>
             </div>
           ))}
         </div>

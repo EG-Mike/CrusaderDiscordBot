@@ -17,7 +17,8 @@ dashboard, and telling the dashboard something changed.
 Fields of a record (older records may lack the newer ones):
   applicant_id, character_name, character_slug, status (pending | approved |
   denied), class_name, class_color, role, spec, spec_id, other_specs
-  (the offspec, as a list of one), off_spec_id, note, screenshot_urls,
+  (the offspec, as a list of one), off_spec_id, note, screenshot_files (the
+  card's own files, "attachment://..."), screenshot_urls (their addresses),
   gear (gear.summarise, with portraits), icons ({"item:id"/"profession:id": emoji}),
   gear_text (older records), gear_checked_at, profile_url, wcl_url,
   channel_id, submitted_at, original_message_id, last_decision,
@@ -29,6 +30,7 @@ import logging
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple
 
+import card_stats
 import config
 import gear
 
@@ -207,6 +209,9 @@ def public_detail(store, guild, message_id: int, record: dict, *,
         "legacy_text": None if summary else "\n\n".join(filter(None, (
             record.get("class_block"), record.get("armory_block"), record.get("tier_block"),
             record.get("boss_block")))) or None,
+        # The chosen achievement statistics (card_stats.py), e.g. raid boss kills, grouped as on the card.
+        "statistics": {"title": config.APPLICATION_STATISTICS_TITLE or None,
+                       "groups": card_stats.lines((summary or {}).get("achievement_stats")) if summary else []},
         # Parses join here once WarcraftLogs covers the game version (APPLICATION_WARCRAFTLOGS_ENABLED).
         "warcraftlogs": {"enabled": bool(config.APPLICATION_WARCRAFTLOGS_ENABLED),
                          "text": "\n\n".join(filter(None, (record.get("tier_block"), record.get("boss_block"))))

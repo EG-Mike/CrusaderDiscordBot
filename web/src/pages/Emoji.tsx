@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { AlertTriangle, Check, ClipboardCopy, ImagePlus, Layers, Loader2, Plus, Recycle, Search, Smile, Sparkles, Trash2 } from "lucide-react";
 import { ApiError, api, type EmojiAddResult, type EmojiOverview, type EmojiSearchResult, type LibraryEmoji, type PlainEmoji } from "../lib/api";
+import { WowLink } from "../lib/wowhead";
 import { loadCustomEmoji } from "../lib/emoji";
 import { useLive } from "../lib/live";
 import { useToast } from "../components/Toast";
@@ -45,7 +46,13 @@ function ResultRow({ r, onAdd, busy, canManage }: { r: EmojiSearchResult; onAdd:
       {r.image_url ? <img src={r.image_url} alt="" className="h-9 w-9 shrink-0 rounded ring-1 ring-line" loading="lazy" /> : <div className="h-9 w-9 shrink-0 rounded bg-raised" />}
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
-          <span className="truncate font-medium">{r.name}</span>
+          {r.kind === "item" || r.kind === "spell" ? (
+            <WowLink kind={r.kind} id={r.game_id} className="truncate font-medium">
+              {r.name}
+            </WowLink>
+          ) : (
+            <span className="truncate font-medium">{r.name}</span>
+          )}
           <Badge tone={r.kind === "item" ? "gold" : "info"}>{kindLabel(r.kind)}</Badge>
           <span className="hidden font-mono text-2xs text-faint sm:inline">#{r.game_id}</span>
         </div>
@@ -94,7 +101,13 @@ function LibraryCard({ e, onDelete, canManage }: { e: LibraryEmoji; onDelete: (e
           {e.aliases.length ? (
             e.aliases.map((a) => (
               <span key={`${a.kind}${a.game_id}`} className="rounded border border-line bg-surface px-1.5 py-px text-2xs text-muted" title={`${kindLabel(a.kind)} ${a.game_id}`}>
-                {a.name}
+                {a.kind === "item" || a.kind === "spell" ? (
+                  <WowLink kind={a.kind} id={a.game_id}>
+                    {a.name}
+                  </WowLink>
+                ) : (
+                  a.name
+                )}
               </span>
             ))
           ) : (

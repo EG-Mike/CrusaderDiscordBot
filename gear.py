@@ -33,6 +33,7 @@ from typing import Dict, List, Optional
 
 import aiohttp
 
+import card_stats
 import config
 import wow_api
 
@@ -249,12 +250,18 @@ def summarise(profile: dict, equipment: dict, specializations: Optional[dict], *
     }
 
 
+def link_url(template: Optional[str], game_id) -> Optional[str]:
+    """A page for an item/spell from a link setting ("https://...{id}"), or
+    None when it shouldn't link."""
+    template = (template or "").strip()
+    if not template or not game_id or not template.startswith("https://"):
+        return None
+    return template.replace("{id}", str(int(game_id)))
+
+
 def item_url(item_id) -> Optional[str]:
     """The item's page (ITEM_LINK_URL), or None when names shouldn't link."""
-    template = (config.ITEM_LINK_URL or "").strip()
-    if not template or not item_id or not template.startswith("https://"):
-        return None
-    return template.replace("{id}", str(int(item_id)))
+    return link_url(config.ITEM_LINK_URL, item_id)
 
 
 def requirement_problems(summary: dict) -> List[str]:
@@ -281,11 +288,11 @@ async def fetch(bot, character_slug: str, class_names: Optional[Dict[int, str]] 
             answers = await asyncio.gather(*(
                 client.request(base + sub, namespace, session=session, locale=config.BLIZZARD_LOCALE)
                 for sub in ("", "/equipment", "/specializations", "/professions", "/statistics",
-                            "/character-media")))
+                            "/character-media", "/achievements/statistics")))
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             raise GearError(f"Couldn't reach Blizzard ({type(exc).__name__}). Try again in a minute.") from None
     ((p_status, p_headers, profile), (e_status, _, equipment), (_s, _, specializations), (_p, _, professions),
-     (_st, _, statistics), (m_status, _, media)) = answers
+     (_st, _, statistics), (m_status, _, media), (a_status, _, achievement_stats)) = answers
     if p_status == 404:
         raise GearError("Blizzard has no profile for this character. Characters can be looked up from level "
                         "10, after logging out once.")
@@ -296,6 +303,11 @@ async def fetch(bot, character_slug: str, class_names: Optional[Dict[int, str]] 
                         class_name=(class_names or {}).get(class_id, ""))
     summary["profile_updated"] = p_headers.get("Last-Modified") or p_headers.get("last-modified")
     summary.update(portraits(media if m_status == 200 else None))
+    # Achievement statistics (e.g. raid boss kills) for the card's statistics section (card_stats.py);
+    # every one seen goes into the catalog moderators choose from.
+    entries = card_stats.parse(achievement_stats if a_status == 200 else None)
+    summary["achievement_stats"] = card_stats.values(entries)
+    await asyncio.to_thread(card_stats.record_seen, entries)
     return summary
 
 

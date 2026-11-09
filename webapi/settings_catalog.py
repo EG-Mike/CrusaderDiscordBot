@@ -52,6 +52,8 @@ GROUPS: List[Tuple[str, str, str, str]] = [
     ("roster", "features", "Guild roster", "Characters linked to Discord members."),
     ("leveling", "features", "Leveling", "The leveling leaderboard and milestone announcements."),
     ("crafting", "features", "Crafting", "Who in the guild can make what, and the recipes you feature."),
+    ("auction", "features", "Auction prices", "Auction house prices, and answering price questions in the guild "
+                                               "chat. Changes apply immediately."),
     ("notifications", "features", "Notifications", "Alerts the bot posts for moderators. Changes apply immediately."),
     ("api_keys", "general", "API keys", "Keys for Blizzard and WarcraftLogs. Stored encrypted and never shown again."),
     ("blizzard", "general", "Blizzard", "Which game Blizzard's API is asked about."),
@@ -134,6 +136,9 @@ CATALOG: Dict[str, Entry] = {
                                                               "Needs the guild roster."),
     "FEATURE_CRAFTING_ENABLED": Entry("features", "Crafting", "The crafting channel and the Crafting page: who in "
                                                               "the guild can make what. Needs the guild roster."),
+    "FEATURE_AUCTION_PRICES_ENABLED": Entry("features", "Auction prices",
+                                            "The Auction prices page, and answers to \"price [Item]\" in the guild "
+                                            "chat channel."),
     "FEATURE_ATTENDANCE_ENABLED": Entry("features", "Attendance", "/checkattendance and the attendance messages."),
     "FEATURE_RAID_SUMMARY_ENABLED": Entry("features", "Raid summaries", "/raidsummary and the raid recaps."),
     "FEATURE_RAID_LOGS_ENABLED": Entry("features", "Raid logs", "Reposting and tagging new WarcraftLogs reports. "
@@ -190,6 +195,10 @@ CATALOG: Dict[str, Entry] = {
     "GEARCHECK_PROFILE_URL": Entry("applications", "Character profile link",
                                    "A link on the review card, e.g. to the armory. {region} and {slug} (like "
                                    "eggmike-thewhite) are filled in. Empty: no link.", advanced=True),
+    "APPLICATION_STATISTICS_TITLE": Entry(
+        "applications", "Statistics heading",
+        "The heading above the statistics on the application card, e.g. Raid boss kills. Which statistics: "
+        "Applications, Card statistics. Empty: no heading."),
     "APPLICATION_WARCRAFTLOGS_ENABLED": Entry(
         "applications", "Include WarcraftLogs parses",
         "Adds per-boss parses for the current and previous tier (Raid tiers) to applications. Turn on once "
@@ -325,6 +334,29 @@ CATALOG: Dict[str, Entry] = {
     "CRAFTING_CRAFTERS_PER_PROFESSION": Entry("crafting", "Crafters per profession",
                                               "At most this many per profession in the channel, highest skill first. "
                                               "The Crafting page shows them all.", unit="crafters", advanced=True),
+    "AUCTION_PRICE_CHANNEL_ID": Entry("auction", "Guild chat channel",
+                                      "The channel linked to the in-game guild chat. When someone writes e.g. "
+                                      "\"price [Linen Cloth]\" there, the bot answers with the auction house "
+                                      "price. Empty: the bot doesn't answer."),
+    "AUCTION_PRICE_TRIGGERS": Entry("auction", "Price questions",
+                                    "Words that ask for a price when they come right before an [Item], e.g. "
+                                    "price, price check, what is the price of. Case doesn't matter. Try messages "
+                                    "on the Auction prices page.", widget="text_list"),
+    "AUCTION_PRICE_TRIGGER_AFTER_ITEM": Entry("auction", "Also after the item",
+                                              "Answer too when the words end the message after the item, e.g. "
+                                              "\"[Iron Bar] price?\". Try messages on the Auction prices page."),
+    "AUCTION_PRICE_COOLDOWN_SECONDS": Entry("auction", "Answer the same item once per",
+                                            "So a burst of the same question doesn't flood the chat.",
+                                            unit="seconds", advanced=True),
+    "AUCTION_REFRESH_MINUTES": Entry("auction", "Check for new prices every",
+                                     "Blizzard renews auction house data about once an hour.", unit="minutes",
+                                     advanced=True),
+    "AUCTION_RULESET_ID": Entry("auction", "Ruleset",
+                                "Which ruleset's auction houses to read. Easiest picked on the Auction prices page.",
+                                advanced=True),
+    "AUCTION_HOUSE_ID": Entry("auction", "Auction house",
+                              "Your auction house. Pick it on the Auction prices page, which can compare the "
+                              "houses to find yours.", advanced=True),
     "GUILD_ROSTER_POST_PROFESSIONS": Entry("roster", "Show professions",
                                            "Each character's professions with their skill, e.g. Enchanting 200/225, "
                                            "on the posted roster. Updated after the player logs out."),
@@ -377,6 +409,14 @@ CATALOG: Dict[str, Entry] = {
         "blizzard", "Item link",
         "Item names on applications and in the character lookup link here, e.g. to Wowhead. {id} is filled in "
         "with the item's number. Empty: names aren't links."),
+    "SPELL_LINK_URL": Entry(
+        "blizzard", "Spell link",
+        "Spells on the dashboard (e.g. the Emoji page) link here. {id} is filled in with the spell's number. "
+        "Empty: no links."),
+    "WOWHEAD_TOOLTIPS_ENABLED": Entry(
+        "blizzard", "Wowhead tooltips on the dashboard",
+        "Hovering an item or spell link shows its Wowhead tooltip. This loads Wowhead's tooltip script into the "
+        "dashboard; turn it off to use plain links only."),
     "CHARACTER_LOOKUP_PATHS": Entry(
         "blizzard", "Character lookup paths",
         "Tried in order until one answers; {name} and {surname} are filled in. Try paths in the "

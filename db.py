@@ -28,7 +28,7 @@ from threading import RLock
 _LOCK = RLock()
 _CONN = None
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 _SCHEMA = [
     # Generic key -> JSON record store, one "store" per former JSON file
@@ -310,6 +310,26 @@ _SCHEMA = [
         PRIMARY KEY (game, recipe_id)
     )
     """,
+    # Statistics on the application card (card_stats.py): every statistic
+    # the bot has seen on a character (Blizzard has no list of them), and
+    # the ones moderators chose, in order. Per game version.
+    """
+    CREATE TABLE IF NOT EXISTS card_stats_seen (
+        game     TEXT NOT NULL,
+        stat_id  INTEGER NOT NULL,
+        name     TEXT NOT NULL,
+        category TEXT,
+        PRIMARY KEY (game, stat_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS card_stats_chosen (
+        game     TEXT NOT NULL,
+        stat_id  INTEGER NOT NULL,
+        position INTEGER NOT NULL,
+        PRIMARY KEY (game, stat_id)
+    )
+    """,
     # Links waiting for their character (roster.py): an approved applicant
     # whose character Blizzard didn't know yet (below level 10) is linked
     # as soon as the character shows up on the roster.
@@ -324,6 +344,31 @@ _SCHEMA = [
         linked_by    TEXT,
         created_at   TEXT NOT NULL,
         PRIMARY KEY (game, region, slug)
+    )
+    """,
+    # Auction house prices (auction_prices.py): per auction house, each
+    # item's cheapest and median price per unit (copper) and how many are
+    # for sale, from Blizzard's latest snapshot; plus when that snapshot was
+    # taken. Replaced whenever Blizzard has a newer snapshot.
+    """
+    CREATE TABLE IF NOT EXISTS auction_prices (
+        house_key    TEXT NOT NULL,
+        item_id      INTEGER NOT NULL,
+        min_price    INTEGER NOT NULL,
+        median_price INTEGER NOT NULL,
+        quantity     INTEGER NOT NULL,
+        listings     INTEGER NOT NULL,
+        PRIMARY KEY (house_key, item_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS auction_snapshots (
+        house_key   TEXT PRIMARY KEY,
+        snapshot_at TEXT,
+        modified    TEXT,
+        checked_at  TEXT NOT NULL,
+        auctions    INTEGER NOT NULL DEFAULT 0,
+        items       INTEGER NOT NULL DEFAULT 0
     )
     """,
     # Web dashboard login sessions. Only a SHA-256 of the cookie token is

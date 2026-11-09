@@ -143,7 +143,9 @@ def parse_recipe(data: dict) -> dict:
         "name": _name(data.get("name")) or "?",
         "item_id": item.get("id"),
         "item_name": _name(item.get("name")) or None,
-        "quantity": (data.get("crafted_quantity") or {}).get("value"),
+        # How many items come out. Only for recipes that make an item: for enchants Blizzard puts the
+        # enchant's strength here (e.g. 10 for Enchant Weapon - Revelation), not a count.
+        "quantity": (data.get("crafted_quantity") or {}).get("value") if item.get("id") else None,
         "reagents": [{"id": (r.get("reagent") or {}).get("id"), "name": _name((r.get("reagent") or {}).get("name")),
                       "quantity": r.get("quantity")} for r in data.get("reagents") or []],
     }
@@ -164,6 +166,8 @@ async def recipe_details(bot, recipe_id: int) -> dict:
 def _featured_row(row) -> dict:
     found = dict(row)
     found["reagents"] = json.loads(found.get("reagents") or "[]")
+    if not found.get("item_id"):
+        found["quantity"] = None  # featured before parse_recipe knew enchants carry no count
     return found
 
 

@@ -158,6 +158,9 @@ FEATURE_LEVELING_ENABLED = True
 # cogs/crafting.py: the crafting channel (who in the guild can make what,
 # and the featured recipes picked on the dashboard). Needs the roster.
 FEATURE_CRAFTING_ENABLED = True
+# cogs/auction_prices.py: auction house prices from Blizzard (the Auction
+# prices page) and answers to "price [Item]" in the guild chat channel.
+FEATURE_AUCTION_PRICES_ENABLED = True
 
 # cogs/web_dashboard.py: the browser-based management dashboard (see the
 # README's "Web dashboard" section). Off by default - turn it on in
@@ -244,6 +247,14 @@ CHARACTER_LOOKUP_PATHS = ["/profile/wow/character/{name}-{surname}"]
 # aren't links. Wowhead's WoW Forever pages are under /forever/.
 ITEM_LINK_URL = "https://www.wowhead.com/forever/item={id}"
 
+# Same for spells (e.g. on the dashboard's Emoji page). {id} is the spell's ID.
+SPELL_LINK_URL = "https://www.wowhead.com/forever/spell={id}"
+
+# Show Wowhead's tooltip when hovering an item or spell link on the
+# dashboard (Wowhead's tooltip script, loaded from wow.zamimg.com). It only
+# works for links to wowhead.com. Off: plain links, no third-party script.
+WOWHEAD_TOOLTIPS_ENABLED = True
+
 # --- Guild roster (roster.py, cogs/roster.py) ---
 # The guild's in-game name, as Blizzard's API knows it (e.g. "Encore").
 # Its roster (every member and their level) is read from Blizzard. Empty:
@@ -289,6 +300,37 @@ CRAFTING_CRAFTERS_PER_PROFESSION = 10
 # Leave featured recipes nobody in the guild knows out of the channel (they
 # stay on the Crafting page, marked as hidden).
 CRAFTING_HIDE_UNKNOWN_RECIPES = False
+
+# --- Auction prices (auction_prices.py, cogs/auction_prices.py) ---
+# Settings starting with AUCTION_ apply immediately (webapi/settings.py).
+# The guild's auction house: a ruleset (WoW Forever has no realms; 1 is
+# PvP) and one of its houses. Every ruleset has several houses per faction
+# with the same name; moderators pick theirs on the Auction prices page,
+# which can compare the houses. 0: none picked, no prices.
+AUCTION_RULESET_ID = 1
+AUCTION_HOUSE_ID = 0
+
+# How often (minutes) to ask Blizzard for a newer snapshot. An unchanged
+# one costs a tiny "not modified" answer; Blizzard renews them about hourly.
+AUCTION_REFRESH_MINUTES = 15
+
+# The guild chat channel (the one linked to the in-game guild chat) where
+# the bot answers "price [Item]". 0: it doesn't answer anywhere.
+AUCTION_PRICE_CHANNEL_ID = 0
+
+# Phrases that ask for a price when they come right before an [Item]
+# ("price [Linen Cloth]", "what is the price of [Linen Cloth]"); case
+# doesn't matter, "of"/"on" after them is allowed.
+AUCTION_PRICE_TRIGGERS = ["price", "price check", "pc", "what is the price of", "what's the price of",
+                          "how much is", "how much are"]
+
+# Also answer when the phrase comes right after the item(s), at the end of
+# the message ("[Iron Bar] price?").
+AUCTION_PRICE_TRIGGER_AFTER_ITEM = True
+
+# The same item is answered at most once per this many seconds per
+# channel, so a burst of questions doesn't flood the chat.
+AUCTION_PRICE_COOLDOWN_SECONDS = 30
 
 # --- Leveling (cogs/leveling.py) ---
 # Channel where level milestones are announced. Empty: no announcements
@@ -540,6 +582,11 @@ GEARCHECK_PROFILE_URL = ""
 # applications. Off until WarcraftLogs covers the game version the guild
 # plays; the tier settings (Raid tiers) say which raids count.
 APPLICATION_WARCRAFTLOGS_ENABLED = False
+
+# Heading of the statistics section on the application card (which
+# statistics: the dashboard's Applications, Card statistics). Empty: no
+# heading.
+APPLICATION_STATISTICS_TITLE = "Raid boss kills"
 
 # --- Attendance tracking (Regular-role eligibility) ---
 # Regular role - separate from FRESH_EXEMPT_ROLE_IDS above (that list is

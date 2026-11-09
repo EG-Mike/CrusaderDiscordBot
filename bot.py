@@ -72,6 +72,7 @@ OPTIONAL_EXTENSIONS = [
     ("cogs.roster", config.FEATURE_ROSTER_ENABLED),
     ("cogs.leveling", config.FEATURE_LEVELING_ENABLED and config.FEATURE_ROSTER_ENABLED),
     ("cogs.crafting", config.FEATURE_CRAFTING_ENABLED and config.FEATURE_ROSTER_ENABLED),
+    ("cogs.auction_prices", config.FEATURE_AUCTION_PRICES_ENABLED),
     ("cogs.audit_log", config.FEATURE_AUDIT_LOG_ENABLED),
     ("cogs.notifications", config.FEATURE_NOTIFICATIONS_ENABLED),
     ("cogs.web_dashboard", config.FEATURE_WEB_DASHBOARD_ENABLED),
@@ -103,7 +104,7 @@ if config.FEATURE_TIER_RETROSPECTIVE_ENABLED and not config.FEATURE_RAID_SUMMARY
 intents = discord.Intents.default()
 intents.members = True          # needed to assign roles / fetch member objects
 intents.reactions = True
-intents.message_content = True  # needed so message.attachments is populated
+intents.message_content = True  # raid summary loot uploads and the raid log channel read messages
                                  # for the screenshot-reply step (this is a
                                  # privileged intent - see README step below)
 

@@ -89,6 +89,17 @@ class GearTests(unittest.TestCase):
         self.assertNotIn("Talents", application_card.facts(record))  # none spent
 
 
+class LinkTests(unittest.TestCase):
+    def test_link_templates(self):
+        self.assertEqual(gear.link_url("https://www.wowhead.com/forever/spell={id}", 2061),
+                         "https://www.wowhead.com/forever/spell=2061")
+        self.assertIsNone(gear.link_url("", 2061))                       # no link set
+        self.assertIsNone(gear.link_url("javascript:alert({id})", 2061))  # only https links
+        self.assertIsNone(gear.link_url("https://x/{id}", None))
+        with mock.patch.object(config, "ITEM_LINK_URL", "https://www.wowhead.com/forever/item={id}"):
+            self.assertEqual(gear.item_url(19019), "https://www.wowhead.com/forever/item=19019")
+
+
 class ProfessionAndRulesetTests(unittest.TestCase):
     PROFESSIONS = {"primaries": [{"profession": {"name": "Tailoring", "id": 197},
                                   "tiers": [{"skill_points": 63, "max_skill_points": 150}]}],

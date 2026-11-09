@@ -19,7 +19,7 @@ from webapi import settings_catalog as catalog
 
 # Settings read at the moment they're used (not cached at startup), so a
 # saved value is applied to the running bot straight away - no restart.
-LIVE_PREFIXES = ("NOTIFY_", "NOTIFICATIONS_")
+LIVE_PREFIXES = ("NOTIFY_", "NOTIFICATIONS_", "AUCTION_")
 LIVE_KEYS = {"GUILD_DISPLAY_NAME"}
 
 
@@ -58,6 +58,8 @@ RANGES = {
     "GUILD_ROSTER_REFRESH_MINUTES": (15, 1440),
     "NOTIFY_ERRORS_EVERY_MINUTES": (1, 1440),
     "CRAFTING_CRAFTERS_PER_PROFESSION": (1, 50),
+    "AUCTION_REFRESH_MINUTES": (5, 1440),
+    "AUCTION_PRICE_COOLDOWN_SECONDS": (0, 3600),
 }
 
 

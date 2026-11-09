@@ -79,8 +79,19 @@ class RulesTests(Scoped, unittest.IsolatedAsyncioTestCase):
             "recipe_id": 6577, "name": "Simple Linen Boots", "item_id": 10046, "item_name": "Simple Linen Boots",
             "quantity": 1.0, "reagents": [{"id": 2996, "name": "Bolt of Linen Cloth", "quantity": 2},
                                           {"id": 2318, "name": "Light Leather", "quantity": 1}]})
-        enchant = crafting.parse_recipe({"id": 7001, "name": "Enchant Bracer - Strength", "reagents": []})
-        self.assertIsNone(enchant["item_id"])  # enchants make no item
+        enchant = crafting.parse_recipe({"id": 7001, "name": "Enchant Weapon - Revelation", "reagents": [],
+                                         "crafted_quantity": {"value": 10.0}})  # real: the enchant's strength
+        self.assertEqual((enchant["item_id"], enchant["quantity"]), (None, None))  # enchants make no item
+        motes = crafting.parse_recipe({"id": 7002, "name": "Dust to Motes", "crafted_item": {"id": 5, "name": "Mote"},
+                                       "crafted_quantity": {"value": 3.0}})
+        self.assertEqual(motes["quantity"], 3.0)
+
+    def test_older_enchants_lose_their_count(self):
+        roster.db.execute(
+            "INSERT INTO crafting_featured (game, recipe_id, name, profession_id, profession_name, item_id, quantity, "
+            "reagents, added_at) VALUES ('forever', 7003, 'Enchant Weapon - Revelation', 333, 'Enchanting', NULL, 10, "
+            "'[]', '2026-11-08T00:00:00Z')")
+        self.assertIsNone(crafting.featured()[0]["quantity"])
 
     async def test_feature_and_remove(self):
         details = mock.AsyncMock(return_value={**crafting.parse_recipe(RECIPE_DOC), "icon_url": "https://i/1.jpg"})

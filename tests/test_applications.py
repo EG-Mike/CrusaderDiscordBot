@@ -219,12 +219,109 @@ class WhoDecidesTests(unittest.TestCase):
 
 class SpecChoiceTests(unittest.IsolatedAsyncioTestCase):
     async def test_offspec_never_offers_the_main_spec(self):
-        view = apply.SpecChoiceView(1, None, "Priest", ["Discipline", "Holy", "Shadow Magic"],
+        view = apply.ApplyDialog(1, None, "Priest", ["Discipline", "Holy", "Shadow Magic"],
                                     suggested_spec="Shadow Magic", suggested_role="DPS")
         labels = [o.label for o in view.offspec_select.options]
         self.assertEqual(labels, ["No offspec", "Discipline", "Holy"])
         self.assertEqual([o.label for o in view.spec_select.options if o.default], ["Shadow Magic"])
         self.assertEqual([o.label for o in view.role_select.options], ["Healer", "DPS"])
+
+
+def with_gallery(*urls):
+    """A message as Discord returns a card: its files only in the gallery, not in attachments."""
+    gallery = SimpleNamespace(type=apply.discord.ComponentType.media_gallery,
+                              items=[SimpleNamespace(media=SimpleNamespace(url=u)) for u in urls])
+    return SimpleNamespace(attachments=[], components=[SimpleNamespace(type=None, children=[gallery])])
+
+
+def upload(name="gear.png", size=1000, content_type="image/png"):
+    return SimpleNamespace(filename=name, size=size, content_type=content_type,
+                           read=mock.AsyncMock(return_value=b"x" * size))
+
+
+class InChannelFlowTests(Setup, unittest.IsolatedAsyncioTestCase):
+    """Applying happens in the apply channel: no DMs."""
+
+    def setUp(self):
+        self._config = mock.patch.multiple(config, **CONFIG, MAX_SCREENSHOTS=2)
+        self._config.start()
+
+    def tearDown(self):
+        self._config.stop()
+
+    async def test_dialog_status_and_note(self):
+        view = apply.ApplyDialog(111, None, "Priest", ["Holy", "Shadow Magic"], suggested_spec="Holy",
+                                 suggested_role="Healer", intro="Found **Eggmike Thewhite**!")
+        self.assertIn("-# Attached: no note or screenshots (optional)", view.text())
+        self.assertEqual([b.label for b in view.children if isinstance(b, apply.discord.ui.Button)],
+                         ["Add note & screenshots", "Submit application"])
+        view.note, view.uploads = "Raided every tier", [upload()]
+        self.assertIn("📝 note (17 characters) · 🖼️ 1 screenshot", view.text())
+
+    async def test_screenshots_are_reattached_within_the_upload_limit(self):
+        self.make()
+        guild = SimpleNamespace(filesize_limit=2500)
+        files, problem = await self.cog._screenshot_files([upload("a.JPG"), upload("c.webp", 1500)], guild)
+        self.assertEqual([f.filename for f in files], ["screenshot-1.jpg", "screenshot-2.webp"])
+        self.assertIsNone(problem)
+        files, problem = await self.cog._screenshot_files([upload(size=2000), upload(size=2000)], guild)
+        self.assertEqual(len(files), 1)
+        self.assertIn("1 screenshot was too big", problem)
+        self.assertEqual(apply.image_uploads([upload(), upload(content_type="text/plain"), upload(), upload()]),
+                         [mock.ANY, mock.ANY])  # images only, at most MAX_SCREENSHOTS
+
+    async def test_post_puts_screenshots_on_the_card(self):
+        self.make(records={})
+        posted = mock.MagicMock()
+        posted.id = MESSAGE_ID
+        posted.attachments = []
+        posted.components = with_gallery("https://cdn.discordapp.com/attachments/1/2/screenshot-1.png").components
+        posted.edit = mock.AsyncMock()
+        self.channel.send = mock.AsyncMock(return_value=posted)
+        interaction = SimpleNamespace(user=SimpleNamespace(id=111), guild=self.guild)
+        char_data = {"name": "Eggmike Thewhite", "slug": "eggmike-thewhite", "class_name": "Priest", "level": 28,
+                     "guild_name": "Encore", "gear": None}
+        with mock.patch.object(apply.bot_messages, "text", lambda key, **kw: f"{key}:{kw}"):
+            text = await self.cog._post_application(interaction, char_data, {"role": "DPS", "spec": "Shadow Magic"},
+                                                    "Hi", [upload()])
+        self.assertIn("application_submitted", text)
+        sent = self.channel.send.await_args.kwargs
+        self.assertEqual([f.filename for f in sent["files"]], ["screenshot-1.png"])
+        [gallery] = [c for c in sent["view"].walk_children() if isinstance(c, apply.discord.ui.MediaGallery)]
+        self.assertEqual(gallery.items[0].media.url, "attachment://screenshot-1.png")
+        record = self.store.get(MESSAGE_ID)
+        self.assertEqual((record["note"], record["screenshot_files"]), ("Hi", ["screenshot-1.png"]))
+        self.assertEqual(record["screenshot_urls"],
+                         ["https://cdn.discordapp.com/attachments/1/2/screenshot-1.png"])  # for the dashboard
+
+    async def test_archived_cards_keep_their_screenshots(self):
+        self.make()
+        self.bot.http = SimpleNamespace(get_from_cdn=mock.AsyncMock(side_effect=[b"one", b"two"]))
+        card = with_gallery("https://cdn/a.png", "https://cdn/b.png")
+        card.id = MESSAGE_ID
+        files = await self.cog._card_files(card, {"screenshot_files": ["screenshot-1.png", "screenshot-2.jpg"]})
+        self.assertEqual([f.filename for f in files], ["screenshot-1.png", "screenshot-2.jpg"])
+        self.assertEqual(apply.card_media_urls(SimpleNamespace(components=None)), [])
+
+    async def test_update_replaces_screenshots_or_only_the_note(self):
+        self.make(records={MESSAGE_ID: record(note="old", screenshot_files=["screenshot-1.png"])})
+        edited = with_gallery("https://cdn/new-1.png", "https://cdn/new-2.png")
+        self.message.guild = SimpleNamespace(filesize_limit=10 ** 7)
+        self.message.edit = mock.AsyncMock(return_value=edited)
+        text = await self.cog._update_note(MESSAGE_ID, "new note", [upload(), upload("b.png")])
+        self.assertIn("note, 2 screenshot(s)", text)
+        self.assertEqual(len(self.message.edit.await_args.kwargs["attachments"]), 2)
+        stored = self.store.get(MESSAGE_ID)
+        self.assertEqual((stored["note"], stored["screenshot_files"], len(stored["screenshot_urls"])),
+                         ("new note", ["screenshot-1.png", "screenshot-2.png"], 2))
+
+        self.message.edit.reset_mock()
+        await self.cog._update_note(MESSAGE_ID, None, [])  # note removed, screenshots kept
+        self.assertNotIn("attachments", self.message.edit.await_args.kwargs)
+        self.assertEqual(self.store.get(MESSAGE_ID)["screenshot_files"], ["screenshot-1.png", "screenshot-2.png"])
+
+        self.store.update(MESSAGE_ID, status="approved")
+        self.assertIn("decided in the meantime", await self.cog._update_note(MESSAGE_ID, "late", []))
 
 
 class ApiTests(Setup, DatabaseTestCase, unittest.IsolatedAsyncioTestCase):

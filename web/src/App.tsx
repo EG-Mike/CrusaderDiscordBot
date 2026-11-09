@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-
 import { Loader2 } from "lucide-react";
 import { api, type Me } from "./lib/api";
 import { LiveProvider, useLive } from "./lib/live";
+import { WowheadTooltips } from "./lib/wowhead";
 import { MeContext } from "./lib/me";
 import SetupPage from "./pages/Setup";
 import { Layout } from "./components/Layout";
@@ -23,6 +24,8 @@ import RosterPage from "./pages/Roster";
 import LevelingPage from "./pages/Leveling";
 import LookupPage from "./pages/Lookup";
 import CraftingPage from "./pages/Crafting";
+import AuctionPricesPage from "./pages/AuctionPrices";
+import CardStatisticsPage from "./pages/CardStatistics";
 import { ApplicationPage, ApplicationsPage } from "./pages/Applications";
 import { ToastProvider } from "./components/Toast";
 
@@ -73,6 +76,7 @@ export default function App() {
     <ToastProvider>
     <LiveProvider>
       <SetupRedirect />
+      <WowheadTooltips />
       <Layout me={me}>
         <Routes>
           <Route path="/" element={<Overview me={me} />} />
@@ -90,7 +94,9 @@ export default function App() {
           <Route path="/leveling" element={<LevelingPage />} />
           <Route path="/lookup" element={<LookupPage />} />
           <Route path="/crafting" element={<CraftingPage />} />
+          <Route path="/auction-prices" element={<AuctionPricesPage />} />
           <Route path="/applications" element={<ApplicationsPage />} />
+          <Route path="/applications/statistics" element={<CardStatisticsPage />} />
           <Route path="/applications/:id" element={<ApplicationPage />} />
           {soon.map((item) => (
             <Route key={item.to} path={item.to} element={<ComingSoon item={item} />} />

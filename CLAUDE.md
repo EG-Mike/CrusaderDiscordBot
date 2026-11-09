@@ -122,8 +122,13 @@ version or raid tier is a configuration change.
   on the apply cog, called by the card's buttons and the dashboard alike;
   moderators and approvers (`APPROVER_ROLE_ID`, dashboard level
   "approver") decide (`ApplyCog.can_decide`, `DECIDE_LEVELS`).
-  The applicant enters "First Surname" in one field; the main spec is
-  suggested from talent points, plus an optional offspec. Item names link
+  The applicant enters "First Surname" in one field; the rest happens in
+  the apply channel in a message only they see (no DMs): the main spec is
+  suggested from talent points, plus an optional offspec, and a form for a
+  note and screenshots (file upload). Screenshots are re-attached to the
+  review card (`screenshot_files`), since form uploads expire; a card's own
+  files appear only in its gallery (`card_media_urls`), not in
+  `message.attachments`. Item names link
   to `ITEM_LINK_URL` (Wowhead's Forever pages by default). Approval links
   the character on the roster, or leaves a pending link
   (`roster.remember_link`) when Blizzard doesn't know it yet.
@@ -137,6 +142,15 @@ version or raid tier is a configuration change.
   `/lookup` uses the same parts (`lookup_view`: no applicant, note,
   decision or action buttons; a roster line and "Open in Character
   lookup" instead), so the two always look alike.
+- `card_stats.py`: statistics on the application card, `/lookup` and the
+  application pages, e.g. raid boss kills, from the character's
+  achievement statistics (read by `gear.fetch`, stored as
+  `achievement_stats`). Blizzard has no list of all statistics, so the
+  choice (Applications, Card statistics page; table `card_stats_chosen`)
+  is made from those seen on characters (`card_stats_seen`, filled by every
+  character read and by "Scan the guild"). "<Boss> kills (<Instance>)" are
+  grouped per instance, one line each; missing ones count as 0. Heading:
+  `APPLICATION_STATISTICS_TITLE`. The card's gear list gets the room left.
 - `gear.py`: the gear check: a character's gear (item level, enchants,
   gems, sets), talents and profile from Blizzard, flags (empty slots,
   missing enchants, empty sockets) and the guild's minimum level/item
@@ -195,9 +209,35 @@ version or raid tier is a configuration change.
   paths are settings. What Forever's API offers is in
   `docs/wow-forever-api.md`; re-check it with
   `scripts/probe_blizzard_api.py`, which writes a shareable report.
+  **Read that page before saying the API lacks something**: Forever
+  differs from retail and Classic, and paths that work there are often
+  404 here while another path works. In short: no realms or connected
+  realms; rulesets instead (`dynamic-forever-{region}`, 1 PvP, 2 Normal,
+  3 Roleplay, 15 Roleplay PvP). Auction house data works, per ruleset:
+  `/data/wow/ruleset/{id}/auctions/index`, then
+  `.../auctions/{house}/commodities` (unit_price) and `.../auctions/{house}`
+  (buyout), several houses per faction with the same name (the guild's is 113, Horde, EU PvP); a snapshot,
+  see `Last-Modified`. Try it with `scripts/auction_lookup.py`. Characters
+  and guilds are looked up by name without a realm.
+- `auction_prices.py`: auction house prices from Blizzard's snapshots of
+  the guild's house (`AUCTION_RULESET_ID` / `AUCTION_HOUSE_ID`, picked on
+  the dashboard's Auction prices page, which compares the same-named
+  houses by what's for sale). Polled with If-Modified-Since (a 304 when
+  unchanged); per item the cheapest and median price per unit and the
+  quantity are stored (tables `auction_prices`, `auction_snapshots`). Item
+  names via Blizzard's item search. `cogs/auction_prices.py` keeps it fresh
+  and answers "price [Item]" (phrases: `AUCTION_PRICE_TRIGGERS`, also
+  after the item with `AUCTION_PRICE_TRIGGER_AFTER_ITEM`) in the guild chat
+  channel (`AUCTION_PRICE_CHANNEL_ID`) with the "Price answer" bot
+  messages. In that channel (Blizzard's guild chat link) linked players'
+  messages arrive as their own, linked items as "[Name]" without spaces
+  between them, recipes as "[Profession: Item]" (counted as the item);
+  unlinked players' text doesn't arrive. `webapi/auction_api.py` serves
+  the page, including a dry run ("Try it") of the answer to a message. `AUCTION_*`
+  settings apply immediately.
 - `cogs/notifications.py`: alerts in a moderator channel, built from the
   System log and the audit trail. Settings named `NOTIFY_*` /
-  `NOTIFICATIONS_*` apply immediately (`webapi/settings.LIVE_PREFIXES`):
+  `NOTIFICATIONS_*` (and `AUCTION_*`) apply immediately (`webapi/settings.LIVE_PREFIXES`):
   use that pattern only for settings read at the moment they're used.
 - `secret_store.py`: external API keys, Fernet-encrypted in the database
   (key file `secret.key` next to it). Write-only towards the browser.
@@ -210,7 +250,8 @@ version or raid tier is a configuration change.
   rules into interaction-free methods both sides call (see `cogs/polls.py`).
 - `web/`: dashboard frontend (React + TypeScript + Vite + Tailwind). The
   dark theme is inspired by (not copied from) oxm.gg, with a "crusader
-  gold" accent.
+  gold" accent. `lib/wowhead.tsx`: Wowhead links (`WowLink`) and tooltips
+  for the whole dashboard (see Conventions).
 
 ### Where configuration belongs
 
@@ -239,6 +280,17 @@ set in the dashboard.
   (Wowhead blocks datacenter IPs).
 - **Texts the bot posts on its own** belong in `bot_messages.py` (editable
   on the dashboard), not in cog code.
+- **Wowhead links and tooltips (always)**: every item, spell or reagent
+  shown on the website links to its Wowhead page, so hovering it shows
+  Wowhead's tooltip. Render it with `<WowLink kind="item"|"spell" id=...>`
+  (`web/src/lib/wowhead.tsx`), or a plain `<a href>` with a URL the server
+  built (`gear.item_url` / `gear.link_url`). Never hardcode Wowhead URLs:
+  they come from the `ITEM_LINK_URL` / `SPELL_LINK_URL` settings (sent to
+  the browser in `/api/status` as `links`), since they change per game
+  version. The tooltip script (`WOWHEAD_TOOLTIPS_ENABLED`) is loaded once
+  for the whole dashboard and re-checks links when the page changes, so
+  new pages need nothing else. Keep it working when adding pages. In
+  Discord, item names link the same way (`gear.item_url`).
 - **Discord IDs** are snowflakes larger than JavaScript's safe integer
   range: always send them to the browser as strings (`webapi/settings.js_safe`).
 - **Errors**: log them with the standard `logging` module (`log.exception`
@@ -279,6 +331,8 @@ set in the dashboard.
   Blizzard reliably reports them.
 - Crafting (done): crafting channel and Crafting page with featured
   recipes.
+- Auction prices (done): Auction prices page and price answers in the
+  guild chat channel.
 - Phase 4 (in progress): applications moved to Blizzard data (gear check
   with gear, enchants and talents; roster link on approval; WarcraftLogs
   optional). Applications page done (list, detail with gear/stats,

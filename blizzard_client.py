@@ -92,19 +92,22 @@ class BlizzardClient:
 
     async def request(self, path: str, namespace: str, params: Optional[dict] = None, *,
                       session: Optional[aiohttp.ClientSession] = None, region: Optional[str] = None,
-                      token: Optional[str] = None, locale: str = "en_US") -> tuple:
+                      token: Optional[str] = None, locale: str = "en_US",
+                      headers: Optional[dict] = None) -> tuple:
         """GET any API path (e.g. "/data/wow/realm/index") with a full
         namespace ("dynamic-forever-eu"). Returns (status, headers, json or
         None). Uses the app's own token unless a player's `token` is given
-        (e.g. for /profile/user/wow). Raises only for network failures."""
+        (e.g. for /profile/user/wow). Extra request `headers`, e.g.
+        If-Modified-Since (then 304 means unchanged). Raises only for
+        network failures."""
         token = token or await self._get_token()
         query = {"namespace": namespace, "locale": locale, **(params or {})}
         if session is None:
             async with aiohttp.ClientSession(trust_env=True, timeout=aiohttp.ClientTimeout(total=15)) as own:
                 return await self.request(path, namespace, params, session=own, region=region, token=token,
-                                          locale=locale)
+                                          locale=locale, headers=headers)
         async with session.get(f"{_api_base(region or self.region)}{path}", params=query,
-                               headers={"Authorization": f"Bearer {token}"}) as resp:
+                               headers={**(headers or {}), "Authorization": f"Bearer {token}"}) as resp:
             body = await resp.json(content_type=None) if resp.status == 200 else None
             return resp.status, dict(resp.headers), body
 

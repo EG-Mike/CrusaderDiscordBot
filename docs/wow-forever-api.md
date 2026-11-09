@@ -49,11 +49,39 @@ settings change, not a code change.
   {"id": 2, "name": "Normal", "status": {"type": "UP", "name": "Up"},
    "auctions": {"href": ".../data/wow/ruleset/2/auctions/?namespace=dynamic-forever-eu"}}
   ```
-- **Auction houses (dynamic, 200)**: `ruleset/{id}/auctions/index` (the
-  link without `index` is a 404) lists the houses of that ruleset (15 on
-  EU PvP: several Alliance, Horde and Blackwater ones, ids from 110);
-  `ruleset/{id}/auctions/{house}` and `.../{house}/commodities` answer with
-  live data.
+- **Auction houses (dynamic, 200)**: they hang off **rulesets, not realms
+  or connected realms** (`connected-realm/{id}/auctions` and the realm
+  paths are 404 for Forever; that is the usual reason a lookup "doesn't
+  work"). Checked 2026-11-09:
+  - `ruleset/{id}/auctions/index` (the link without `index` is a 404)
+    lists the houses: `{"auctions": [{"id": 113, "name": "Horde Auction
+    House"}, ...]}`. EU PvP has 15: Alliance 110, 111, 112, 119, 123;
+    Horde 113, 114, 115, 120, 124; Blackwater (neutral) 116, 117, 118,
+    121, 125. **Every house of a faction has the same name** and nothing
+    in the API says which players use which one (likely one per realm
+    group behind the ruleset); some are empty. To find a guild's house,
+    compare what players see in game (quantity for sale of a few
+    materials, or an odd listing they posted) with each house.
+  - `ruleset/{id}/auctions/{house}/commodities`: stackable goods (cloth,
+    herbs, ore, bars, ...): `{"auctions": [{"id", "item": {"id"},
+    "quantity", "unit_price" (copper each), "time_left"}]}`.
+  - `ruleset/{id}/auctions/{house}`: everything else (gear, recipes, ...):
+    entries with `item` (id, sometimes more), `quantity`, `buyout`
+    (copper for the whole stack, may be missing) and `time_left`.
+  - Size: the busy houses have 60k-75k commodity and 100k-125k other
+    auctions; one request takes 1-2 s. No seller names. Fetch a house once
+    per refresh and cache it, never per item.
+  - Freshness: a snapshot; the `Last-Modified` header says when it was
+    taken (about hourly: 12:12 and 13:12 GMT on 2026-11-09), so always
+    show the snapshot's age. `If-Modified-Since` with that value answers
+    304 while it's unchanged, which makes frequent checks cheap. The two
+    documents are about 6.5 MB and 12.5 MB gzipped; reading both takes
+    about 3 s and ~150 MB of memory in Python (auction_prices.py).
+  - Item names: `static-forever-{region}` `item/{id}` (some ids are 404)
+    and `search/item?name.en_US=...`.
+  - Try it: `python scripts/auction_lookup.py --faction horde "Linen Cloth"`
+    (per house: listings, quantity for sale, cheapest and median price),
+    `--fingerprint` for each house's most expensive listings.
 - **Regions (dynamic, 200)**: `region/index`, `region/{id}` (patch_string
   1.60.1). Before launch there was also a realm list (26 EU realms such as
   `camwow-eu5-realm-1-pve`, id 6855, with service realms like `...-web`);
@@ -108,7 +136,9 @@ Below that, lookups are 404; the guild roster and the account profile
 (user token) still list those characters with their level.
 
 Test character for checks: **Eggmike Thewhite**, EU, PvP ruleset (id 1),
-guild Encore. On 2026-11-05 every lookup was 404 while it was below level
+guild Encore (Horde). The guild's auction house is **113** (Horde, EU PvP):
+on 2026-11-09 players saw about 2,900 Runecloth and 18,000 Linen Cloth for
+sale in game, which matched house 113 and no other. On 2026-11-05 every lookup was 404 while it was below level
 10; at level 15, after logging out, `/profile/wow/character/eggmike-thewhite`
 answered with level 15 and the guild. To re-check:
 

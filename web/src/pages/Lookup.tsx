@@ -7,7 +7,7 @@ import { AlertTriangle, BookOpen, Search, Shield, UserPlus, Users } from "lucide
 import { ApiError, api, type LookupResult, type RosterCharacter } from "../lib/api";
 import { timeAgo } from "../lib/time";
 import { CLASS_COLORS } from "../lib/wow";
-import { GearCard, ProfessionsCard, StatsCard, TalentsCard } from "../components/Gear";
+import { CardStatisticsCard, GearCard, ProfessionsCard, StatsCard, TalentsCard } from "../components/Gear";
 import { Avatar } from "../components/Audit";
 import { useToast } from "../components/Toast";
 import { Badge, Button, EmptyState, SectionHeader, Skeleton, StatTile } from "../components/ui";
@@ -198,6 +198,7 @@ export default function LookupPage() {
 
             <div className="space-y-5">
               <TalentsCard talents={c.talents} />
+              <CardStatisticsCard statistics={result!.statistics} />
               <StatsCard groups={result!.stat_groups} />
               <ProfessionsCard professions={c.professions} />
               <section className="card px-4 py-3 md:px-5">

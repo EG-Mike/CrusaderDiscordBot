@@ -34,10 +34,11 @@ import app_version
 import audit as audit_store
 import config
 import db
+import gear
 import secret_store
 import system_log
 from webapi import (
-    announcements_api, applications_api, auth, bot_messages_api, branding_api, common, crafting_api, emoji_api,
+    announcements_api, applications_api, auction_api, auth, bot_messages_api, branding_api, common, crafting_api, emoji_api,
     game_api, integrations, lookup_api, maintenance_api, notifications_api, polls_api, roster_api,
 )
 from webapi import settings as settings_api
@@ -261,6 +262,10 @@ def _status(app) -> dict:
             "member_count": guild.member_count,
         } if guild else None,
         "branding": branding_api.branding(bot),
+        # How items and spells link (to Wowhead by default), and whether Wowhead's tooltips are loaded.
+        "links": {"item": gear.link_url(config.ITEM_LINK_URL, 1) and config.ITEM_LINK_URL,
+                  "spell": gear.link_url(config.SPELL_LINK_URL, 1) and config.SPELL_LINK_URL,
+                  "wowhead_tooltips": bool(config.WOWHEAD_TOOLTIPS_ENABLED)},
         "features": {
             key: bool(getattr(config, key)) for key in settings_api.all_keys() if key.startswith("FEATURE_")
         },
@@ -784,6 +789,7 @@ def create_app(bot) -> web.Application:
     lookup_api.register(app)
     applications_api.register(app)
     crafting_api.register(app)
+    auction_api.register(app)
     app.router.add_get("/api/ws", websocket)
     app.router.add_route("*", "/api/{tail:.*}", api_not_found)
 

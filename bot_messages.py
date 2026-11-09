@@ -1,6 +1,6 @@
 """
-The bot's standard messages - the pinned explainers and the DMs it sends -
-as editable texts.
+The bot's standard messages - the pinned explainers, the DMs it sends and
+the texts shown while applying - as editable texts.
 
 Each message is a Definition below: where it appears, its built-in default
 text, and the {placeholders} it can use. Moderators edit them on the
@@ -79,11 +79,10 @@ _APPLY_EXPLAINER = (
     "\n"
     ":one:. Type your character's name and surname (e.g. Eggmike Thewhite). Log out once in your raid gear "
     "first: the bot reads your character from Blizzard as of your last logout.\n"
-    ":two:. The bot looks up your gear, enchants, talents and stats, and DMs you: your main spec is "
-    "picked from your talents (you can change it), and you can add an offspec.\n"
-    ":three:. Optionally, reply with a note and/or screenshots - or press Skip. Without a reply, your "
-    "application is posted automatically after 3 minutes.\n"
-    ":four:. You can add more information at any time by typing `/update-application` in the bot's DM.\n"
+    ":two:. The bot looks up your gear, enchants, talents and stats and shows you, right here (only you can "
+    "see it): your main spec is picked from your talents (you can change it), and you can add an offspec.\n"
+    ":three:. Optionally, add a note and/or screenshots, then press **Submit application**.\n"
+    ":four:. You can change your note or screenshots at any time with `/update-application`.\n"
     ":five:. Our recruitment team reviews your application and you'll get a DM with the outcome.\n"
     "\n"
     "When approved, you will be granted the correct roles and further instructions on how to sign up "
@@ -97,9 +96,9 @@ _REVIEW_EXPLAINER = (
     "Skullcrusher clicks the button in the apply channel, gives their character's name and surname, and "
     "the bot reads their character from Blizzard: level, guild, talents, stats, and every equipped item "
     "with its item level, enchants and gems. Empty slots, missing enchants and empty sockets are flagged, "
-    "and so is anything below the guild's minimum level or item level. Over DM, they confirm their main "
-    "spec and role (suggested from their talents), can pick an offspec, and can add an optional note or "
-    "screenshot(s). Once that's done (or skipped, or it times out), a card posts right here - and on the "
+    "and so is anything below the guild's minimum level or item level. In a message only they can see, they "
+    "confirm their main spec and role (suggested from their talents), can pick an offspec, and can add an "
+    "optional note or screenshot(s). When they press Submit, a card posts right here - and on the "
     "dashboard's Applications page. That's the point where it becomes your job.\n"
     "Blizzard updates characters when a player logs out: 🔃 **Refresh** reads it again, e.g. "
     "after they levelled up or changed gear.\n"
@@ -175,23 +174,15 @@ _ATTENDANCE_EXPLAINER = (
     "`/checkattendance` to see them all."
 )
 
-_NOTE_PROMPT_DM = (
-    "**This step is optional:**\n"
-    "\n"
-    "You can provide a note and/or screenshot(s) by simply replying to this chat.\n"
-    "This information will be added added to your application and can be seen by the reviewers\n"
-    "\n"
-    "Your application will automatically post in 3 minutes. You may press the skip button to "
-    "immediately continue\n"
-    "\n"
-    "**At any time during the review, you can reply with `/update-application` to be able to "
-    "add/change your note/screenshots**"
+_APPLY_DIALOG = (
+    "Confirm or change your **main spec** and **role**, pick an **offspec** if you play one, and add a "
+    "**note and screenshots** if you like (optional). Then press **Submit application**."
 )
 
-_NOTE_TIMEOUT_DM = (
-    "⏱️ Time's up - I didn't receive a note or screenshot in time, but no worries: your application "
-    "has still been submitted to the reviewers. You can still add a note or screenshot(s) later with "
-    "`/update-application`."
+_APPLICATION_SUBMITTED = (
+    "✅ Your application for **{character}** has been posted for review. You'll get a DM once a reviewer "
+    "makes a decision.\n"
+    "-# Want to add or change your note or screenshots? Use `/update-application`."
 )
 
 _APPROVAL_DM = (
@@ -243,22 +234,23 @@ DEFINITIONS: List[Definition] = [
         marker="review-channel-explainer",
     ),
     Definition(
-        key="note_prompt_dm",
-        label="Note and screenshot request",
+        key="apply_dialog",
+        label="Applying: what to do",
         group="Applications",
-        description="Sent while applying, asking for an optional note or screenshots.",
+        description="Shown while applying, under \"Found <character>!\", above the spec and role pickers.",
         kind="text",
-        where="DM to the applicant",
-        default_body=_NOTE_PROMPT_DM,
+        where="In the apply channel, only the applicant sees it",
+        default_body=_APPLY_DIALOG,
     ),
     Definition(
-        key="note_timeout_dm",
-        label="Note request timed out",
+        key="application_submitted",
+        label="Application submitted",
         group="Applications",
-        description="Sent when the applicant didn't send a note or screenshot in time.",
+        description="Shown when the applicant presses Submit and the application is posted for review.",
         kind="text",
-        where="DM to the applicant",
-        default_body=_NOTE_TIMEOUT_DM,
+        where="In the apply channel, only the applicant sees it",
+        default_body=_APPLICATION_SUBMITTED,
+        variables=[_CHARACTER],
     ),
     Definition(
         key="approval_dm",
@@ -332,6 +324,49 @@ DEFINITIONS.append(Definition(
         Variable("updated", "When the channel last changed (shown as e.g. \"5 minutes ago\")", "5 minutes ago"),
     ],
     feature="FEATURE_CRAFTING_ENABLED",
+))
+DEFINITIONS.append(Definition(
+    key="auction_price",
+    label="Price answer",
+    group="Auction prices",
+    description="The answer to \"price [Item]\" in the guild chat channel (Settings, Auction prices). One line "
+                "per item asked about.",
+    kind="text",
+    where="In the guild chat channel",
+    default_body="The auction house price for [{item}] is {price} ({age})",
+    variables=[
+        Variable("item", "The item's name", "Linen Cloth"),
+        Variable("price", "The cheapest price for one, e.g. 4g33s22c", "4g33s22c"),
+        Variable("median", "The middle price of all for sale, for one", "4g50s"),
+        Variable("quantity", "How many are for sale", "1250"),
+        Variable("age", "How old the auction house data is, e.g. 3hrs ago", "3hrs ago"),
+    ],
+    feature="FEATURE_AUCTION_PRICES_ENABLED",
+))
+DEFINITIONS.append(Definition(
+    key="auction_price_not_listed",
+    label="Price answer: none for sale",
+    group="Auction prices",
+    description="The answer when nobody is selling the item.",
+    kind="text",
+    where="In the guild chat channel",
+    default_body="Nobody is selling [{item}] on the auction house ({age})",
+    variables=[
+        Variable("item", "The item's name", "Black Lotus"),
+        Variable("age", "How old the auction house data is, e.g. 3hrs ago", "3hrs ago"),
+    ],
+    feature="FEATURE_AUCTION_PRICES_ENABLED",
+))
+DEFINITIONS.append(Definition(
+    key="auction_price_unknown_item",
+    label="Price answer: unknown item",
+    group="Auction prices",
+    description="The answer when no item has that name.",
+    kind="text",
+    where="In the guild chat channel",
+    default_body="I don't know an item called [{item}]",
+    variables=[Variable("item", "The name as written", "Linen Clth")],
+    feature="FEATURE_AUCTION_PRICES_ENABLED",
 ))
 DEFINITIONS.append(Definition(
     key="level_milestone",

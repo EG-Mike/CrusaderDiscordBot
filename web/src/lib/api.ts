@@ -58,6 +58,8 @@ export interface Status {
   guild: { id: string; name: string; icon_url: string | null; member_count: number } | null;
   /** The guild's name and logo as set in Settings (falls back to the Discord server's). */
   branding: Branding;
+  /** Link templates ("https://...{id}") for items and spells, and whether Wowhead's tooltips are on. */
+  links: { item: string | null; spell: string | null; wowhead_tooltips: boolean };
   features: Record<string, boolean>;
   feature_labels: Record<string, string>;
   counts: { pending_applications: number };
@@ -205,6 +207,7 @@ export type AuditKind =
   | "poll"
   | "roster"
   | "crafting"
+  | "auction"
   | "audit"
   | "other";
 
@@ -612,6 +615,28 @@ export interface StatValue {
   text: string;
 }
 
+/** The chosen achievement statistics (e.g. raid boss kills), grouped per instance as on the card. */
+export interface CardStatistics {
+  title: string | null;
+  groups: { group: string | null; items: { label: string; value: number }[] }[];
+}
+
+export interface CardStatistic {
+  id: number;
+  name: string;
+  category: string | null;
+  label: string;
+  group: string | null;
+  chosen?: boolean;
+}
+
+export interface CardStatisticsConfig {
+  title: string | null;
+  chosen: CardStatistic[];
+  catalog: CardStatistic[];
+  can_scan: boolean;
+}
+
 export interface StatGroup {
   title: string;
   stats: StatValue[];
@@ -623,6 +648,7 @@ export interface LookupResult {
   requirement_problems: string[];
   roster: { on_roster: boolean; in_guild: boolean; is_main: boolean; member: RosterMember | null } | null;
   stat_groups: StatGroup[];
+  statistics: CardStatistics;
   warcraftlogs: null;
 }
 
@@ -690,6 +716,7 @@ export interface ApplicationDetail extends ApplicationRow {
   decision: ApplicationDecision | null;
   decision_text: string | null;
   legacy_text: string | null;
+  statistics: CardStatistics;
   warcraftlogs: { enabled: boolean; text: string | null };
 }
 
@@ -753,4 +780,57 @@ export interface RecipeCatalog {
   id: number;
   name: string;
   categories: { name: string; recipes: { id: number; name: string; known_by: number; featured: boolean }[] }[];
+}
+
+// --- auction prices (webapi/auction_api.py) -------------------------------------------
+
+/** Prices are copper per item; the median is the middle item of all for sale. */
+export interface AuctionPrice {
+  min_price: number;
+  median_price: number;
+  quantity: number;
+  listings: number;
+}
+
+export interface AuctionItem {
+  id: number;
+  name: string;
+  quality: string | null;
+  url: string | null;
+  price?: AuctionPrice | null;
+}
+
+export interface AuctionSnapshot {
+  snapshot_at: string | null;
+  checked_at: string;
+  auctions: number;
+  items: number;
+}
+
+export interface AuctionOverview {
+  ruleset_id: number;
+  house_id: number | null;
+  house_name: string | null;
+  snapshot: AuctionSnapshot | null;
+  problem: string | null;
+  chat_channel: { id: string; name: string } | null;
+  triggers: string[];
+  trigger_after_item: boolean;
+}
+
+export interface AuctionTry {
+  items: string[];
+  answer: string | null;
+  problem: string | null;
+}
+
+export interface AuctionHouses {
+  ruleset_id: number;
+  rulesets: { id: number; name: string }[];
+  houses: { id: number; name: string }[];
+}
+
+export interface AuctionComparison {
+  item: AuctionItem;
+  houses: ({ house_id: number; quantity: number; listings: number; min_price: number | null; median_price: number | null })[];
 }
