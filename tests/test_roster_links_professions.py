@@ -113,7 +113,6 @@ class ProfessionTests(Scoped, unittest.IsolatedAsyncioTestCase):
             self.assertIn("`Lv` ⚔️ `Character       ` ▫️ `Prof. 1` ▫️ `Prof. 2` **Discord**", text)
             self.assertNotIn("Cooking", text)
             with mock.patch.object(config, "GUILD_ROSTER_POST_PROFESSIONS", False):
-                self.assertEqual(await cog._profession_icons(roster.characters()), {})
                 lines = cog._post_lines(roster.characters(), REF, channel.guild, {333: "<:ench:1>"})
         self.assertEqual([c.args[1] for c in icon.await_args_list], ["profession", "profession"])
         self.assertNotIn("200/225", "\n".join(lines))
@@ -144,6 +143,27 @@ class ProfessionTests(Scoped, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(lines, ["`30` <:priest:1> **Eggmike Thewhite** · <@111>",
                                  "-# alt · <:ench:1> 200/225 · Tailoring 45/75",  # no emoji: the profession's name
                                  "`20` <:priest:1> **Jaina Proud** · <@111>"])
+
+    async def test_show_professions_button_answers_privately(self):
+        cog = roster_cog.RosterCog.__new__(roster_cog.RosterCog)
+        cog.bot = SimpleNamespace()
+        roster.store_roster([char(1, 30)], "encore")
+        roster.store_professions("eggmike-thewhite", PROFESSIONS)
+        followup = SimpleNamespace(send=mock.AsyncMock())
+        interaction = SimpleNamespace(response=SimpleNamespace(defer=mock.AsyncMock()), followup=followup, guild=None)
+        icon = mock.AsyncMock(side_effect=lambda bot, kind, pid, by=None: {333: "<:ench:1>"}.get(pid, ""))
+        with mock.patch.multiple(config, GUILD_ROSTER_POST_PROFESSIONS=False, GUILD_ROSTER_POST_LAYOUT="compact"), \
+                mock.patch.object(roster_cog, "reference", mock.AsyncMock(return_value=REF)), \
+                mock.patch.object(roster_cog.icons, "resolve_class_icon", lambda g, n: ""), \
+                mock.patch.object(roster_cog.emoji_library, "ensure_icon", icon):
+            self.assertTrue(roster_cog.professions_button_shown())
+            self.assertNotIn("200/225", "\n".join(cog._post_lines(roster.characters(), REF, None, {})))
+            await cog.professions_button(interaction)
+        kwargs = followup.send.await_args.kwargs
+        self.assertTrue(kwargs["ephemeral"])
+        self.assertIn("<:ench:1> 200/225", text_of(kwargs["view"]))
+        with mock.patch.object(config, "GUILD_ROSTER_POST_PROFESSIONS", True):
+            self.assertFalse(roster_cog.professions_button_shown())  # the post already shows them
 
 
 if __name__ == "__main__":

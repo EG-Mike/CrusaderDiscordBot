@@ -24,10 +24,12 @@ GUILD_ROSTER_POST_MIN_LEVEL are left out unless they're someone's main.
 Every few minutes it checks whether anything changed and only then edits
 the message(s); a long roster spans several messages.
 
-Under the last message are two buttons: "Claim a character" (name and
+Under the last message are buttons: "Claim a character" (name and
 surname, main or alt; members may claim several characters, only when
-GUILD_ROSTER_SELF_SERVICE is on) and "My characters" (make one the main or
-an alt, or unlink it). Both answer privately.
+GUILD_ROSTER_SELF_SERVICE is on), "My characters" (make one the main or
+an alt, or unlink it) and, when the post leaves professions out and
+GUILD_ROSTER_PROFESSIONS_BUTTON is on, "Show professions" (the roster with
+professions). All answer privately.
 """
 
 import asyncio
@@ -59,7 +61,14 @@ POST_CHECK_MINUTES = 2
 POST_LAYOUT = "table-4"           # part of the post's hash: changing the layout updates old posts
 CLAIM_ID = "roster:claim"
 MINE_ID = "roster:mine"
+PROFESSIONS_ID = "roster:professions"
+MAX_PRIVATE_MESSAGES = 5  # "Show professions" answers with at most this many messages
 NO_PINGS = discord.AllowedMentions.none()
+
+
+def professions_button_shown() -> bool:
+    """The "Show professions" button is offered when the post itself leaves professions out."""
+    return bool(config.GUILD_ROSTER_PROFESSIONS_BUTTON) and not config.GUILD_ROSTER_POST_PROFESSIONS
 
 
 def last_sync() -> Optional[dict]:
@@ -91,7 +100,7 @@ class RosterCog(commands.Cog):
 
     async def cog_load(self):
         persistent = discord.ui.LayoutView(timeout=None)  # answers the buttons on posts from before a restart
-        persistent.add_item(ClaimButtons(self, claims=True))
+        persistent.add_item(ClaimButtons(self, claims=True, professions=True))
         self.bot.add_view(persistent)
         self.sync_loop.change_interval(minutes=max(15, int(config.GUILD_ROSTER_REFRESH_MINUTES or 60)))
         self.sync_loop.start()
@@ -105,8 +114,6 @@ class RosterCog(commands.Cog):
 
     async def _profession_icons(self, rows: List[dict]) -> Dict[int, str]:
         """{profession id: inline emoji} for the professions on the roster ('' when none can be made)."""
-        if not config.GUILD_ROSTER_POST_PROFESSIONS:
-            return {}
         ids = {p["id"] for c in rows for p in roster.professions(c, primary_only=True) if p.get("id")}
         found = {}
         for profession_id in sorted(ids):
@@ -125,15 +132,18 @@ class RosterCog(commands.Cog):
         cells += [f"{icons.blank()} `   -   `"] * (columns - len(cells))
         return cells
 
-    def _post_lines(self, rows: List[dict], ref: dict, guild, profession_icons: Optional[Dict[int, str]] = None
-                    ) -> List[str]:
-        """The roster's lines in the chosen layout (GUILD_ROSTER_POST_LAYOUT)."""
+    def _post_lines(self, rows: List[dict], ref: dict, guild, profession_icons: Optional[Dict[int, str]] = None,
+                    *, professions: Optional[bool] = None) -> List[str]:
+        """The roster's lines in the chosen layout (GUILD_ROSTER_POST_LAYOUT),
+        with professions when `professions` (default: GUILD_ROSTER_POST_PROFESSIONS)."""
+        if professions is None:
+            professions = bool(config.GUILD_ROSTER_POST_PROFESSIONS)
         if config.GUILD_ROSTER_POST_LAYOUT == "table":
-            return self._table_lines(rows, ref, guild, profession_icons)
-        return self._compact_lines(rows, ref, guild, profession_icons)
+            return self._table_lines(rows, ref, guild, profession_icons, professions)
+        return self._compact_lines(rows, ref, guild, profession_icons, professions)
 
-    def _compact_lines(self, rows: List[dict], ref: dict, guild, profession_icons: Optional[Dict[int, str]] = None
-                       ) -> List[str]:
+    def _compact_lines(self, rows: List[dict], ref: dict, guild, profession_icons: Optional[Dict[int, str]] = None,
+                       professions: bool = True) -> List[str]:
         """Short lines that read well on a phone: per character the level,
         class icon, name and member, and under it (small) "alt" and the
         professions with skill/maximum. Nothing relies on alignment, so a
@@ -149,7 +159,7 @@ class RosterCog(commands.Cog):
             first = f"`{level:>2}` {icon + ' ' if icon else ''}**{roster.display_name(c)}**"
             lines.append(f"{first} · {member.mention}" if member else first)
             details = ["alt"] if member and not c["is_main"] else []
-            if config.GUILD_ROSTER_POST_PROFESSIONS:
+            if professions:
                 for p in roster.professions(c, primary_only=True):
                     skill = p.get("skill") if p.get("skill") is not None else "?"
                     emoji = (profession_icons or {}).get(p.get("id"))
@@ -158,8 +168,8 @@ class RosterCog(commands.Cog):
                 lines.append(f"-# {' · '.join(details)}")
         return lines
 
-    def _table_lines(self, rows: List[dict], ref: dict, guild, profession_icons: Optional[Dict[int, str]] = None
-                     ) -> List[str]:
+    def _table_lines(self, rows: List[dict], ref: dict, guild, profession_icons: Optional[Dict[int, str]] = None,
+                     professions: bool = True) -> List[str]:
         """A header row and one aligned row per character. Discord has no
         tables, so every column before the Discord member has a fixed width:
         level and name are padded inline code, icons are emoji (a blank one
@@ -171,7 +181,7 @@ class RosterCog(commands.Cog):
             return ["-# Nobody on the roster yet."]
         width = max(len("Character"), *(len(roster.display_name(c)) for c in rows))
         columns = (max(len(roster.professions(c, primary_only=True)) for c in rows)
-                   if config.GUILD_ROSTER_POST_PROFESSIONS else 0)
+                   if professions else 0)
         header = [f"`Lv` ⚔️ `{'Character':<{width}}`"] + [f"{icons.blank()} `Prof. {i + 1}`" for i in range(columns)]
         lines = [" ".join(header + ["**Discord**"])]
         for c in rows:
@@ -202,11 +212,14 @@ class RosterCog(commands.Cog):
             return "The bot can't see the roster channel."
         posted = await asyncio.to_thread(channel_posts.state, POST_META)
         rows = await asyncio.to_thread(roster.posted_characters)
-        lines = self._post_lines(rows, await reference(self.bot), channel.guild, await self._profession_icons(rows))
+        shown = bool(config.GUILD_ROSTER_POST_PROFESSIONS)
+        lines = self._post_lines(rows, await reference(self.bot), channel.guild,
+                                 await self._profession_icons(rows) if shown else {}, professions=shown)
         template = bot_messages.current("guild_roster_header")["body"]
         claims = bool(config.GUILD_ROSTER_SELF_SERVICE)
-        digest = hashlib.sha256("\n".join([POST_LAYOUT, str(claims), template, config.GUILD_ROSTER_GUILD or "",
-                                           *lines]).encode()).hexdigest()
+        button = professions_button_shown()
+        digest = hashlib.sha256("\n".join([POST_LAYOUT, str(claims), str(button), template,
+                                           config.GUILD_ROSTER_GUILD or "", *lines]).encode()).hexdigest()
         if not force and channel_posts.is_current(posted, channel_id, digest):
             return None
         updated = int(time.time())
@@ -219,11 +232,11 @@ class RosterCog(commands.Cog):
             container = discord.ui.Container(discord.ui.TextDisplay(text), accent_color=discord.Color(0xDEAC52))
             if i == len(chunks) - 1:
                 container.add_item(discord.ui.Separator())
-                container.add_item(ClaimButtons(self, claims=claims))
+                container.add_item(ClaimButtons(self, claims=claims, professions=button))
             view.add_item(container)
             views.append(view)
 
-        problem = await channel_posts.publish(self.bot, POST_META, channel, views, digest, updated)
+        problem = await channel_posts.publish(self.bot, POST_META, channel, views, digest, updated, force=force)
         return problem or f"Posted the roster in #{channel.name}."
 
     @tasks.loop(minutes=POST_CHECK_MINUTES)
@@ -275,6 +288,18 @@ class RosterCog(commands.Cog):
         await self._reply(interaction, f"**{roster.display_name(c)}** (level {c['level'] or '?'}) is now linked "
                                        f"to you as {kind}.{hidden}")
         self._refresh_post_soon()
+
+    async def professions_button(self, interaction: discord.Interaction):
+        """"Show professions": the posted roster with professions, only for whoever pressed it."""
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        rows = await asyncio.to_thread(roster.posted_characters)
+        lines = self._post_lines(rows, await reference(self.bot), interaction.guild,
+                                 await self._profession_icons(rows), professions=True)
+        header = "## Professions\n-# Only you see this · professions update when a player logs out"
+        for text in channel_posts.chunks(header, lines)[:MAX_PRIVATE_MESSAGES]:
+            view = discord.ui.LayoutView(timeout=None)
+            view.add_item(discord.ui.Container(discord.ui.TextDisplay(text), accent_color=discord.Color(0xDEAC52)))
+            await interaction.followup.send(view=view, ephemeral=True, allowed_mentions=NO_PINGS)
 
     async def mine_button(self, interaction: discord.Interaction):
         # Acknowledge first: Discord drops an interaction that isn't answered
@@ -464,11 +489,13 @@ class ClaimButtons(discord.ui.ActionRow):
     """The buttons under the posted roster. Persistent: the custom IDs are
     fixed and the cog registers them at startup."""
 
-    def __init__(self, cog: "RosterCog", *, claims: bool):
+    def __init__(self, cog: "RosterCog", *, claims: bool, professions: bool = False):
         super().__init__()
         self.cog = cog
         if not claims:
             self.remove_item(self.claim)
+        if not professions:
+            self.remove_item(self.show_professions)
 
     @discord.ui.button(label="Claim a character", emoji="🙋", style=discord.ButtonStyle.primary, custom_id=CLAIM_ID)
     async def claim(self, interaction: discord.Interaction, _button: discord.ui.Button):
@@ -477,6 +504,11 @@ class ClaimButtons(discord.ui.ActionRow):
     @discord.ui.button(label="My characters", emoji="📋", style=discord.ButtonStyle.secondary, custom_id=MINE_ID)
     async def mine(self, interaction: discord.Interaction, _button: discord.ui.Button):
         await self.cog.mine_button(interaction)
+
+    @discord.ui.button(label="Show professions", emoji="🛠️", style=discord.ButtonStyle.secondary,
+                       custom_id=PROFESSIONS_ID)
+    async def show_professions(self, interaction: discord.Interaction, _button: discord.ui.Button):
+        await self.cog.professions_button(interaction)
 
 
 class ClaimModal(discord.ui.Modal, title="Claim a character"):

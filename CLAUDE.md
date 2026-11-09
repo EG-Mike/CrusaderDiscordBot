@@ -181,7 +181,9 @@ version or raid tier is a configuration change.
   transparent bot emoji - for a missing icon or profession), the member
   last; alts below
   `GUILD_ROSTER_POST_MIN_LEVEL` left out; persistent "Claim a character" /
-  "My characters" buttons for main/alt self-service). Level milestones
+  "My characters" buttons for main/alt self-service, and "Show
+  professions" (an ephemeral copy with professions) when the post leaves
+  them out and `GUILD_ROSTER_PROFESSIONS_BUTTON` is on). Level milestones
   found together are grouped into as few messages as fit. Primary
   professions (`roster.professions`) are read after a logout and shown on
   the posted roster with profession emoji (`emoji_library` kind
@@ -195,15 +197,19 @@ version or raid tier is a configuration change.
   catalog per profession and recipe details (crafted item, reagents) are
   cached. Moderators feature recipes on the dashboard's Crafting page
   (`webapi/crafting_api.py`, table `crafting_featured`); `cogs/crafting.py`
-  keeps the crafting channel (`CRAFTING_CHANNEL_ID`) posted: every
-  profession with its crafters, then each featured recipe with its crafters
-  (highest skill first) and materials. Featured recipes are ordered per
+  keeps the crafting channel (`CRAFTING_CHANNEL_ID`) posted: a header
+  message, then one message per profession with its crafters and its
+  featured recipes (crafters highest skill first, materials); a profession
+  too long for one message continues under "(continued)", split between
+  recipes (`channel_posts.split_blocks`). Featured recipes are ordered per
   profession by a moderator (`position`) or else hardest first: Blizzard
   gives no required skill, so `difficulty` is the recipe's place in its
   category of Blizzard's list (easiest to hardest). Recipes nobody knows
   can be left out of the channel (`CRAFTING_HIDE_UNKNOWN_RECIPES`). It runs the profile checks itself
   when Leveling is off. `channel_posts.py`: the shared "keep these messages
-  posted, edit only on change" logic of the roster and crafting channels.
+  posted, edit only on change" logic of the roster and crafting channels
+  (only the messages whose content changed are edited; `force` edits all,
+  which also re-posts deleted ones).
 - `wow_api.py`: Blizzard game data for the configured game version
   (WoW Forever by default): reference data for pickers, a player's
   characters from their Battle.net account, character lookups by name, and

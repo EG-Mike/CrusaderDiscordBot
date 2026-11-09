@@ -96,7 +96,7 @@ class RankSyncCog(commands.Cog):
                 view = discord.ui.LayoutView(timeout=None)
                 view.add_item(discord.ui.Container(discord.ui.TextDisplay(text), accent_color=discord.Color(ACCENT)))
                 views.append(view)
-            problem = await channel_posts.publish(self.bot, POST_META, channel, views, digest, updated)
+            problem = await channel_posts.publish(self.bot, POST_META, channel, views, digest, updated, force=force)
             return problem or f"Posted in #{channel.name}."
 
     def publish_soon(self):

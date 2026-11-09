@@ -287,6 +287,11 @@ GUILD_ROSTER_CHANNEL_ID = 0
 # player logs out.
 GUILD_ROSTER_POST_PROFESSIONS = True
 
+# When the post leaves professions out (above): a "Show professions" button
+# under it, answering whoever presses it (only them) with the roster
+# including professions.
+GUILD_ROSTER_PROFESSIONS_BUTTON = True
+
 # How the posted roster looks: "compact" (per character a short line, and
 # under it alt/professions in small text; reads well on phones) or "table"
 # (aligned columns with a header row; best on a computer, but wraps badly
