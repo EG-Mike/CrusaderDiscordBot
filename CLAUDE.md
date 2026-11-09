@@ -174,7 +174,9 @@ version or raid tier is a configuration change.
   `webapi/roster_api.py` (Roster and Leveling pages). The roster is also
   kept posted in a Discord channel (`GUILD_ROSTER_CHANNEL_ID`; edited only
   when its content changes; header is the "guild_roster_header" bot
-  message; aligned columns with a header row: every column before the
+  message; `GUILD_ROSTER_POST_LAYOUT` "compact" (default: a line per
+  character, alt and professions in small text under it; fine on phones)
+  or "table": aligned columns with a header row: every column before the
   member has a fixed width (padded code, emoji, `icons.blank()` - a
   transparent bot emoji - for a missing icon or profession), the member
   last; alts below

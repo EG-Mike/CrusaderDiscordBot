@@ -14,10 +14,12 @@ GUILD_ROSTER_REFRESH_MINUTES. Character profiles, which carry fresher
 levels, are checked by cogs/leveling.py.
 
 With a roster channel set (GUILD_ROSTER_CHANNEL_ID), the bot keeps the
-roster posted there: a header (the "Guild roster header" bot message), a
-column header row and one row per character (level, class icon, name,
-linked member, "alt" for alts, and professions with skill/maximum when
-GUILD_ROSTER_POST_PROFESSIONS is on), highest level first. Characters below
+roster posted there: a header (the "Guild roster header" bot message) and
+per character its level, class icon, name, linked member, "alt" for alts,
+and professions with skill/maximum when GUILD_ROSTER_POST_PROFESSIONS is
+on, highest level first. GUILD_ROSTER_POST_LAYOUT "compact" (two short
+lines per character, fine on phones) or "table" (aligned columns with a
+header row, best on a computer; scrambled where it wraps). Characters below
 GUILD_ROSTER_POST_MIN_LEVEL are left out unless they're someone's main.
 Every few minutes it checks whether anything changed and only then edits
 the message(s); a long roster spans several messages.
@@ -125,6 +127,39 @@ class RosterCog(commands.Cog):
 
     def _post_lines(self, rows: List[dict], ref: dict, guild, profession_icons: Optional[Dict[int, str]] = None
                     ) -> List[str]:
+        """The roster's lines in the chosen layout (GUILD_ROSTER_POST_LAYOUT)."""
+        if config.GUILD_ROSTER_POST_LAYOUT == "table":
+            return self._table_lines(rows, ref, guild, profession_icons)
+        return self._compact_lines(rows, ref, guild, profession_icons)
+
+    def _compact_lines(self, rows: List[dict], ref: dict, guild, profession_icons: Optional[Dict[int, str]] = None
+                       ) -> List[str]:
+        """Short lines that read well on a phone: per character the level,
+        class icon, name and member, and under it (small) "alt" and the
+        professions with skill/maximum. Nothing relies on alignment, so a
+        narrow screen only wraps, it doesn't scramble columns."""
+        if not rows:
+            return ["-# Nobody on the roster yet."]
+        lines = []
+        for c in rows:
+            name = class_name(ref, c["class_id"])
+            icon = icons.resolve_class_icon(guild, name) if name else ""
+            member = guild.get_member(c["discord_id"]) if guild and c["discord_id"] else None
+            level = c["level"] if c["level"] is not None else "?"
+            first = f"`{level:>2}` {icon + ' ' if icon else ''}**{roster.display_name(c)}**"
+            lines.append(f"{first} · {member.mention}" if member else first)
+            details = ["alt"] if member and not c["is_main"] else []
+            if config.GUILD_ROSTER_POST_PROFESSIONS:
+                for p in roster.professions(c, primary_only=True):
+                    skill = p.get("skill") if p.get("skill") is not None else "?"
+                    emoji = (profession_icons or {}).get(p.get("id"))
+                    details.append(f"{emoji or p.get('name') or '?'} {skill}/{p.get('max') or '?'}")
+            if details:
+                lines.append(f"-# {' · '.join(details)}")
+        return lines
+
+    def _table_lines(self, rows: List[dict], ref: dict, guild, profession_icons: Optional[Dict[int, str]] = None
+                     ) -> List[str]:
         """A header row and one aligned row per character. Discord has no
         tables, so every column before the Discord member has a fixed width:
         level and name are padded inline code, icons are emoji (a blank one
