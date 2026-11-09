@@ -209,6 +209,16 @@ version or raid tier is a configuration change.
   paths are settings. What Forever's API offers is in
   `docs/wow-forever-api.md`; re-check it with
   `scripts/probe_blizzard_api.py`, which writes a shareable report.
+  **Read that page before saying the API lacks something**: Forever
+  differs from retail and Classic, and paths that work there are often
+  404 here while another path works. In short: no realms or connected
+  realms; rulesets instead (`dynamic-forever-{region}`, 1 PvP, 2 Normal,
+  3 Roleplay, 15 Roleplay PvP). Auction house data works, per ruleset:
+  `/data/wow/ruleset/{id}/auctions/index`, then
+  `.../auctions/{house}/commodities` (unit_price) and `.../auctions/{house}`
+  (buyout), several houses per faction with the same name; a snapshot,
+  see `Last-Modified`. Try it with `scripts/auction_lookup.py`. Characters
+  and guilds are looked up by name without a realm.
 - `cogs/notifications.py`: alerts in a moderator channel, built from the
   System log and the audit trail. Settings named `NOTIFY_*` /
   `NOTIFICATIONS_*` apply immediately (`webapi/settings.LIVE_PREFIXES`):
