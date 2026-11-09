@@ -25,7 +25,8 @@ class Scoped(DatabaseTestCase):
     def setUp(self):
         super().setUp()
         self._scope = mock.patch.multiple(config, GAME_VERSION="forever", SERVER_REGION="eu",
-                                          GUILD_ROSTER_GUILD="Encore", GUILD_ROSTER_CHANNEL_ID=700)
+                                          GUILD_ROSTER_GUILD="Encore", GUILD_ROSTER_CHANNEL_ID=700,
+                                          GUILD_ROSTER_POST_LAYOUT="table")
         self._scope.start()
 
     def tearDown(self):
@@ -127,6 +128,22 @@ class ProfessionTests(Scoped, unittest.IsolatedAsyncioTestCase):
             lines = cog._post_lines(roster.characters(), REF, None, {333: "<:ench:1>", 197: "<:tail:2>"})
         self.assertEqual(lines[1], "`30` <:blank:9> `Eggmike Thewhite` <:ench:1> `200/225` <:tail:2> ` 45/ 75` -")
         self.assertEqual(lines[2], "`20` <:blank:9> `Jaina Proud     ` <:blank:9> `   -   ` <:blank:9> `   -   ` -")
+
+    def test_compact_layout_for_phones(self):
+        cog = roster_cog.RosterCog.__new__(roster_cog.RosterCog)
+        roster.store_roster([char(1, 30), char(2, 20, name="Jaina", surname="Proud")], "encore")
+        roster.store_professions("eggmike-thewhite", PROFESSIONS)
+        roster.link("jaina-proud", 111, by="Mike", as_moderator=True)
+        roster.link("eggmike-thewhite", 111, by="Mike", as_moderator=True)
+        roster.set_main("jaina-proud", discord_id=111, as_moderator=True)
+        member = SimpleNamespace(mention="<@111>")
+        guild = SimpleNamespace(get_member=lambda i: member if i == 111 else None)
+        with mock.patch.object(config, "GUILD_ROSTER_POST_LAYOUT", "compact"), \
+                mock.patch.object(roster_cog.icons, "resolve_class_icon", lambda g, n: "<:priest:1>"):
+            lines = cog._post_lines(roster.characters(), REF, guild, {333: "<:ench:1>"})
+        self.assertEqual(lines, ["`30` <:priest:1> **Eggmike Thewhite** · <@111>",
+                                 "-# alt · <:ench:1> 200/225 · Tailoring 45/75",  # no emoji: the profession's name
+                                 "`20` <:priest:1> **Jaina Proud** · <@111>"])
 
 
 if __name__ == "__main__":

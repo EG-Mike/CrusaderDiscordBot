@@ -840,13 +840,13 @@ export interface AuctionComparison {
 
 // --- rank sync (webapi/rank_sync_api.py) -----------------------------------------------
 
-export type RankSyncStatus = "promote" | "unknown_rank" | "not_in_guild" | "no_character" | "ok";
+export type RankSyncStatus = "promote" | "unknown_rank" | "not_in_guild" | "no_character" | "ok" | "no_rule_role" | "not_in_server";
 
 export interface RankSyncEntry {
-  member: { id: string; name: string; avatar_url: string };
+  member: { id: string; name: string | null; avatar_url: string | null; role_names: string[] };
   role_name: string | null;
-  target_rank: number;
-  target_label: string;
+  target_rank: number | null;
+  target_label: string | null;
   status: RankSyncStatus;
   character: {
     slug: string;

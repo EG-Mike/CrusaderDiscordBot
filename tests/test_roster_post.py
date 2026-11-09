@@ -54,7 +54,8 @@ class RosterPostTests(DatabaseTestCase, unittest.IsolatedAsyncioTestCase):
         super().setUp()
         self.channel = FakeChannel()
         self._patches = [mock.patch.multiple(config, GAME_VERSION="forever", SERVER_REGION="eu",
-                                             GUILD_ROSTER_GUILD="Encore", GUILD_ROSTER_CHANNEL_ID=700),
+                                             GUILD_ROSTER_GUILD="Encore", GUILD_ROSTER_CHANNEL_ID=700,
+                                             GUILD_ROSTER_POST_LAYOUT="table"),
                          mock.patch.object(roster_cog, "reference", mock.AsyncMock(return_value=REF)),
                          mock.patch.object(roster_cog.icons, "resolve_class_icon", lambda g, n: "<:priest:1>")]
         for p in self._patches:

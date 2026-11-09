@@ -287,6 +287,12 @@ GUILD_ROSTER_CHANNEL_ID = 0
 # player logs out.
 GUILD_ROSTER_POST_PROFESSIONS = True
 
+# How the posted roster looks: "compact" (per character a short line, and
+# under it alt/professions in small text; reads well on phones) or "table"
+# (aligned columns with a header row; best on a computer, but wraps badly
+# on a phone).
+GUILD_ROSTER_POST_LAYOUT = "compact"
+
 # --- Crafting (crafting.py, cogs/crafting.py) ---
 # Channel where the bot keeps the guild's crafting posted: every
 # profession with its crafters, and the featured recipes (picked on the

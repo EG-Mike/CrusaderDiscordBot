@@ -20,6 +20,8 @@ const GROUPS: { status: RankSyncStatus; label: string; hint: string }[] = [
   { status: "not_in_guild", label: "Not in the guild", hint: "Their claimed character isn't in the guild (yet). Invite them in the game." },
   { status: "no_character", label: "No character", hint: "They have the role but haven't claimed a character (Claim a character in the roster channel)." },
   { status: "ok", label: "Up to date", hint: "At the rank their role comes with, or higher." },
+  { status: "no_rule_role", label: "No matching role", hint: "Linked to a character, but they have none of the rules' roles in Discord (their roles are shown). Give them the role, or add a rule for a role they have." },
+  { status: "not_in_server", label: "Not in Discord", hint: "Linked to a Discord account that isn't in this server (anymore)." },
 ];
 
 function rankText(rank: number, names: Map<number, string>) {
@@ -33,7 +35,7 @@ function EntryRow({ e, overview }: { e: RankSyncEntry; overview: RankSyncOvervie
     <li className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 md:px-5">
       <span className="inline-flex min-w-0 items-center gap-2">
         <Avatar url={e.member.avatar_url} name={e.member.name} />
-        <span className="truncate">{e.member.name}</span>
+        <span className="truncate">{e.member.name ?? <span className="text-faint">account {e.member.id}</span>}</span>
       </span>
       {c ? (
         <span className="font-medium" style={{ color: classColor(overview.classes ?? [], c.class_id) }}>
@@ -44,7 +46,14 @@ function EntryRow({ e, overview }: { e: RankSyncEntry; overview: RankSyncOvervie
         <span className="text-faint">no character claimed</span>
       )}
       <span className="ml-auto text-xs text-muted">
-        {c?.rank_label ? (
+        {e.target_label === null ? (
+          <>
+            {c?.rank_label ?? (c ? "not in the guild" : "")}
+            {e.status === "no_rule_role" && (
+              <span className="ml-2 text-2xs text-faint">{e.member.role_names.length ? e.member.role_names.map((r) => `@${r}`).join(" ") : "no roles"}</span>
+            )}
+          </>
+        ) : c?.rank_label ? (
           <>
             {c.rank_label} {e.status === "promote" && <span className="text-gold">→ {e.target_label}</span>}
           </>

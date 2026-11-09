@@ -174,7 +174,9 @@ version or raid tier is a configuration change.
   `webapi/roster_api.py` (Roster and Leveling pages). The roster is also
   kept posted in a Discord channel (`GUILD_ROSTER_CHANNEL_ID`; edited only
   when its content changes; header is the "guild_roster_header" bot
-  message; aligned columns with a header row: every column before the
+  message; `GUILD_ROSTER_POST_LAYOUT` "compact" (default: a line per
+  character, alt and professions in small text under it; fine on phones)
+  or "table": aligned columns with a header row: every column before the
   member has a fixed width (padded code, emoji, `icons.blank()` - a
   transparent bot emoji - for a missing icon or profession), the member
   last; alts below
@@ -247,7 +249,9 @@ version or raid tier is a configuration change.
   dashboard's Rank sync page (`webapi/rank_sync_api.py`). Each member with
   a rule's role is judged by their main in the guild (else a claimed
   character in the guild) and grouped: promote, unknown rank, not in the
-  guild, no character, ok. `cogs/rank_sync.py` keeps the members to
+  guild, no character, ok; linked members without a rule's role
+  (no_rule_role) and links to accounts not in the server (not_in_server)
+  are listed too, so every link shows up somewhere. `cogs/rank_sync.py` keeps the members to
   promote posted in `RANK_SYNC_CHANNEL_ID` (header: the "rank_sync_header"
   bot message). Ranks only change with the roster sync.
 - `cogs/notifications.py`: alerts in a moderator channel, built from the

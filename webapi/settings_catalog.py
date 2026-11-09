@@ -376,6 +376,12 @@ CATALOG: Dict[str, Entry] = {
     "AUCTION_HOUSE_ID": Entry("auction", "Auction house",
                               "Your auction house. Pick it on the Auction prices page, which can compare the "
                               "houses to find yours.", advanced=True),
+    "GUILD_ROSTER_POST_LAYOUT": Entry("roster", "Layout",
+                                      "Compact reads well on phones: a line per character with alt and professions "
+                                      "in small text under it. Table lines everything up in columns, which looks "
+                                      "best on a computer but wraps badly on a phone.",
+                                      choices=[("compact", "Compact (phones and computers)"),
+                                               ("table", "Table (computers)")]),
     "GUILD_ROSTER_POST_PROFESSIONS": Entry("roster", "Show professions",
                                            "Each character's professions with their skill, e.g. Enchanting 200/225, "
                                            "on the posted roster. Updated after the player logs out."),

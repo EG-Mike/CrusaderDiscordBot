@@ -14,6 +14,11 @@ else a claimed character in the guild; roster.py) and lands in one group:
   not_in_guild  claimed a character that isn't in the guild (yet)
   no_character  hasn't claimed a character
 
+and, so every linked character shows up somewhere:
+
+  no_rule_role   linked, but has none of the rules' roles
+  not_in_server  linked to a Discord account that isn't in the server
+
 Blizzard's guild roster gives ranks as numbers only (0 = guild master, a
 higher number is a lower rank), so the names are set on the dashboard too.
 Ranks change in the game first and reach the bot with the next roster
@@ -30,7 +35,7 @@ import wow_api
 
 log = logging.getLogger("wow-apply-bot.rank_sync")
 
-STATUSES = ("promote", "unknown_rank", "not_in_guild", "no_character", "ok")
+STATUSES = ("promote", "unknown_rank", "not_in_guild", "no_character", "ok", "no_rule_role", "not_in_server")
 MAX_RANK = 9  # WoW guilds have ranks 0 (guild master) to 9
 MAX_RANK_NAME = 40
 
@@ -139,48 +144,60 @@ def _character_for(own: List[dict], slug: str) -> Optional[dict]:
     return ordered[0] if ordered else None
 
 
-def check(members: Iterable[dict], characters: Iterable[dict], rule_list: List[dict]) -> List[dict]:
-    """Every member with a rule's role, with their character and group.
+def _judge(character: Optional[dict], target: Optional[int], slug: Optional[str]) -> str:
+    if character is None:
+        return "no_character"
+    if target is None:
+        return "no_rule_role"
+    if character["guild_slug"] != slug:
+        return "not_in_guild"
+    if character["guild_rank"] is None:
+        return "unknown_rank"
+    return "promote" if character["guild_rank"] > target else "ok"
 
-    members: [{id, role_ids, ...}] (extra keys are kept); characters:
-    roster rows; rule_list: rules(). A member with several rules' roles is
-    held to the highest rank among them (the lowest number)."""
+
+def check(members: Iterable[dict], characters: Iterable[dict], rule_list: List[dict]) -> List[dict]:
+    """Every member with a rule's role or a linked character, with their character and group.
+
+    members: the server's members [{id, role_ids, ...}] (extra keys are
+    kept); characters: roster rows; rule_list: rules(). A member with
+    several rules' roles is held to the highest rank among them (the
+    lowest number). Linked characters of accounts not in `members` come
+    last as not_in_server."""
     slug = guild_slug()
     targets = {r["role_id"]: r["rank"] for r in rule_list}
     by_member: Dict[int, List[dict]] = {}
     for c in characters:
         if c["discord_id"]:
             by_member.setdefault(int(c["discord_id"]), []).append(c)
-    found = []
+    found, seen = [], set()
     for member in members:
+        seen.add(int(member["id"]))
         matched = [(targets[r], r) for r in member["role_ids"] if r in targets]
-        if not matched:
+        own = by_member.get(int(member["id"]), [])
+        if not matched and not own:
             continue
-        target, role_id = min(matched)
-        character = _character_for(by_member.get(int(member["id"]), []), slug)
-        if character is None:
-            status = "no_character"
-        elif character["guild_slug"] != slug:
-            status = "not_in_guild"
-        elif character["guild_rank"] is None:
-            status = "unknown_rank"
-        else:
-            status = "promote" if character["guild_rank"] > target else "ok"
-        found.append({**member, "target_rank": target, "role_id": role_id, "character": character, "status": status})
+        target, role_id = min(matched) if matched else (None, None)
+        character = _character_for(own, slug)
+        found.append({**member, "target_rank": target, "role_id": role_id, "character": character,
+                      "status": _judge(character, target, slug)})
+    for discord_id, own in by_member.items():
+        if discord_id not in seen:
+            found.append({"id": discord_id, "name": None, "avatar_url": None, "role_ids": [], "target_rank": None,
+                          "role_id": None, "character": _character_for(own, slug), "status": "not_in_server"})
     order = {s: i for i, s in enumerate(STATUSES)}
-    return sorted(found, key=lambda e: (order[e["status"]], e["target_rank"],
-                                        roster.display_name(e["character"]) if e["character"] else e.get("name", "")))
+    return sorted(found, key=lambda e: (order[e["status"]], e["target_rank"] if e["target_rank"] is not None else 99,
+                                        roster.display_name(e["character"]) if e["character"] else e.get("name") or ""))
 
 
-def discord_members(guild, rule_list: List[dict]) -> List[dict]:
-    """[{id, name, avatar_url, role_ids}] of the guild's members (no bots) with a rule's role."""
-    role_ids = {r["role_id"] for r in rule_list}
+def discord_members(guild) -> List[dict]:
+    """[{id, name, avatar_url, mention, role_ids, role_names}] of the server's members (no bots)."""
     found = []
     for member in getattr(guild, "members", []) if guild is not None else []:
         if getattr(member, "bot", False):
             continue
-        mine = [role.id for role in member.roles if role.id in role_ids]
-        if mine:
-            found.append({"id": member.id, "name": member.display_name, "avatar_url": member.display_avatar.url,
-                          "mention": member.mention, "role_ids": mine})
+        roles = [role for role in member.roles if role.name != "@everyone"]
+        found.append({"id": member.id, "name": member.display_name, "avatar_url": member.display_avatar.url,
+                      "mention": member.mention, "role_ids": [role.id for role in roles],
+                      "role_names": [role.name for role in roles]})
     return found

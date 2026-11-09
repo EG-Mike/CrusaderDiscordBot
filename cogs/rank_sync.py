@@ -58,14 +58,11 @@ class RankSyncCog(commands.Cog):
     async def cog_unload(self):
         self.post_loop.cancel()
 
-    def guild(self):
-        return self.bot.guilds[0] if self.bot.guilds else None
-
-    async def entries(self) -> List[dict]:
-        """Everyone with a rule's role, grouped (rank_sync.check)."""
+    async def entries(self, guild) -> List[dict]:
+        """The server's members with a rule's role or a linked character, grouped (rank_sync.check)."""
         rule_list = await asyncio.to_thread(rank_sync.rules)
         characters = await asyncio.to_thread(roster.characters)
-        return rank_sync.check(rank_sync.discord_members(self.guild(), rule_list), characters, rule_list)
+        return rank_sync.check(rank_sync.discord_members(guild), characters, rule_list)
 
     def channel_problem(self) -> Optional[str]:
         channel_id = int(config.RANK_SYNC_CHANNEL_ID or 0)
@@ -85,7 +82,7 @@ class RankSyncCog(commands.Cog):
                 return problem if force else None
             channel = self.bot.get_channel(int(config.RANK_SYNC_CHANNEL_ID))
             names = await asyncio.to_thread(rank_sync.rank_names)
-            lines = promote_lines(await self.entries(), names)
+            lines = promote_lines(await self.entries(channel.guild), names)
             template = bot_messages.current("rank_sync_header")["body"]
             digest = hashlib.sha256("\n".join([POST_LAYOUT, template, *lines]).encode()).hexdigest()
             posted = await asyncio.to_thread(channel_posts.state, POST_META)
