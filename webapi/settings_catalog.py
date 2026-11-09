@@ -382,9 +382,13 @@ CATALOG: Dict[str, Entry] = {
                                       "best on a computer but wraps badly on a phone.",
                                       choices=[("compact", "Compact (phones and computers)"),
                                                ("table", "Table (computers)")]),
-    "GUILD_ROSTER_POST_PROFESSIONS": Entry("roster", "Show professions",
+    "GUILD_ROSTER_PROFESSIONS_BUTTON": Entry("roster", "\"Show professions\" button",
+                                             "When the posted roster leaves professions out, members can press this "
+                                             "button to see the roster with professions. Only they see it."),
+    "GUILD_ROSTER_POST_PROFESSIONS": Entry("roster", "Show professions on the post",
                                            "Each character's professions with their skill, e.g. Enchanting 200/225, "
-                                           "on the posted roster. Updated after the player logs out."),
+                                           "on the posted roster, for everyone. Updated after the player logs out. Off: "
+                                           "members can still see them with the \"Show professions\" button."),
     "GUILD_ROSTER_SELF_SERVICE": Entry("roster", "Members link their own characters",
                                        "With the Claim button under the posted roster, or /character link. Off: only moderators link characters."),
     "GUILD_ROSTER_REFRESH_MINUTES": Entry("roster", "Read the guild roster every",

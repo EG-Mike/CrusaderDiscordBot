@@ -181,7 +181,9 @@ version or raid tier is a configuration change.
   transparent bot emoji - for a missing icon or profession), the member
   last; alts below
   `GUILD_ROSTER_POST_MIN_LEVEL` left out; persistent "Claim a character" /
-  "My characters" buttons for main/alt self-service). Level milestones
+  "My characters" buttons for main/alt self-service, and "Show
+  professions" (an ephemeral copy with professions) when the post leaves
+  them out and `GUILD_ROSTER_PROFESSIONS_BUTTON` is on). Level milestones
   found together are grouped into as few messages as fit. Primary
   professions (`roster.professions`) are read after a logout and shown on
   the posted roster with profession emoji (`emoji_library` kind
