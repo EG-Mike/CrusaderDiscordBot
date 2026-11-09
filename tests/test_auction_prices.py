@@ -67,6 +67,7 @@ class Scoped(DatabaseTestCase):
             config, GAME_VERSION="forever", SERVER_REGION="eu", BLIZZARD_LOCALE="en_GB", AUCTION_RULESET_ID=1,
             AUCTION_HOUSE_ID=113, AUCTION_PRICE_CHANNEL_ID=777, AUCTION_PRICE_COOLDOWN_SECONDS=30,
             AUCTION_PRICE_TRIGGERS=["price", "price check", "pc", "what is the price of"],
+            AUCTION_PRICE_TRIGGER_AFTER_ITEM=True,
             ITEM_LINK_URL="https://wh/item={id}")
         self._scope.start()
         auction_prices._search.clear()
@@ -112,6 +113,16 @@ class WordsTests(unittest.TestCase):
         # The bot's own answer, should it come back through the game, isn't a question.
         self.assertEqual(ask("The auction house price for [Linen Cloth] is 22c (1hr ago)"), [])
 
+    def test_phrase_after_the_item(self):
+        triggers = ["price", "price check", "pc"]
+        after = lambda text: auction_prices.requested_items(text, triggers, after=True)  # noqa: E731
+        # Linked items in the guild chat channel come without spaces between them.
+        self.assertEqual(after("[Sentinel's Belt][Officer's Belt] price?"), ["Sentinel's Belt", "Officer's Belt"])
+        self.assertEqual(after("[Iron Bar] price check"), ["Iron Bar"])
+        self.assertEqual(auction_prices.requested_items("[Iron Bar] price?", triggers), [])  # only with `after`
+        self.assertEqual(after("[Iron Bar] price is crazy"), [])  # the phrase must end the message
+        self.assertEqual(after("The auction house price for [Linen Cloth] is 22c (1hr ago)"), [])
+
     def test_summarise_uses_the_middle_item_for_sale(self):
         listings = {}
         self.assertEqual(auction_prices.collect(COMMODITIES["auctions"] + ITEMS["auctions"], listings), 6)
@@ -144,6 +155,11 @@ class RefreshTests(Scoped, unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(results[1]["price"])
         self.assertEqual((await auction_prices.exact(self.bot, "black lotus"))["id"], 13468)
         self.assertIsNone(await auction_prices.exact(self.bot, "Linen Clth"))
+
+    async def test_a_linked_recipe_counts_as_its_item(self):
+        await auction_prices.refresh(self.bot)
+        self.assertEqual((await auction_prices.exact(self.bot, "Tailoring: Runecloth"))["id"], 14047)
+        self.assertIsNone(await auction_prices.exact(self.bot, "Formula: Nothing Real"))
 
     async def test_compare_houses(self):
         rows = await auction_prices.compare(self.bot, 1, [113, 114], 2589)
@@ -239,12 +255,26 @@ class ApiTests(Scoped, unittest.IsolatedAsyncioTestCase):
         actions = [e["action"] for e in (await (await self.client.get("/api/audit")).json())["events"]]
         self.assertIn("auction.house", actions)
 
+    async def test_try_a_message(self):
+        self.cog.answer_lines = mock.AsyncMock(return_value=["The auction house price for [Linen Cloth] is 22c (1hr ago)"])
+        body = await (await self.client.post("/api/auction/try", json={"message": "[Linen Cloth] pc"},
+                                             headers=self.headers)).json()
+        self.assertEqual((body["items"], body["answer"]),
+                         (["Linen Cloth"], "The auction house price for [Linen Cloth] is 22c (1hr ago)"))
+        body = await (await self.client.post("/api/auction/try", json={"message": "anyone near ah?"},
+                                             headers=self.headers)).json()
+        self.assertEqual((body["items"], body["answer"]), ([], None))
+        resp = await self.client.post("/api/auction/try", json={"message": ""}, headers=self.headers)
+        self.assertEqual(resp.status, 400)
+
     async def test_moderators_only(self):
         self.levels = set()
         self.assertEqual((await self.client.get("/api/auction")).status, 403)
         self.assertEqual((await self.client.get("/api/auction/search?q=linen")).status, 403)
         resp = await self.client.post("/api/auction/house", json={"ruleset_id": 1, "house_id": 114},
                                       headers=self.headers)
+        self.assertEqual(resp.status, 403)
+        resp = await self.client.post("/api/auction/try", json={"message": "price [Linen Cloth]"}, headers=self.headers)
         self.assertEqual(resp.status, 403)
 
 

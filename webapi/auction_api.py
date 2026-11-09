@@ -8,6 +8,7 @@ Dashboard API for auction prices (auction_prices.py, cogs/auction_prices.py).
   POST /api/auction/compare         {"ruleset_id", "house_ids": [...], "item"}: how much of an item each
                                     house has for sale, to find out which one is the guild's
   POST /api/auction/refresh         read the house's latest snapshot now
+  POST /api/auction/try             {"message"}: what the bot would answer in the guild chat (nothing is posted)
 
 Moderators only. Picking the house and refreshing are audited (the house
 also shows in the settings history).
@@ -19,6 +20,7 @@ import auction_prices
 import config
 import gear
 import wow_api
+from cogs import auction_prices as auction_cog
 from webapi import settings as settings_api
 from webapi.common import BOT_KEY, BadRequest, actor_label, audit, error, forbidden_unless, json_response, \
     read_json
@@ -66,6 +68,7 @@ async def overview(request):
         "problem": cog.problem() or cog.last_problem,
         "chat_channel": {"id": str(channel.id), "name": channel.name} if channel else None,
         "triggers": list(config.AUCTION_PRICE_TRIGGERS or []),
+        "trigger_after_item": bool(config.AUCTION_PRICE_TRIGGER_AFTER_ITEM),
     })
 
 
@@ -170,6 +173,27 @@ async def refresh(request):
     return json_response(result)
 
 
+MAX_TRY_CHARS = 2000
+
+
+async def try_message(request):
+    """A dry run of the guild chat answer: the items found in the message and the answer, nothing posted."""
+    denied, cog = _guard(request)
+    if denied:
+        return denied
+    try:
+        body = await read_json(request)
+        text = body.get("message")
+        if not isinstance(text, str) or not text.strip():
+            raise BadRequest("Type a message, e.g. price [Linen Cloth].")
+    except BadRequest as exc:
+        return error(str(exc), 400)
+    names = auction_cog.asked_items(text[:MAX_TRY_CHARS])
+    lines = await cog.answer_lines(names) if names and not cog.problem() else []
+    return json_response({"items": names, "answer": "\n".join(lines) or None,
+                          "problem": cog.problem() if names else None})
+
+
 def register(app):
     app.router.add_get("/api/auction", overview)
     app.router.add_get("/api/auction/search", search)
@@ -177,3 +201,4 @@ def register(app):
     app.router.add_post("/api/auction/house", set_house)
     app.router.add_post("/api/auction/compare", compare)
     app.router.add_post("/api/auction/refresh", refresh)
+    app.router.add_post("/api/auction/try", try_message)

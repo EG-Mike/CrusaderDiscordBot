@@ -6,7 +6,7 @@
 // The search text is in the address (/auction-prices?q=...).
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { Check, Coins, MessageSquare, RefreshCw, Scale, Search, Store } from "lucide-react";
+import { Check, Coins, FlaskConical, MessageSquare, RefreshCw, Scale, Search, Settings2, Store } from "lucide-react";
 import {
   ApiError,
   api,
@@ -14,6 +14,7 @@ import {
   type AuctionHouses,
   type AuctionItem,
   type AuctionOverview,
+  type AuctionTry,
 } from "../lib/api";
 import { fullDateTime, useNow } from "../lib/time";
 import { QUALITY_COLORS } from "../lib/wow";
@@ -239,6 +240,84 @@ function HousePicker({ current, onPicked }: { current: AuctionOverview; onPicked
   );
 }
 
+/** The phrases the bot listens for in the guild chat, and a dry run of its answer to a message. */
+function ChatAnswers({ overview }: { overview: AuctionOverview }) {
+  const [message, setMessage] = useState("price [Linen Cloth]");
+  const [result, setResult] = useState<AuctionTry | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const tryIt = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      setResult(await api.post<AuctionTry>("/api/auction/try", { message }));
+    } catch (err) {
+      setResult(null);
+      setError(err instanceof ApiError ? err.message : "That didn't work");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="card">
+      <header className="flex flex-wrap items-start justify-between gap-2 border-b border-line px-4 py-3 md:px-5">
+        <div>
+          <div className="label">Guild chat answers</div>
+          <p className="mt-0.5 text-2xs text-faint">
+            The bot answers when one of these comes right before a linked [Item]
+            {overview.trigger_after_item ? ", or ends the message right after one (\"[Iron Bar] price?\")" : ""}. Case doesn't matter.
+          </p>
+        </div>
+        <Link to="/settings?group=auction#AUCTION_PRICE_TRIGGERS" className="inline-flex items-center gap-1 text-2xs text-gold hover:underline">
+          <Settings2 className="h-3 w-3" /> Edit
+        </Link>
+      </header>
+      <div className="space-y-3 px-4 py-3 md:px-5">
+        <div className="flex flex-wrap gap-1.5">
+          {overview.triggers.length ? (
+            overview.triggers.map((t) => (
+              <span key={t} className="rounded-md border border-line bg-raised/40 px-2 py-0.5 text-xs">
+                {t}
+              </span>
+            ))
+          ) : (
+            <span className="text-faint">No phrases: the bot never answers.</span>
+          )}
+        </div>
+        <form onSubmit={tryIt} className="flex flex-wrap items-center gap-2">
+          <input className="input h-9 min-w-[12rem] flex-1" value={message} onChange={(e) => setMessage(e.target.value)} placeholder="A guild chat message, e.g. price [Linen Cloth]" aria-label="Message to try" />
+          <Button type="submit" icon={<FlaskConical className="h-3.5 w-3.5" />} loading={busy} disabled={!message.trim()}>
+            Try it
+          </Button>
+        </form>
+        {error && <p className="text-xs text-crimson">{error}</p>}
+        {result && (
+          <div className="rounded-lg bg-raised/40 px-3 py-2 text-xs">
+            {!result.items.length ? (
+              <span className="text-muted">The bot wouldn't answer this: no phrase right next to a linked [Item].</span>
+            ) : result.answer ? (
+              <>
+                <div className="mb-1 text-2xs text-faint">The bot would answer (nothing was posted):</div>
+                <div className="whitespace-pre-line">{result.answer}</div>
+              </>
+            ) : (
+              <span className="text-warn">
+                It would ask about {result.items.map((i) => `[${i}]`).join(" ")}, but can't answer yet{result.problem ? `: ${result.problem}` : " (no auction house data yet)"}.
+              </span>
+            )}
+          </div>
+        )}
+        <p className="text-2xs text-faint">
+          Messages from players who haven't linked their Discord account reach the channel without their text, so the bot can't answer those.
+        </p>
+      </div>
+    </section>
+  );
+}
+
 export default function AuctionPricesPage() {
   const toast = useToast();
   const now = useNow();
@@ -399,6 +478,8 @@ export default function AuctionPricesPage() {
               )}
             </section>
           )}
+
+          <ChatAnswers overview={overview} />
         </div>
       )}
     </>

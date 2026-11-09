@@ -324,6 +324,10 @@ AUCTION_PRICE_CHANNEL_ID = 0
 AUCTION_PRICE_TRIGGERS = ["price", "price check", "pc", "what is the price of", "what's the price of",
                           "how much is", "how much are"]
 
+# Also answer when the phrase comes right after the item(s), at the end of
+# the message ("[Iron Bar] price?").
+AUCTION_PRICE_TRIGGER_AFTER_ITEM = True
+
 # The same item is answered at most once per this many seconds per
 # channel, so a burst of questions doesn't flood the chat.
 AUCTION_PRICE_COOLDOWN_SECONDS = 30

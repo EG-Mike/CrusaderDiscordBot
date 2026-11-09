@@ -317,11 +317,17 @@ async def lookup(bot, text: str, limit: int = 25) -> List[dict]:
 
 
 async def exact(bot, name: str) -> Optional[dict]:
-    """The item with exactly this name (any case) and its price; with several, the one most on sale."""
+    """The item with exactly this name (any case) and its price; with several, the one most on sale.
+    A linked crafting recipe ('Blacksmithing: Officer's Belt') counts as the item it makes."""
     results = await lookup(bot, name, limit=SEARCH_PAGE_SIZE)
     wanted = _normalise(name).lower()
     same = [r for r in results if (r.get("name") or "").lower() == wanted]
-    return same[0] if same else None
+    if same:
+        return same[0]
+    profession, colon, made = name.partition(": ")
+    if colon and made.strip() and " " not in profession.strip():
+        return await exact(bot, made)
+    return None
 
 
 # --- words ---------------------------------------------------------------------------------------
@@ -350,18 +356,24 @@ def age_text(when: Optional[str], now: Optional[float] = None) -> str:
     return f"{hours // 24} days ago"
 
 
-def requested_items(text: str, triggers: Iterable[str]) -> List[str]:
+_ITEMS = r"((?:\[[^\[\]\n]{1,80}\](?:\([^)\s]*\))?[\s,&]*(?:and\s+)?)+)"
+
+
+def requested_items(text: str, triggers: Iterable[str], *, after: bool = False) -> List[str]:
     """The [Item]s someone asks the price of, e.g. 'price [Linen Cloth]',
-    'price check [A] [B]', 'what is the price of [A]?' (at most a few).
-    The trigger phrase must come right before the first item."""
+    'price check [A][B]', 'what is the price of [A]?' (at most a few). The
+    phrase must come right before the first item; with `after`, right after
+    the last one also counts ('[Iron Bar] price?')."""
     phrases = sorted({_normalise(t).lower() for t in triggers if _normalise(t)}, key=len, reverse=True)
     if not phrases or "[" not in (text or ""):
         return []
     alternatives = "|".join(r"\s+".join(re.escape(w) for w in p.split(" ")) for p in phrases)
     fillers = "|".join(FILLER_WORDS)
-    pattern = re.compile(rf"(?:^|[\s:>,.!?(-])(?:{alternatives})\s*(?:(?:{fillers})\s+)?[:-]?\s*"
-                         r"((?:\[[^\[\]\n]{1,80}\](?:\([^)\s]*\))?[\s,&]*(?:and\s+)?)+)", re.IGNORECASE)
-    match = pattern.search(_normalise(text))
+    text = _normalise(text)
+    match = re.search(rf"(?:^|[\s:>,.!?(-])(?:{alternatives})\s*(?:(?:{fillers})\s+)?[:-]?\s*{_ITEMS}", text,
+                      re.IGNORECASE)
+    if match is None and after:
+        match = re.search(rf"{_ITEMS}[:-]?\s*(?:{alternatives})\s*[?!.]*\s*$", text, re.IGNORECASE)
     if not match:
         return []
     names: List[str] = []

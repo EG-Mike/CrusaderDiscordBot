@@ -815,6 +815,13 @@ export interface AuctionOverview {
   problem: string | null;
   chat_channel: { id: string; name: string } | null;
   triggers: string[];
+  trigger_after_item: boolean;
+}
+
+export interface AuctionTry {
+  items: string[];
+  answer: string | null;
+  problem: string | null;
 }
 
 export interface AuctionHouses {

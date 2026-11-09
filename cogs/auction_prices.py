@@ -4,8 +4,9 @@ Auction prices, Discord side: keeps the guild's auction house prices fresh
 questions in the guild chat channel (AUCTION_PRICE_CHANNEL_ID, the channel
 linked to the in-game guild chat).
 
-Someone writes e.g. "price [Linen Cloth]", "pc [Linen Cloth] [Wool Cloth]"
-or "what is the price of [Runecloth]?" (the phrases are a setting); the bot
+Someone writes e.g. "price [Linen Cloth]", "pc [Linen Cloth] [Wool Cloth]",
+"what is the price of [Runecloth]?" or "[Iron Bar] price?" (the phrases
+are a setting, AUCTION_PRICE_TRIGGER_AFTER_ITEM allows them after); the bot
 answers each item on its own line with the "Price answer" bot messages.
 Linked items in the game arrive in square brackets. Messages from the bot
 itself are never read, and the same item is answered at most once per
@@ -40,6 +41,12 @@ def answer_line(name: str, found, snapshot_at) -> str:
                              price=auction_prices.money(price["min_price"], compact=True),
                              median=auction_prices.money(price["median_price"], compact=True),
                              quantity=price["quantity"], age=age)
+
+
+def asked_items(text: str) -> List[str]:
+    """The items a guild chat message asks the price of, with the current settings."""
+    return auction_prices.requested_items(text, config.AUCTION_PRICE_TRIGGERS or [],
+                                          after=bool(config.AUCTION_PRICE_TRIGGER_AFTER_ITEM))
 
 
 class AuctionPricesCog(commands.Cog):
@@ -119,26 +126,12 @@ class AuctionPricesCog(commands.Cog):
             fresh.append(name)
         return fresh
 
-    @commands.Cog.listener()
-    async def on_message(self, message: discord.Message):
-        channel_id = int(config.AUCTION_PRICE_CHANNEL_ID or 0)
-        if not channel_id or message.channel.id != channel_id:
-            return
-        if self.bot.user is not None and message.author.id == self.bot.user.id:
-            return
-        names = auction_prices.requested_items(message.content, config.AUCTION_PRICE_TRIGGERS or [])
-        if not names:
-            return
-        if self.problem():
-            log.info("Price question in the guild chat not answered: %s", self.problem())
-            return
-        names = self._fresh_items(channel_id, names)
-        if not names:
-            return
+    async def answer_lines(self, names: List[str]) -> List[str]:
+        """The answer's lines for these item names (empty before the first snapshot)."""
         snapshot = await asyncio.to_thread(auction_prices.snapshot)
         if snapshot is None:
-            log.info("Price question in the guild chat not answered: no auction house data yet")
-            return
+            log.info("Price question not answered: no auction house data yet")
+            return []
         lines = []
         for name in names:
             try:
@@ -147,6 +140,25 @@ class AuctionPricesCog(commands.Cog):
                 log.warning("Price question for %r not answered: %s", name, exc)
                 continue
             lines.append(answer_line(name, found, snapshot["snapshot_at"]))
+        return lines
+
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message):
+        channel_id = int(config.AUCTION_PRICE_CHANNEL_ID or 0)
+        if not channel_id or message.channel.id != channel_id:
+            return
+        if self.bot.user is not None and message.author.id == self.bot.user.id:
+            return
+        names = asked_items(message.content)
+        if not names:
+            return
+        if self.problem():
+            log.info("Price question in the guild chat not answered: %s", self.problem())
+            return
+        names = self._fresh_items(channel_id, names)
+        if not names:
+            return
+        lines = await self.answer_lines(names)
         if not lines:
             return
         try:

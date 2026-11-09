@@ -340,7 +340,11 @@ CATALOG: Dict[str, Entry] = {
                                       "price. Empty: the bot doesn't answer."),
     "AUCTION_PRICE_TRIGGERS": Entry("auction", "Price questions",
                                     "Words that ask for a price when they come right before an [Item], e.g. "
-                                    "price, price check, what is the price of.", widget="text_list"),
+                                    "price, price check, what is the price of. Case doesn't matter. Try messages "
+                                    "on the Auction prices page.", widget="text_list"),
+    "AUCTION_PRICE_TRIGGER_AFTER_ITEM": Entry("auction", "Also after the item",
+                                              "Answer too when the words end the message after the item, e.g. "
+                                              "\"[Iron Bar] price?\". Try messages on the Auction prices page."),
     "AUCTION_PRICE_COOLDOWN_SECONDS": Entry("auction", "Answer the same item once per",
                                             "So a burst of the same question doesn't flood the chat.",
                                             unit="seconds", advanced=True),

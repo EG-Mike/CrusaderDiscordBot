@@ -226,9 +226,14 @@ version or raid tier is a configuration change.
   unchanged); per item the cheapest and median price per unit and the
   quantity are stored (tables `auction_prices`, `auction_snapshots`). Item
   names via Blizzard's item search. `cogs/auction_prices.py` keeps it fresh
-  and answers "price [Item]" (phrases: `AUCTION_PRICE_TRIGGERS`) in the
-  guild chat channel (`AUCTION_PRICE_CHANNEL_ID`) with the "Price answer"
-  bot messages; `webapi/auction_api.py` serves the page. `AUCTION_*`
+  and answers "price [Item]" (phrases: `AUCTION_PRICE_TRIGGERS`, also
+  after the item with `AUCTION_PRICE_TRIGGER_AFTER_ITEM`) in the guild chat
+  channel (`AUCTION_PRICE_CHANNEL_ID`) with the "Price answer" bot
+  messages. In that channel (Blizzard's guild chat link) linked players'
+  messages arrive as their own, linked items as "[Name]" without spaces
+  between them, recipes as "[Profession: Item]" (counted as the item);
+  unlinked players' text doesn't arrive. `webapi/auction_api.py` serves
+  the page, including a dry run ("Try it") of the answer to a message. `AUCTION_*`
   settings apply immediately.
 - `cogs/notifications.py`: alerts in a moderator channel, built from the
   System log and the audit trail. Settings named `NOTIFY_*` /
