@@ -68,7 +68,7 @@ async def overview(request):
     names = await asyncio.to_thread(rank_sync.rank_names)
     rule_list = await asyncio.to_thread(rank_sync.rules)
     characters = await asyncio.to_thread(roster.characters)
-    entries = rank_sync.check(rank_sync.discord_members(guild, rule_list), characters, rule_list)
+    entries = rank_sync.check(rank_sync.discord_members(guild), characters, rule_list)
     role_name = {r.id: r.name for r in getattr(guild, "roles", [])}
     seen = {r["rank"]: r for r in rank_sync.ranks_seen(characters)}
     ranks = [{"rank": rank, "name": names.get(rank), "count": seen.get(rank, {}).get("count", 0),
@@ -84,10 +84,12 @@ async def overview(request):
                    "rank_label": rank_sync.rank_label(r["rank"], names)} for r in rule_list],
         "ranks": ranks,
         "max_rank": rank_sync.MAX_RANK,
-        "entries": [{"member": {"id": str(e["id"]), "name": e["name"], "avatar_url": e["avatar_url"]},
+        "entries": [{"member": {"id": str(e["id"]), "name": e["name"], "avatar_url": e["avatar_url"],
+                                "role_names": e.get("role_names", [])},
                      "role_name": role_name.get(e["role_id"]), "target_rank": e["target_rank"],
-                     "target_label": rank_sync.rank_label(e["target_rank"], names), "status": e["status"],
-                     "character": _character(e["character"], names)} for e in entries],
+                     "target_label": rank_sync.rank_label(e["target_rank"], names)
+                     if e["target_rank"] is not None else None,
+                     "status": e["status"], "character": _character(e["character"], names)} for e in entries],
         "suggested_role_id": str(config.FRESH_ROLE_ID) if config.FRESH_ROLE_ID else None,
         "classes": classes,
         "post": _post_status(bot, cog),

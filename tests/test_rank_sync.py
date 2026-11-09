@@ -61,8 +61,18 @@ class RulesTests(Scoped):
     def test_the_highest_rule_wins(self):
         rank_sync.set_rule(FRESH, 5, by="Mike")
         rank_sync.set_rule(RAIDER, 3, by="Mike")
-        [entry] = rank_sync.check([member(12, FRESH, RAIDER)], roster.characters(), rank_sync.rules())
+        entries = rank_sync.check([member(12, FRESH, RAIDER)], roster.characters(), rank_sync.rules())
+        [entry] = [e for e in entries if e["id"] == 12]
         self.assertEqual((entry["target_rank"], entry["role_id"], entry["status"]), (3, RAIDER, "promote"))
+
+    def test_every_linked_character_shows_up(self):
+        rank_sync.set_rule(FRESH, 5, by="Mike")
+        entries = {e["id"]: e for e in rank_sync.check([member(11, FRESH), member(12, RAIDER)], roster.characters(),
+                                                       rank_sync.rules())}
+        self.assertEqual({k: e["status"] for k, e in entries.items()},
+                         {11: "promote", 12: "no_rule_role", 13: "not_in_server", 15: "not_in_server"})
+        self.assertEqual(entries[13]["character"]["slug"], "out-sider")
+        self.assertIsNone(entries[12]["target_rank"])
 
     def test_rank_names_and_validation(self):
         rank_sync.set_rank_names({0: "Guild Master", 5: " Fresh ", 7: "Initiate", 3: ""})
@@ -139,7 +149,8 @@ class ApiTests(Scoped, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["rules"], [{"role_id": str(FRESH), "role_name": "Fresh", "rank": 5,
                                           "rank_label": "Fresh"}])
         self.assertEqual(body["suggested_role_id"], str(FRESH))
-        [entry] = body["entries"]
+        [entry] = [e for e in body["entries"] if e["member"]["id"] == "11"]
+        self.assertEqual({e["status"] for e in body["entries"] if e["member"]["id"] != "11"}, {"not_in_server"})
         self.assertEqual((entry["member"]["id"], entry["status"], entry["character"]["rank_label"],
                           entry["target_label"]), ("11", "promote", "Initiate", "Fresh"))
         self.assertEqual({r["rank"]: r["name"] for r in body["ranks"]}[7], "Initiate")

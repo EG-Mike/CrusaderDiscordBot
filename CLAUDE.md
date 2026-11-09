@@ -247,7 +247,9 @@ version or raid tier is a configuration change.
   dashboard's Rank sync page (`webapi/rank_sync_api.py`). Each member with
   a rule's role is judged by their main in the guild (else a claimed
   character in the guild) and grouped: promote, unknown rank, not in the
-  guild, no character, ok. `cogs/rank_sync.py` keeps the members to
+  guild, no character, ok; linked members without a rule's role
+  (no_rule_role) and links to accounts not in the server (not_in_server)
+  are listed too, so every link shows up somewhere. `cogs/rank_sync.py` keeps the members to
   promote posted in `RANK_SYNC_CHANNEL_ID` (header: the "rank_sync_header"
   bot message). Ranks only change with the roster sync.
 - `cogs/notifications.py`: alerts in a moderator channel, built from the
