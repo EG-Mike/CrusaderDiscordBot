@@ -224,7 +224,8 @@ version or raid tier is a configuration change.
   rules into interaction-free methods both sides call (see `cogs/polls.py`).
 - `web/`: dashboard frontend (React + TypeScript + Vite + Tailwind). The
   dark theme is inspired by (not copied from) oxm.gg, with a "crusader
-  gold" accent.
+  gold" accent. `lib/wowhead.tsx`: Wowhead links (`WowLink`) and tooltips
+  for the whole dashboard (see Conventions).
 
 ### Where configuration belongs
 
@@ -253,6 +254,17 @@ set in the dashboard.
   (Wowhead blocks datacenter IPs).
 - **Texts the bot posts on its own** belong in `bot_messages.py` (editable
   on the dashboard), not in cog code.
+- **Wowhead links and tooltips (always)**: every item, spell or reagent
+  shown on the website links to its Wowhead page, so hovering it shows
+  Wowhead's tooltip. Render it with `<WowLink kind="item"|"spell" id=...>`
+  (`web/src/lib/wowhead.tsx`), or a plain `<a href>` with a URL the server
+  built (`gear.item_url` / `gear.link_url`). Never hardcode Wowhead URLs:
+  they come from the `ITEM_LINK_URL` / `SPELL_LINK_URL` settings (sent to
+  the browser in `/api/status` as `links`), since they change per game
+  version. The tooltip script (`WOWHEAD_TOOLTIPS_ENABLED`) is loaded once
+  for the whole dashboard and re-checks links when the page changes, so
+  new pages need nothing else. Keep it working when adding pages. In
+  Discord, item names link the same way (`gear.item_url`).
 - **Discord IDs** are snowflakes larger than JavaScript's safe integer
   range: always send them to the browser as strings (`webapi/settings.js_safe`).
 - **Errors**: log them with the standard `logging` module (`log.exception`

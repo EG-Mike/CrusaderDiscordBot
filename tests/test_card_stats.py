@@ -139,6 +139,13 @@ class ApiTests(DatabaseTestCase, unittest.IsolatedAsyncioTestCase):
         events = (await (await self.client.get("/api/audit")).json())["events"]
         self.assertIn("applications.statistics", [e["action"] for e in events])
 
+    async def test_status_sends_the_link_templates(self):
+        with mock.patch.multiple(config, ITEM_LINK_URL="https://www.wowhead.com/forever/item={id}", SPELL_LINK_URL="",
+                                 WOWHEAD_TOOLTIPS_ENABLED=True):
+            links = (await (await self.client.get("/api/status")).json())["links"]
+        self.assertEqual(links, {"item": "https://www.wowhead.com/forever/item={id}", "spell": None,
+                                 "wowhead_tooltips": True})
+
     async def test_moderators_only(self):
         self.levels = set()
         self.assertEqual((await self.client.get("/api/applications/statistics")).status, 403)

@@ -250,12 +250,18 @@ def summarise(profile: dict, equipment: dict, specializations: Optional[dict], *
     }
 
 
+def link_url(template: Optional[str], game_id) -> Optional[str]:
+    """A page for an item/spell from a link setting ("https://...{id}"), or
+    None when it shouldn't link."""
+    template = (template or "").strip()
+    if not template or not game_id or not template.startswith("https://"):
+        return None
+    return template.replace("{id}", str(int(game_id)))
+
+
 def item_url(item_id) -> Optional[str]:
     """The item's page (ITEM_LINK_URL), or None when names shouldn't link."""
-    template = (config.ITEM_LINK_URL or "").strip()
-    if not template or not item_id or not template.startswith("https://"):
-        return None
-    return template.replace("{id}", str(int(item_id)))
+    return link_url(config.ITEM_LINK_URL, item_id)
 
 
 def requirement_problems(summary: dict) -> List[str]:

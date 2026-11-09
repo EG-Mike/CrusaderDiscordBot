@@ -381,6 +381,14 @@ CATALOG: Dict[str, Entry] = {
         "blizzard", "Item link",
         "Item names on applications and in the character lookup link here, e.g. to Wowhead. {id} is filled in "
         "with the item's number. Empty: names aren't links."),
+    "SPELL_LINK_URL": Entry(
+        "blizzard", "Spell link",
+        "Spells on the dashboard (e.g. the Emoji page) link here. {id} is filled in with the spell's number. "
+        "Empty: no links."),
+    "WOWHEAD_TOOLTIPS_ENABLED": Entry(
+        "blizzard", "Wowhead tooltips on the dashboard",
+        "Hovering an item or spell link shows its Wowhead tooltip. This loads Wowhead's tooltip script into the "
+        "dashboard; turn it off to use plain links only."),
     "CHARACTER_LOOKUP_PATHS": Entry(
         "blizzard", "Character lookup paths",
         "Tried in order until one answers; {name} and {surname} are filled in. Try paths in the "

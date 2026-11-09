@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-
 import { Loader2 } from "lucide-react";
 import { api, type Me } from "./lib/api";
 import { LiveProvider, useLive } from "./lib/live";
+import { WowheadTooltips } from "./lib/wowhead";
 import { MeContext } from "./lib/me";
 import SetupPage from "./pages/Setup";
 import { Layout } from "./components/Layout";
@@ -74,6 +75,7 @@ export default function App() {
     <ToastProvider>
     <LiveProvider>
       <SetupRedirect />
+      <WowheadTooltips />
       <Layout me={me}>
         <Routes>
           <Route path="/" element={<Overview me={me} />} />

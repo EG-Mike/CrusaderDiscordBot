@@ -7,6 +7,7 @@ import { Link } from "react-router-dom";
 import { AlertTriangle, ArrowDown, ArrowUp, EyeOff, Hammer, Plus, RotateCcw, Search, Send, Star, Trash2 } from "lucide-react";
 import { ApiError, api, type CraftingOverview, type Crafter, type FeaturedRecipe, type RecipeCatalog } from "../lib/api";
 import { useLive } from "../lib/live";
+import { WowLink } from "../lib/wowhead";
 import { CLASS_COLORS } from "../lib/wow";
 import { Avatar } from "../components/Audit";
 import { useToast } from "../components/Toast";
@@ -89,7 +90,15 @@ function FeaturedCard({
           )}
         </div>
         {r.reagents.length > 0 && (
-          <p className="mt-1.5 text-2xs text-muted">Materials: {r.reagents.map((x) => `${x.quantity ?? 1}× ${x.name}`).join(" · ")}</p>
+          <p className="mt-1.5 text-2xs text-muted">
+            Materials:{" "}
+            {r.reagents.map((x, i) => (
+              <span key={`${x.id}-${i}`}>
+                {i > 0 && " · "}
+                {x.quantity ?? 1}× <WowLink kind="item" id={x.id}>{x.name}</WowLink>
+              </span>
+            ))}
+          </p>
         )}
       </div>
       <Button size="sm" variant="ghost" icon={<Trash2 className="h-3.5 w-3.5" />} onClick={onRemove} disabled={busy} aria-label={`Stop featuring ${name}`}>

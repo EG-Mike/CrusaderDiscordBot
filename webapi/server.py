@@ -34,6 +34,7 @@ import app_version
 import audit as audit_store
 import config
 import db
+import gear
 import secret_store
 import system_log
 from webapi import (
@@ -261,6 +262,10 @@ def _status(app) -> dict:
             "member_count": guild.member_count,
         } if guild else None,
         "branding": branding_api.branding(bot),
+        # How items and spells link (to Wowhead by default), and whether Wowhead's tooltips are loaded.
+        "links": {"item": gear.link_url(config.ITEM_LINK_URL, 1) and config.ITEM_LINK_URL,
+                  "spell": gear.link_url(config.SPELL_LINK_URL, 1) and config.SPELL_LINK_URL,
+                  "wowhead_tooltips": bool(config.WOWHEAD_TOOLTIPS_ENABLED)},
         "features": {
             key: bool(getattr(config, key)) for key in settings_api.all_keys() if key.startswith("FEATURE_")
         },

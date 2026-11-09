@@ -244,6 +244,14 @@ CHARACTER_LOOKUP_PATHS = ["/profile/wow/character/{name}-{surname}"]
 # aren't links. Wowhead's WoW Forever pages are under /forever/.
 ITEM_LINK_URL = "https://www.wowhead.com/forever/item={id}"
 
+# Same for spells (e.g. on the dashboard's Emoji page). {id} is the spell's ID.
+SPELL_LINK_URL = "https://www.wowhead.com/forever/spell={id}"
+
+# Show Wowhead's tooltip when hovering an item or spell link on the
+# dashboard (Wowhead's tooltip script, loaded from wow.zamimg.com). It only
+# works for links to wowhead.com. Off: plain links, no third-party script.
+WOWHEAD_TOOLTIPS_ENABLED = True
+
 # --- Guild roster (roster.py, cogs/roster.py) ---
 # The guild's in-game name, as Blizzard's API knows it (e.g. "Encore").
 # Its roster (every member and their level) is read from Blizzard. Empty:

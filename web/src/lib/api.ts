@@ -58,6 +58,8 @@ export interface Status {
   guild: { id: string; name: string; icon_url: string | null; member_count: number } | null;
   /** The guild's name and logo as set in Settings (falls back to the Discord server's). */
   branding: Branding;
+  /** Link templates ("https://...{id}") for items and spells, and whether Wowhead's tooltips are on. */
+  links: { item: string | null; spell: string | null; wowhead_tooltips: boolean };
   features: Record<string, boolean>;
   feature_labels: Record<string, string>;
   counts: { pending_applications: number };
