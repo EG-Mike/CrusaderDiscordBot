@@ -4,11 +4,13 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
+import discord
 from aiohttp.test_utils import TestClient, TestServer
 
 from tests.helpers import DatabaseTestCase
 from tests.test_roster import char
 
+import channel_posts
 import config
 import crafting
 import roster
@@ -160,38 +162,80 @@ class ChannelTests(Scoped):
         member = SimpleNamespace(mention="<@111>")
         return SimpleNamespace(get_member=lambda i: member if i == 111 else None)
 
-    def test_profession_lines(self):
-        professions = [{"id": 333, "name": "Enchanting"}, {"id": 197, "name": "Tailoring"},
-                       {"id": 171, "name": "Alchemy"}]
-        overview = crafting.profession_overview(crafting.crafters())
-        lines = crafting_cog.profession_lines(professions, overview, self.guild(), {333: "<:ench:1>"})
-        self.assertEqual(lines[:3], ["## Professions", "### <:ench:1> Enchanting · 1 crafter",
-                                     "`200/225` <@111> (Eggmike Thewhite)"])
-        self.assertIn("### Tailoring · 1 crafter", lines)  # no icon: no gap
-        self.assertEqual(lines[-1], "-# Nobody in the guild has Alchemy yet.")
+    FEATURED = [{"recipe_id": 6577, "name": "Simple Linen Boots", "profession_id": 197,
+                 "profession_name": "Tailoring", "item_id": 10046, "item_name": "Simple Linen Boots",
+                 "quantity": 1.0, "reagents": crafting.parse_recipe(RECIPE_DOC)["reagents"]},
+                {"recipe_id": 9999, "name": "Rare Thing", "profession_id": 197, "profession_name": "Tailoring",
+                 "item_id": None, "item_name": None, "quantity": 2.0, "reagents": []}]
+    PROFESSIONS = [{"id": 333, "name": "Enchanting"}, {"id": 197, "name": "Tailoring"}, {"id": 171, "name": "Alchemy"}]
 
-    def test_featured_lines(self):
-        featured = [{"recipe_id": 6577, "name": "Simple Linen Boots", "profession_id": 197,
-                     "profession_name": "Tailoring", "item_id": 10046, "item_name": "Simple Linen Boots",
-                     "quantity": 1.0, "reagents": crafting.parse_recipe(RECIPE_DOC)["reagents"]},
-                    {"recipe_id": 9999, "name": "Rare Thing", "profession_id": 197, "profession_name": "Tailoring",
-                     "item_id": None, "item_name": None, "quantity": 2.0, "reagents": []}]
-        lines = crafting_cog.featured_lines(featured, crafting.who_knows(crafting.crafters()), self.guild(),
-                                            {197: "<:tail:2>"}, {6577: "<:boots:3>"})
-        self.assertEqual(lines, [
-            "## ⭐ Featured recipes", "-# Send the materials to one of the crafters and ask them here.",
-            "### <:tail:2> Tailoring",
-            "<:boots:3> **[Simple Linen Boots](https://wh/item=10046)**",
-            "-# Crafters: <@111> (Eggmike Thewhite)",
-            "-# Materials: 2× Bolt of Linen Cloth · 1× Light Leather",
-            "▫️ **Rare Thing** ×2",
-            "-# Nobody in the guild knows this recipe yet."])
-        self.assertEqual(crafting_cog.featured_lines([], {}, None, {}, {}), [])
-        hidden = crafting_cog.featured_lines(featured, crafting.who_knows(crafting.crafters()), self.guild(),
-                                             {197: "<:tail:2>"}, {6577: "<:boots:3>"}, hide_unknown=True)
-        self.assertNotIn("Rare Thing", "\n".join(hidden))
-        self.assertIn("Simple Linen Boots", "\n".join(hidden))
-        self.assertEqual(crafting_cog.featured_lines(featured[1:], {}, None, {}, {}, hide_unknown=True), [])
+    def sections(self, **options):
+        characters = crafting.crafters()
+        return crafting_cog.profession_sections(
+            self.PROFESSIONS, crafting.profession_overview(characters), self.FEATURED, crafting.who_knows(characters),
+            self.guild(), {333: "<:ench:1>"}, {6577: "<:boots:3>"}, **options)
+
+    def test_a_section_per_profession(self):
+        sections, nobody = self.sections()
+        self.assertEqual(nobody, ["Alchemy"])
+        self.assertEqual([s["title"] for s in sections], ["## <:ench:1> Enchanting", "## Tailoring"])  # no icon: no gap
+        self.assertEqual(sections[0]["blocks"], [["-# 1 crafter · highest skill first",
+                                                   "`200/225` <@111> (Eggmike Thewhite)"]])
+        tailoring = sections[1]["blocks"]
+        self.assertEqual(tailoring[1][0], "### ⭐ Featured recipes")
+        self.assertEqual(tailoring[2], ["<:boots:3> **[Simple Linen Boots](https://wh/item=10046)**",
+                                        "-# Crafters: <@111> (Eggmike Thewhite)",
+                                        "-# Materials: 2× Bolt of Linen Cloth · 1× Light Leather"])
+        self.assertEqual(tailoring[3], ["▫️ **Rare Thing** ×2", "-# Nobody in the guild knows this recipe yet."])
+
+    def test_hidden_recipes_and_featured_only(self):
+        sections, _ = self.sections(hide_unknown=True)
+        text = "\n".join(line for s in sections for b in s["blocks"] for line in b)
+        self.assertNotIn("Rare Thing", text)
+        self.assertIn("Simple Linen Boots", text)
+        sections, nobody = self.sections(show_crafters=False)  # "List every profession" off
+        self.assertEqual(([s["title"] for s in sections], nobody), (["## Tailoring"], []))
+        self.assertEqual(sections[0]["blocks"][0][0], "### ⭐ Featured recipes")
+
+
+class SplitTests(unittest.TestCase):
+    def test_a_long_profession_continues_without_splitting_a_recipe(self):
+        blocks = [[f"recipe {i}", "-# " + "x" * 60] for i in range(10)]
+        texts = channel_posts.split_blocks("## Tailoring", blocks, limit=200)
+        self.assertGreater(len(texts), 1)
+        self.assertTrue(texts[0].startswith("## Tailoring\n"))
+        self.assertTrue(all(t.startswith("## Tailoring (continued)\n") for t in texts[1:]))
+        self.assertTrue(all(len(t) <= 200 for t in texts))
+        for i in range(10):  # every recipe's two lines in the same message
+            self.assertEqual(sum(f"recipe {i}\n-# " in t for t in texts), 1)
+        self.assertEqual(channel_posts.split_blocks("## Short", [["a"], ["b"]]), ["## Short\na\nb"])
+
+    def test_one_block_longer_than_a_message(self):
+        texts = channel_posts.split_blocks("## T", [[f"line {i} " + "y" * 40 for i in range(10)]], limit=120)
+        self.assertTrue(all(len(t) <= 120 for t in texts))
+        self.assertEqual(sum(t.count("line ") for t in texts), 10)
+
+
+class EditOnlyChangedTests(DatabaseTestCase, unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def views(*texts):
+        found = []
+        for text in texts:
+            view = discord.ui.LayoutView(timeout=None)
+            view.add_item(discord.ui.Container(discord.ui.TextDisplay(text)))
+            found.append(view)
+        return found
+
+    async def test_only_changed_messages_are_edited(self):
+        from tests.test_roster_post import FakeChannel
+        channel = FakeChannel()
+        bot = SimpleNamespace(get_channel=lambda cid: channel)
+        await channel_posts.publish(bot, "test_post", channel, self.views("head", "Alchemy", "Tailoring"), "d1", 1)
+        self.assertEqual(len(channel.sent), 3)
+        await channel_posts.publish(bot, "test_post", channel, self.views("head", "Alchemy", "Tailoring 2"), "d2", 2)
+        self.assertEqual(channel.edited, [9003])  # only Tailoring's message
+        await channel_posts.publish(bot, "test_post", channel, self.views("head", "Alchemy"), "d3", 3)
+        self.assertEqual(channel.deleted, [9003])
 
 
 class ApiTests(Scoped, unittest.IsolatedAsyncioTestCase):

@@ -236,7 +236,7 @@ class RosterCog(commands.Cog):
             view.add_item(container)
             views.append(view)
 
-        problem = await channel_posts.publish(self.bot, POST_META, channel, views, digest, updated)
+        problem = await channel_posts.publish(self.bot, POST_META, channel, views, digest, updated, force=force)
         return problem or f"Posted the roster in #{channel.name}."
 
     @tasks.loop(minutes=POST_CHECK_MINUTES)

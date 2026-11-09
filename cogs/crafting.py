@@ -23,9 +23,10 @@ cogs/leveling.py checks. With Leveling off, this cog checks them itself.
 
 import asyncio
 import hashlib
+import json
 import logging
 import time
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import discord
 from discord.ext import commands, tasks
@@ -42,7 +43,7 @@ log = logging.getLogger("wow-apply-bot.crafting")
 
 POST_META = "crafting_post"
 POST_CHECK_MINUTES = 3
-POST_LAYOUT = "crafting-1"   # part of the post's hash: changing the layout updates old posts
+POST_LAYOUT = "crafting-2"   # part of the post's hash: changing the layout updates old posts
 PROFILE_CHECK_MINUTES = 10   # only when Leveling (which normally checks profiles) is off
 MAX_RECIPE_CRAFTERS = 10
 ACCENT = 0xDEAC52
@@ -55,66 +56,74 @@ def member_label(guild, c: dict) -> str:
     return f"{member.mention} ({name})" if member else name
 
 
-def heading(icon: Optional[str], text: str) -> str:
-    return f"### {icon} {text}" if icon else f"### {text}"
-
-
 def reagents_text(reagents: List[dict]) -> str:
     return " · ".join(f"{r.get('quantity') or 1}× {r.get('name') or '?'}" for r in reagents)
 
 
-def profession_lines(professions: List[dict], overview: Dict[int, List[dict]], guild,
-                     icons: Dict[int, str]) -> List[str]:
-    """Every profession with its crafters, highest skill first; the ones
-    nobody has in one line at the end."""
+def crafter_lines(rows: List[dict], guild) -> List[str]:
+    """A profession's crafters with their skill, highest first (at most CRAFTING_CRAFTERS_PER_PROFESSION)."""
     limit = max(1, int(config.CRAFTING_CRAFTERS_PER_PROFESSION or 10))
-    lines, nobody = ["## Professions"], []
-    for p in sorted(professions, key=lambda p: p["name"]):
-        rows = overview.get(p["id"]) or []
-        if not rows:
-            nobody.append(p["name"])
-            continue
-        lines.append(heading(icons.get(p["id"]), f"{p['name']} · {len(rows)} crafter{'s' if len(rows) != 1 else ''}"))
-        for row in rows[:limit]:
-            lines.append(f"`{row['skill'] if row['skill'] is not None else '?':>3}/{row['max'] or '?'}` "
-                         f"{member_label(guild, row['character'])}")
-        if len(rows) > limit:
-            lines.append(f"-# … and {len(rows) - limit} more on the dashboard's Crafting page")
-    if nobody:
-        lines.append(f"-# Nobody in the guild has {', '.join(nobody)} yet.")
+    lines = [f"`{row['skill'] if row['skill'] is not None else '?':>3}/{row['max'] or '?'}` "
+             f"{member_label(guild, row['character'])}" for row in rows[:limit]]
+    if len(rows) > limit:
+        lines.append(f"-# … and {len(rows) - limit} more on the dashboard's Crafting page")
     return lines
 
 
-def featured_lines(featured: List[dict], knows: Dict[int, List[dict]], guild, profession_icons: Dict[int, str],
-                   recipe_icons: Dict[int, str], *, hide_unknown: bool = False) -> List[str]:
-    """Each featured recipe, by profession (in crafting.featured's order):
-    what it makes, who knows it and the materials. hide_unknown: leave out
-    recipes nobody knows (and a profession left with none)."""
+def recipe_lines(r: dict, knows: Dict[int, List[dict]], guild, recipe_icons: Dict[int, str]) -> List[str]:
+    """One featured recipe: what it makes (linked), who knows it and the materials."""
+    name = r["item_name"] or r["name"]
+    url = gear.item_url(r["item_id"])
+    title = f"**[{name}]({url})**" if url else f"**{name}**"
+    if r.get("quantity") and r["quantity"] > 1:
+        title += f" ×{r['quantity']:g}"
+    lines = [f"{recipe_icons.get(r['recipe_id']) or '▫️'} {title}"]
+    who = crafting.by_skill(knows.get(r["recipe_id"]) or [], r["profession_id"])
+    if who:
+        shown = ", ".join(member_label(guild, c) for c in who[:MAX_RECIPE_CRAFTERS])
+        more = f" and {len(who) - MAX_RECIPE_CRAFTERS} more" if len(who) > MAX_RECIPE_CRAFTERS else ""
+        lines.append(f"-# Crafters: {shown}{more}")
+    else:
+        lines.append("-# Nobody in the guild knows this recipe yet.")
+    if r["reagents"]:
+        lines.append(f"-# Materials: {reagents_text(r['reagents'])}")
+    return lines
+
+
+def profession_sections(professions: List[dict], overview: Dict[int, List[dict]], featured: List[dict],
+                        knows: Dict[int, List[dict]], guild, profession_icons: Dict[int, str],
+                        recipe_icons: Dict[int, str], *, show_crafters: bool = True,
+                        hide_unknown: bool = False) -> Tuple[List[dict], List[str]]:
+    """One section per profession (alphabetically), each its own message in
+    the channel: [{"title", "blocks"}], where a block is lines that stay
+    together (the crafters, one recipe). A profession is shown when it has
+    crafters (with show_crafters) or featured recipes; the professions
+    nobody has are returned by name. Featured recipes keep
+    crafting.featured's order; hide_unknown leaves out recipes nobody knows."""
     if hide_unknown:
         featured = [r for r in featured if knows.get(r["recipe_id"])]
-    if not featured:
-        return []
-    lines, current = ["## ⭐ Featured recipes", "-# Send the materials to one of the crafters and ask them here."], None
+    names = {p["id"]: p["name"] for p in professions}
     for r in featured:
-        if r["profession_id"] != current:
-            current = r["profession_id"]
-            lines.append(heading(profession_icons.get(current), r["profession_name"] or "Other"))
-        name = r["item_name"] or r["name"]
-        url = gear.item_url(r["item_id"])
-        title = f"**[{name}]({url})**" if url else f"**{name}**"
-        if r.get("quantity") and r["quantity"] > 1:
-            title += f" ×{r['quantity']:g}"
-        lines.append(f"{recipe_icons.get(r['recipe_id']) or '▫️'} {title}")
-        who = crafting.by_skill(knows.get(r["recipe_id"]) or [], r["profession_id"])
-        if who:
-            shown = ", ".join(member_label(guild, c) for c in who[:MAX_RECIPE_CRAFTERS])
-            more = f" and {len(who) - MAX_RECIPE_CRAFTERS} more" if len(who) > MAX_RECIPE_CRAFTERS else ""
-            lines.append(f"-# Crafters: {shown}{more}")
-        else:
-            lines.append("-# Nobody in the guild knows this recipe yet.")
-        if r["reagents"]:
-            lines.append(f"-# Materials: {reagents_text(r['reagents'])}")
-    return lines
+        names.setdefault(r["profession_id"], r["profession_name"] or "Other")
+    sections, nobody = [], []
+    for profession_id, name in sorted(names.items(), key=lambda kv: kv[1]):
+        crafters = (overview.get(profession_id) or []) if show_crafters else []
+        recipes = [r for r in featured if r["profession_id"] == profession_id]
+        if not crafters and not recipes:
+            if show_crafters and profession_id in {p["id"] for p in professions}:
+                nobody.append(name)
+            continue
+        icon = profession_icons.get(profession_id)
+        title = f"## {icon} {name}" if icon else f"## {name}"
+        blocks = []
+        if crafters:
+            blocks.append([f"-# {len(crafters)} crafter{'s' if len(crafters) != 1 else ''} · highest skill first",
+                           *crafter_lines(crafters, guild)])
+        if recipes:
+            blocks.append(["### ⭐ Featured recipes", "-# Send the materials to one of the crafters and ask them."])
+            blocks += [recipe_lines(r, knows, guild, recipe_icons) for r in recipes]
+        sections.append({"title": title, "blocks": blocks})
+    return sections, nobody
 
 
 class CraftingCog(commands.Cog):
@@ -168,15 +177,16 @@ class CraftingCog(commands.Cog):
         profession_icons = await self._icons("profession", [p["id"] for p in professions]
                                              + [r["profession_id"] for r in featured])
         recipe_icons = await self._icons("recipe", [r["recipe_id"] for r in featured])
-        lines = (profession_lines(professions, crafting.profession_overview(characters), channel.guild,
-                                  profession_icons) if professions else [])
-        lines += featured_lines(featured, crafting.who_knows(characters), channel.guild, profession_icons, recipe_icons,
-                                hide_unknown=bool(config.CRAFTING_HIDE_UNKNOWN_RECIPES))
-        if not lines:
-            lines = ["-# Nothing to show yet: professions appear once members log out in the game, and featured "
-                     "recipes are picked on the dashboard (Crafting)."]
+        sections, nobody = profession_sections(
+            professions, crafting.profession_overview(characters), featured, crafting.who_knows(characters),
+            channel.guild, profession_icons, recipe_icons, show_crafters=bool(professions),
+            hide_unknown=bool(config.CRAFTING_HIDE_UNKNOWN_RECIPES))
+        intro = [f"-# Nobody in the guild has {', '.join(nobody)} yet."] if nobody else []
+        if not sections:
+            intro.append("-# Nothing to show yet: professions appear once members log out in the game, and featured "
+                         "recipes are picked on the dashboard (Crafting).")
         template = bot_messages.current("crafting_header")["body"]
-        digest = hashlib.sha256("\n".join([POST_LAYOUT, template, config.GUILD_ROSTER_GUILD or "", *lines])
+        digest = hashlib.sha256(json.dumps([POST_LAYOUT, template, config.GUILD_ROSTER_GUILD or "", intro, sections])
                                 .encode()).hexdigest()
         posted = await asyncio.to_thread(channel_posts.state, POST_META)
         if not force and channel_posts.is_current(posted, channel.id, digest):
@@ -184,12 +194,15 @@ class CraftingCog(commands.Cog):
         updated = int(time.time())
         header = bot_messages.text("crafting_header", guild=config.GUILD_ROSTER_GUILD or channel.guild.name,
                                    updated=f"<t:{updated}:R>")
+        texts = channel_posts.chunks(header, intro)
+        for section in sections:  # every profession starts its own message
+            texts += channel_posts.split_blocks(section["title"], section["blocks"])
         views = []
-        for text in channel_posts.chunks(header, lines):
+        for text in texts:
             view = discord.ui.LayoutView(timeout=None)
             view.add_item(discord.ui.Container(discord.ui.TextDisplay(text), accent_color=discord.Color(ACCENT)))
             views.append(view)
-        problem = await channel_posts.publish(self.bot, POST_META, channel, views, digest, updated)
+        problem = await channel_posts.publish(self.bot, POST_META, channel, views, digest, updated, force=force)
         return problem or f"Posted in #{channel.name}."
 
     def publish_soon(self):
