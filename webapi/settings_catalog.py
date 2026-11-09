@@ -52,6 +52,8 @@ GROUPS: List[Tuple[str, str, str, str]] = [
     ("roster", "features", "Guild roster", "Characters linked to Discord members."),
     ("leveling", "features", "Leveling", "The leveling leaderboard and milestone announcements."),
     ("crafting", "features", "Crafting", "Who in the guild can make what, and the recipes you feature."),
+    ("auction", "features", "Auction prices", "Auction house prices, and answering price questions in the guild "
+                                               "chat. Changes apply immediately."),
     ("notifications", "features", "Notifications", "Alerts the bot posts for moderators. Changes apply immediately."),
     ("api_keys", "general", "API keys", "Keys for Blizzard and WarcraftLogs. Stored encrypted and never shown again."),
     ("blizzard", "general", "Blizzard", "Which game Blizzard's API is asked about."),
@@ -134,6 +136,9 @@ CATALOG: Dict[str, Entry] = {
                                                               "Needs the guild roster."),
     "FEATURE_CRAFTING_ENABLED": Entry("features", "Crafting", "The crafting channel and the Crafting page: who in "
                                                               "the guild can make what. Needs the guild roster."),
+    "FEATURE_AUCTION_PRICES_ENABLED": Entry("features", "Auction prices",
+                                            "The Auction prices page, and answers to \"price [Item]\" in the guild "
+                                            "chat channel."),
     "FEATURE_ATTENDANCE_ENABLED": Entry("features", "Attendance", "/checkattendance and the attendance messages."),
     "FEATURE_RAID_SUMMARY_ENABLED": Entry("features", "Raid summaries", "/raidsummary and the raid recaps."),
     "FEATURE_RAID_LOGS_ENABLED": Entry("features", "Raid logs", "Reposting and tagging new WarcraftLogs reports. "
@@ -329,6 +334,25 @@ CATALOG: Dict[str, Entry] = {
     "CRAFTING_CRAFTERS_PER_PROFESSION": Entry("crafting", "Crafters per profession",
                                               "At most this many per profession in the channel, highest skill first. "
                                               "The Crafting page shows them all.", unit="crafters", advanced=True),
+    "AUCTION_PRICE_CHANNEL_ID": Entry("auction", "Guild chat channel",
+                                      "The channel linked to the in-game guild chat. When someone writes e.g. "
+                                      "\"price [Linen Cloth]\" there, the bot answers with the auction house "
+                                      "price. Empty: the bot doesn't answer."),
+    "AUCTION_PRICE_TRIGGERS": Entry("auction", "Price questions",
+                                    "Words that ask for a price when they come right before an [Item], e.g. "
+                                    "price, price check, what is the price of.", widget="text_list"),
+    "AUCTION_PRICE_COOLDOWN_SECONDS": Entry("auction", "Answer the same item once per",
+                                            "So a burst of the same question doesn't flood the chat.",
+                                            unit="seconds", advanced=True),
+    "AUCTION_REFRESH_MINUTES": Entry("auction", "Check for new prices every",
+                                     "Blizzard renews auction house data about once an hour.", unit="minutes",
+                                     advanced=True),
+    "AUCTION_RULESET_ID": Entry("auction", "Ruleset",
+                                "Which ruleset's auction houses to read. Easiest picked on the Auction prices page.",
+                                advanced=True),
+    "AUCTION_HOUSE_ID": Entry("auction", "Auction house",
+                              "Your auction house. Pick it on the Auction prices page, which can compare the "
+                              "houses to find yours.", advanced=True),
     "GUILD_ROSTER_POST_PROFESSIONS": Entry("roster", "Show professions",
                                            "Each character's professions with their skill, e.g. Enchanting 200/225, "
                                            "on the posted roster. Updated after the player logs out."),

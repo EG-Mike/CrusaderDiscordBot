@@ -346,6 +346,31 @@ _SCHEMA = [
         PRIMARY KEY (game, region, slug)
     )
     """,
+    # Auction house prices (auction_prices.py): per auction house, each
+    # item's cheapest and median price per unit (copper) and how many are
+    # for sale, from Blizzard's latest snapshot; plus when that snapshot was
+    # taken. Replaced whenever Blizzard has a newer snapshot.
+    """
+    CREATE TABLE IF NOT EXISTS auction_prices (
+        house_key    TEXT NOT NULL,
+        item_id      INTEGER NOT NULL,
+        min_price    INTEGER NOT NULL,
+        median_price INTEGER NOT NULL,
+        quantity     INTEGER NOT NULL,
+        listings     INTEGER NOT NULL,
+        PRIMARY KEY (house_key, item_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS auction_snapshots (
+        house_key   TEXT PRIMARY KEY,
+        snapshot_at TEXT,
+        modified    TEXT,
+        checked_at  TEXT NOT NULL,
+        auctions    INTEGER NOT NULL DEFAULT 0,
+        items       INTEGER NOT NULL DEFAULT 0
+    )
+    """,
     # Web dashboard login sessions. Only a SHA-256 of the cookie token is
     # stored, so a leaked database file can't be replayed as a login.
     """

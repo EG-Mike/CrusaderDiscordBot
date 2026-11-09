@@ -207,6 +207,7 @@ export type AuditKind =
   | "poll"
   | "roster"
   | "crafting"
+  | "auction"
   | "audit"
   | "other";
 
@@ -779,4 +780,50 @@ export interface RecipeCatalog {
   id: number;
   name: string;
   categories: { name: string; recipes: { id: number; name: string; known_by: number; featured: boolean }[] }[];
+}
+
+// --- auction prices (webapi/auction_api.py) -------------------------------------------
+
+/** Prices are copper per item; the median is the middle item of all for sale. */
+export interface AuctionPrice {
+  min_price: number;
+  median_price: number;
+  quantity: number;
+  listings: number;
+}
+
+export interface AuctionItem {
+  id: number;
+  name: string;
+  quality: string | null;
+  url: string | null;
+  price?: AuctionPrice | null;
+}
+
+export interface AuctionSnapshot {
+  snapshot_at: string | null;
+  checked_at: string;
+  auctions: number;
+  items: number;
+}
+
+export interface AuctionOverview {
+  ruleset_id: number;
+  house_id: number | null;
+  house_name: string | null;
+  snapshot: AuctionSnapshot | null;
+  problem: string | null;
+  chat_channel: { id: string; name: string } | null;
+  triggers: string[];
+}
+
+export interface AuctionHouses {
+  ruleset_id: number;
+  rulesets: { id: number; name: string }[];
+  houses: { id: number; name: string }[];
+}
+
+export interface AuctionComparison {
+  item: AuctionItem;
+  houses: ({ house_id: number; quantity: number; listings: number; min_price: number | null; median_price: number | null })[];
 }

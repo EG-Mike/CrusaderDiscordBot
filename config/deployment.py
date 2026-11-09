@@ -158,6 +158,9 @@ FEATURE_LEVELING_ENABLED = True
 # cogs/crafting.py: the crafting channel (who in the guild can make what,
 # and the featured recipes picked on the dashboard). Needs the roster.
 FEATURE_CRAFTING_ENABLED = True
+# cogs/auction_prices.py: auction house prices from Blizzard (the Auction
+# prices page) and answers to "price [Item]" in the guild chat channel.
+FEATURE_AUCTION_PRICES_ENABLED = True
 
 # cogs/web_dashboard.py: the browser-based management dashboard (see the
 # README's "Web dashboard" section). Off by default - turn it on in
@@ -297,6 +300,33 @@ CRAFTING_CRAFTERS_PER_PROFESSION = 10
 # Leave featured recipes nobody in the guild knows out of the channel (they
 # stay on the Crafting page, marked as hidden).
 CRAFTING_HIDE_UNKNOWN_RECIPES = False
+
+# --- Auction prices (auction_prices.py, cogs/auction_prices.py) ---
+# Settings starting with AUCTION_ apply immediately (webapi/settings.py).
+# The guild's auction house: a ruleset (WoW Forever has no realms; 1 is
+# PvP) and one of its houses. Every ruleset has several houses per faction
+# with the same name; moderators pick theirs on the Auction prices page,
+# which can compare the houses. 0: none picked, no prices.
+AUCTION_RULESET_ID = 1
+AUCTION_HOUSE_ID = 0
+
+# How often (minutes) to ask Blizzard for a newer snapshot. An unchanged
+# one costs a tiny "not modified" answer; Blizzard renews them about hourly.
+AUCTION_REFRESH_MINUTES = 15
+
+# The guild chat channel (the one linked to the in-game guild chat) where
+# the bot answers "price [Item]". 0: it doesn't answer anywhere.
+AUCTION_PRICE_CHANNEL_ID = 0
+
+# Phrases that ask for a price when they come right before an [Item]
+# ("price [Linen Cloth]", "what is the price of [Linen Cloth]"); case
+# doesn't matter, "of"/"on" after them is allowed.
+AUCTION_PRICE_TRIGGERS = ["price", "price check", "pc", "what is the price of", "what's the price of",
+                          "how much is", "how much are"]
+
+# The same item is answered at most once per this many seconds per
+# channel, so a burst of questions doesn't flood the chat.
+AUCTION_PRICE_COOLDOWN_SECONDS = 30
 
 # --- Leveling (cogs/leveling.py) ---
 # Channel where level milestones are announced. Empty: no announcements

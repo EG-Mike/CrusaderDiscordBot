@@ -24,6 +24,7 @@ import RosterPage from "./pages/Roster";
 import LevelingPage from "./pages/Leveling";
 import LookupPage from "./pages/Lookup";
 import CraftingPage from "./pages/Crafting";
+import AuctionPricesPage from "./pages/AuctionPrices";
 import CardStatisticsPage from "./pages/CardStatistics";
 import { ApplicationPage, ApplicationsPage } from "./pages/Applications";
 import { ToastProvider } from "./components/Toast";
@@ -93,6 +94,7 @@ export default function App() {
           <Route path="/leveling" element={<LevelingPage />} />
           <Route path="/lookup" element={<LookupPage />} />
           <Route path="/crafting" element={<CraftingPage />} />
+          <Route path="/auction-prices" element={<AuctionPricesPage />} />
           <Route path="/applications" element={<ApplicationsPage />} />
           <Route path="/applications/statistics" element={<CardStatisticsPage />} />
           <Route path="/applications/:id" element={<ApplicationPage />} />

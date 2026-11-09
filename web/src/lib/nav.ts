@@ -3,6 +3,7 @@
 import {
   BarChart3,
   CalendarCheck,
+  Coins,
   ClipboardList,
   FileText,
   Hammer,
@@ -54,6 +55,7 @@ export const NAV: { group: string; items: NavItem[] }[] = [
       { to: "/leveling", label: "Leveling", icon: TrendingUp },
       { to: "/lookup", label: "Character lookup", icon: UserSearch },
       { to: "/crafting", label: "Crafting", icon: Hammer },
+      { to: "/auction-prices", label: "Auction prices", icon: Coins },
       { to: "/applications", label: "Applications", icon: ClipboardList, count: (status) => status.counts.pending_applications },
       { to: "/attendance", label: "Attendance", icon: CalendarCheck, soon: true },
     ],

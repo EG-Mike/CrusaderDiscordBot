@@ -326,6 +326,49 @@ DEFINITIONS.append(Definition(
     feature="FEATURE_CRAFTING_ENABLED",
 ))
 DEFINITIONS.append(Definition(
+    key="auction_price",
+    label="Price answer",
+    group="Auction prices",
+    description="The answer to \"price [Item]\" in the guild chat channel (Settings, Auction prices). One line "
+                "per item asked about.",
+    kind="text",
+    where="In the guild chat channel",
+    default_body="The auction house price for [{item}] is {price} ({age})",
+    variables=[
+        Variable("item", "The item's name", "Linen Cloth"),
+        Variable("price", "The cheapest price for one, e.g. 4g33s22c", "4g33s22c"),
+        Variable("median", "The middle price of all for sale, for one", "4g50s"),
+        Variable("quantity", "How many are for sale", "1250"),
+        Variable("age", "How old the auction house data is, e.g. 3hrs ago", "3hrs ago"),
+    ],
+    feature="FEATURE_AUCTION_PRICES_ENABLED",
+))
+DEFINITIONS.append(Definition(
+    key="auction_price_not_listed",
+    label="Price answer: none for sale",
+    group="Auction prices",
+    description="The answer when nobody is selling the item.",
+    kind="text",
+    where="In the guild chat channel",
+    default_body="Nobody is selling [{item}] on the auction house ({age})",
+    variables=[
+        Variable("item", "The item's name", "Black Lotus"),
+        Variable("age", "How old the auction house data is, e.g. 3hrs ago", "3hrs ago"),
+    ],
+    feature="FEATURE_AUCTION_PRICES_ENABLED",
+))
+DEFINITIONS.append(Definition(
+    key="auction_price_unknown_item",
+    label="Price answer: unknown item",
+    group="Auction prices",
+    description="The answer when no item has that name.",
+    kind="text",
+    where="In the guild chat channel",
+    default_body="I don't know an item called [{item}]",
+    variables=[Variable("item", "The name as written", "Linen Clth")],
+    feature="FEATURE_AUCTION_PRICES_ENABLED",
+))
+DEFINITIONS.append(Definition(
     key="level_milestone",
     label="Level milestone",
     group="Leveling",

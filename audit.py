@@ -65,6 +65,7 @@ KINDS = {
     "poll": "Poll",
     "roster": "Roster",
     "crafting": "Crafting",
+    "auction": "Auction prices",
     "audit": "Audit log",
     "other": "Other",
 }

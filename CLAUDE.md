@@ -219,9 +219,20 @@ version or raid tier is a configuration change.
   (buyout), several houses per faction with the same name (the guild's is 113, Horde, EU PvP); a snapshot,
   see `Last-Modified`. Try it with `scripts/auction_lookup.py`. Characters
   and guilds are looked up by name without a realm.
+- `auction_prices.py`: auction house prices from Blizzard's snapshots of
+  the guild's house (`AUCTION_RULESET_ID` / `AUCTION_HOUSE_ID`, picked on
+  the dashboard's Auction prices page, which compares the same-named
+  houses by what's for sale). Polled with If-Modified-Since (a 304 when
+  unchanged); per item the cheapest and median price per unit and the
+  quantity are stored (tables `auction_prices`, `auction_snapshots`). Item
+  names via Blizzard's item search. `cogs/auction_prices.py` keeps it fresh
+  and answers "price [Item]" (phrases: `AUCTION_PRICE_TRIGGERS`) in the
+  guild chat channel (`AUCTION_PRICE_CHANNEL_ID`) with the "Price answer"
+  bot messages; `webapi/auction_api.py` serves the page. `AUCTION_*`
+  settings apply immediately.
 - `cogs/notifications.py`: alerts in a moderator channel, built from the
   System log and the audit trail. Settings named `NOTIFY_*` /
-  `NOTIFICATIONS_*` apply immediately (`webapi/settings.LIVE_PREFIXES`):
+  `NOTIFICATIONS_*` (and `AUCTION_*`) apply immediately (`webapi/settings.LIVE_PREFIXES`):
   use that pattern only for settings read at the moment they're used.
 - `secret_store.py`: external API keys, Fernet-encrypted in the database
   (key file `secret.key` next to it). Write-only towards the browser.
@@ -315,6 +326,8 @@ set in the dashboard.
   Blizzard reliably reports them.
 - Crafting (done): crafting channel and Crafting page with featured
   recipes.
+- Auction prices (done): Auction prices page and price answers in the
+  guild chat channel.
 - Phase 4 (in progress): applications moved to Blizzard data (gear check
   with gear, enchants and talents; roster link on approval; WarcraftLogs
   optional). Applications page done (list, detail with gear/stats,

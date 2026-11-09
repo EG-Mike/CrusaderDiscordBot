@@ -72,8 +72,11 @@ settings change, not a code change.
     auctions; one request takes 1-2 s. No seller names. Fetch a house once
     per refresh and cache it, never per item.
   - Freshness: a snapshot; the `Last-Modified` header says when it was
-    taken. It is not updated every hour (still 12:12 GMT at 13:00 on
-    2026-11-09), so always show the snapshot's age.
+    taken (about hourly: 12:12 and 13:12 GMT on 2026-11-09), so always
+    show the snapshot's age. `If-Modified-Since` with that value answers
+    304 while it's unchanged, which makes frequent checks cheap. The two
+    documents are about 6.5 MB and 12.5 MB gzipped; reading both takes
+    about 3 s and ~150 MB of memory in Python (auction_prices.py).
   - Item names: `static-forever-{region}` `item/{id}` (some ids are 404)
     and `search/item?name.en_US=...`.
   - Try it: `python scripts/auction_lookup.py --faction horde "Linen Cloth"`

@@ -5,6 +5,7 @@ import {
   Bot,
   Check,
   ClipboardCopy,
+  Coins,
   FormInput,
   Hammer,
   Hash,
@@ -51,6 +52,7 @@ export const KINDS: Record<AuditKind, { label: string; tone: Tone; icon: LucideI
   poll: { label: "Poll", tone: "info", icon: Vote },
   roster: { label: "Roster", tone: "gold", icon: Users },
   crafting: { label: "Crafting", tone: "info", icon: Hammer },
+  auction: { label: "Auction prices", tone: "gold", icon: Coins },
   audit: { label: "Audit log", tone: "neutral", icon: ScrollText },
   other: { label: "Other", tone: "neutral", icon: Sparkles },
 };
