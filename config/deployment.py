@@ -158,6 +158,10 @@ FEATURE_LEVELING_ENABLED = True
 # cogs/crafting.py: the crafting channel (who in the guild can make what,
 # and the featured recipes picked on the dashboard). Needs the roster.
 FEATURE_CRAFTING_ENABLED = True
+# cogs/rank_sync.py: Discord roles against in-game guild ranks (the Rank
+# sync page, and the members to promote posted in a channel). Needs the
+# roster.
+FEATURE_RANK_SYNC_ENABLED = True
 # cogs/auction_prices.py: auction house prices from Blizzard (the Auction
 # prices page) and answers to "price [Item]" in the guild chat channel.
 FEATURE_AUCTION_PRICES_ENABLED = True
@@ -300,6 +304,13 @@ CRAFTING_CRAFTERS_PER_PROFESSION = 10
 # Leave featured recipes nobody in the guild knows out of the channel (they
 # stay on the Crafting page, marked as hidden).
 CRAFTING_HIDE_UNKNOWN_RECIPES = False
+
+# --- Rank sync (rank_sync.py, cogs/rank_sync.py) ---
+# Channel where the bot keeps the members to promote in the game posted
+# (Discord role says a higher rank than they have in the guild; the rules
+# and rank names are set on the dashboard's Rank sync page). Best a
+# moderator-only channel. Empty: not posted.
+RANK_SYNC_CHANNEL_ID = 0
 
 # --- Auction prices (auction_prices.py, cogs/auction_prices.py) ---
 # Settings starting with AUCTION_ apply immediately (webapi/settings.py).

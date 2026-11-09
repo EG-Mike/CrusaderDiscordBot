@@ -66,6 +66,7 @@ KINDS = {
     "roster": "Roster",
     "crafting": "Crafting",
     "auction": "Auction prices",
+    "rank_sync": "Rank sync",
     "audit": "Audit log",
     "other": "Other",
 }

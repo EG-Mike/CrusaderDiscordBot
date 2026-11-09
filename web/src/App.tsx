@@ -25,6 +25,7 @@ import LevelingPage from "./pages/Leveling";
 import LookupPage from "./pages/Lookup";
 import CraftingPage from "./pages/Crafting";
 import AuctionPricesPage from "./pages/AuctionPrices";
+import RankSyncPage from "./pages/RankSync";
 import CardStatisticsPage from "./pages/CardStatistics";
 import { ApplicationPage, ApplicationsPage } from "./pages/Applications";
 import { ToastProvider } from "./components/Toast";
@@ -95,6 +96,7 @@ export default function App() {
           <Route path="/lookup" element={<LookupPage />} />
           <Route path="/crafting" element={<CraftingPage />} />
           <Route path="/auction-prices" element={<AuctionPricesPage />} />
+          <Route path="/rank-sync" element={<RankSyncPage />} />
           <Route path="/applications" element={<ApplicationsPage />} />
           <Route path="/applications/statistics" element={<CardStatisticsPage />} />
           <Route path="/applications/:id" element={<ApplicationPage />} />

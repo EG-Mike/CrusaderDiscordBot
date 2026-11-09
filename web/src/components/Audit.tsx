@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import {
   Bot,
   Check,
+  ChevronsUp,
   ClipboardCopy,
   Coins,
   FormInput,
@@ -53,6 +54,7 @@ export const KINDS: Record<AuditKind, { label: string; tone: Tone; icon: LucideI
   roster: { label: "Roster", tone: "gold", icon: Users },
   crafting: { label: "Crafting", tone: "info", icon: Hammer },
   auction: { label: "Auction prices", tone: "gold", icon: Coins },
+  rank_sync: { label: "Rank sync", tone: "info", icon: ChevronsUp },
   audit: { label: "Audit log", tone: "neutral", icon: ScrollText },
   other: { label: "Other", tone: "neutral", icon: Sparkles },
 };
