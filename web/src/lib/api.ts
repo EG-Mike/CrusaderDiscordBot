@@ -816,6 +816,7 @@ export interface AuctionOverview {
   chat_channel: { id: string; name: string } | null;
   triggers: string[];
   trigger_after_item: boolean;
+  answer_in: "dm" | "channel";
 }
 
 export interface AuctionTry {

@@ -332,7 +332,7 @@ DEFINITIONS.append(Definition(
     description="The answer to \"price [Item]\" in the guild chat channel (Settings, Auction prices). One line "
                 "per item asked about.",
     kind="text",
-    where="In the guild chat channel",
+    where="By DM to the player who asked, or in the guild chat channel (Settings, Auction prices)",
     default_body="The auction house price for [{item}] is {price} ({age})",
     variables=[
         Variable("item", "The item's name", "Linen Cloth"),
@@ -349,7 +349,7 @@ DEFINITIONS.append(Definition(
     group="Auction prices",
     description="The answer when nobody is selling the item.",
     kind="text",
-    where="In the guild chat channel",
+    where="By DM to the player who asked, or in the guild chat channel (Settings, Auction prices)",
     default_body="Nobody is selling [{item}] on the auction house ({age})",
     variables=[
         Variable("item", "The item's name", "Black Lotus"),
@@ -363,7 +363,7 @@ DEFINITIONS.append(Definition(
     group="Auction prices",
     description="The answer when no item has that name.",
     kind="text",
-    where="In the guild chat channel",
+    where="By DM to the player who asked, or in the guild chat channel (Settings, Auction prices)",
     default_body="I don't know an item called [{item}]",
     variables=[Variable("item", "The name as written", "Linen Clth")],
     feature="FEATURE_AUCTION_PRICES_ENABLED",

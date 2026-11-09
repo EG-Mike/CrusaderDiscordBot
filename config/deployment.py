@@ -324,6 +324,15 @@ AUCTION_PRICE_CHANNEL_ID = 0
 AUCTION_PRICE_TRIGGERS = ["price", "price check", "pc", "what is the price of", "what's the price of",
                           "how much is", "how much are"]
 
+# Where the answer goes: "dm" (a direct message to whoever asked; everyone
+# posting in the linked guild chat channel has linked their account, so
+# it's their own Discord account) or "channel" (a reply in the channel).
+AUCTION_PRICE_ANSWER_IN = "dm"
+
+# When a DM can't be delivered (the player doesn't accept DMs from server
+# members), answer in the channel instead.
+AUCTION_PRICE_DM_FALLBACK = True
+
 # Also answer when the phrase comes right after the item(s), at the end of
 # the message ("[Iron Bar] price?").
 AUCTION_PRICE_TRIGGER_AFTER_ITEM = True

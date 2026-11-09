@@ -342,6 +342,13 @@ CATALOG: Dict[str, Entry] = {
                                     "Words that ask for a price when they come right before an [Item], e.g. "
                                     "price, price check, what is the price of. Case doesn't matter. Try messages "
                                     "on the Auction prices page.", widget="text_list"),
+    "AUCTION_PRICE_ANSWER_IN": Entry("auction", "Answer by",
+                                     "A direct message keeps the guild chat clean: only the player who asked sees "
+                                     "the price.", choices=[("dm", "Direct message to the player who asked"),
+                                                            ("channel", "A reply in the guild chat channel")]),
+    "AUCTION_PRICE_DM_FALLBACK": Entry("auction", "Answer in the channel when a DM fails",
+                                       "Some players don't accept direct messages from server members. On: they get "
+                                       "the answer in the channel instead. Off: they get no answer."),
     "AUCTION_PRICE_TRIGGER_AFTER_ITEM": Entry("auction", "Also after the item",
                                               "Answer too when the words end the message after the item, e.g. "
                                               "\"[Iron Bar] price?\". Try messages on the Auction prices page."),

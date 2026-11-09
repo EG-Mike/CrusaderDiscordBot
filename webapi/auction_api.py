@@ -69,6 +69,7 @@ async def overview(request):
         "chat_channel": {"id": str(channel.id), "name": channel.name} if channel else None,
         "triggers": list(config.AUCTION_PRICE_TRIGGERS or []),
         "trigger_after_item": bool(config.AUCTION_PRICE_TRIGGER_AFTER_ITEM),
+        "answer_in": config.AUCTION_PRICE_ANSWER_IN,
     })
 
 
