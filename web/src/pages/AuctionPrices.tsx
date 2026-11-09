@@ -84,7 +84,7 @@ function PriceRow({ item, age }: { item: AuctionItem; age: string }) {
           <Money copper={price.min_price} />
           <span className="text-muted">({age})</span>
           <span className="w-full text-2xs text-faint sm:ml-auto sm:w-auto">
-            {price.quantity.toLocaleString()} for sale · middle price <Money copper={price.median_price} className="font-medium" />
+            {price.quantity.toLocaleString()} for sale in {price.listings.toLocaleString()} auction{price.listings === 1 ? "" : "s"}
           </span>
         </>
       ) : (
@@ -394,7 +394,7 @@ export default function AuctionPricesPage() {
       <SectionHeader
         eyebrow="Members"
         title="Auction prices"
-        description="What an item costs on your auction house: the cheapest price for one, from Blizzard's latest data (renewed about every hour)."
+        description="What an item costs on your auction house: the lowest buyout price for one, from Blizzard's latest data (renewed about every hour)."
         actions={
           overview?.house_id ? (
             <Button icon={<RefreshCw className="h-3.5 w-3.5" />} onClick={refresh} loading={refreshing}>
