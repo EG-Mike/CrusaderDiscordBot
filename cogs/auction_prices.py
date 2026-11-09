@@ -9,8 +9,10 @@ Someone writes e.g. "price [Linen Cloth]", "pc [Linen Cloth] [Wool Cloth]",
 are a setting, AUCTION_PRICE_TRIGGER_AFTER_ITEM allows them after); the bot
 answers each item on its own line with the "Price answer" bot messages.
 Linked items in the game arrive in square brackets. The answer goes by DM to
-the asker (AUCTION_PRICE_ANSWER_IN "dm"; in the channel when the DM fails
-and AUCTION_PRICE_DM_FALLBACK) or in the channel. Messages from the bot
+the asker (AUCTION_PRICE_ANSWER_IN "dm"; in the answer channel when the DM
+fails and AUCTION_PRICE_DM_FALLBACK) or in the answer channel
+(AUCTION_PRICE_ANSWER_CHANNEL_ID, mentioning the asker; unset: the guild
+chat channel itself). Messages from the bot
 itself are never read, and the same item is answered at most once per
 AUCTION_PRICE_COOLDOWN_SECONDS per person (DM) or channel. Every setting here is read when
 it's used, so changes apply without a restart.
@@ -170,8 +172,13 @@ class AuctionPricesCog(commands.Cog):
         if lines:
             await self.deliver(message, "\n".join(lines), by_dm)
 
+    def answer_channel(self, message: discord.Message):
+        """Where channel answers go: the chosen answer channel, or else the channel of the question."""
+        return self.bot.get_channel(int(config.AUCTION_PRICE_ANSWER_CHANNEL_ID or 0)) or message.channel
+
     async def deliver(self, message: discord.Message, text: str, by_dm: bool):
-        """A DM to the asker when wanted (in the channel if that fails and AUCTION_PRICE_DM_FALLBACK), or the channel."""
+        """A DM to the asker when wanted (in the answer channel if that fails and AUCTION_PRICE_DM_FALLBACK),
+        or the answer channel. Outside the question's own channel the asker is mentioned, so they see it."""
         if by_dm:
             try:
                 await message.author.send(text, allowed_mentions=discord.AllowedMentions.none())
@@ -181,10 +188,16 @@ class AuctionPricesCog(commands.Cog):
                          "; answering in the channel" if config.AUCTION_PRICE_DM_FALLBACK else "")
                 if not config.AUCTION_PRICE_DM_FALLBACK:
                     return
+        channel = self.answer_channel(message)
+        mentions = discord.AllowedMentions.none()
+        if channel.id != message.channel.id and can_dm(message):
+            text = f"{message.author.mention} {text}"
+            mentions = discord.AllowedMentions(users=[message.author], everyone=False, roles=False)
         try:
-            await message.channel.send(text, allowed_mentions=discord.AllowedMentions.none())
+            await channel.send(text, allowed_mentions=mentions)
         except discord.HTTPException as exc:
-            log.warning("Couldn't answer a price question in #%s: %s", getattr(message.channel, "name", "?"), exc)
+            log.warning("Couldn't answer a price question in #%s: %s", getattr(channel, "name", "?"), exc)
+
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(AuctionPricesCog(bot))

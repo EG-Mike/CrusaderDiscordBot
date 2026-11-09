@@ -301,7 +301,11 @@ function ChatAnswers({ overview }: { overview: AuctionOverview }) {
             ) : result.answer ? (
               <>
                 <div className="mb-1 text-2xs text-faint">
-                  The bot would answer{overview.answer_in === "dm" ? " by DM to the player who asked" : " in the channel"} (nothing was sent):
+                  The bot would answer
+                  {overview.answer_in === "dm"
+                    ? " by DM to the player who asked"
+                    : ` in #${overview.answer_channel?.name ?? overview.chat_channel?.name ?? "the guild chat"}`}{" "}
+                  (nothing was sent):
                 </div>
                 <div className="whitespace-pre-line">{result.answer}</div>
               </>
@@ -441,8 +445,12 @@ export default function AuctionPricesPage() {
               <MessageSquare className="h-3.5 w-3.5 text-faint" />
               {overview.chat_channel ? (
                 <>
-                  Answers "price [Item]" in #{overview.chat_channel.name}
-                  {overview.answer_in === "dm" ? " by DM to the player who asked" : ""}
+                  Answers "price [Item]" from #{overview.chat_channel.name}
+                  {overview.answer_in === "dm"
+                    ? " by DM to the player who asked"
+                    : overview.answer_channel
+                      ? ` in #${overview.answer_channel.name}`
+                      : " in the same channel"}
                 </>
               ) : (
                 <>

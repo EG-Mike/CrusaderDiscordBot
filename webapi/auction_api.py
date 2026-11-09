@@ -41,6 +41,11 @@ def _guard(request):
     return None, cog
 
 
+def _channel(request, channel_id) -> object:
+    channel = request.app[BOT_KEY].get_channel(int(channel_id or 0))
+    return {"id": str(channel.id), "name": channel.name} if channel else None
+
+
 def _item(item: dict) -> dict:
     return {**item, "url": gear.item_url(item["id"])}
 
@@ -59,7 +64,7 @@ async def overview(request):
     snapshot = await asyncio.to_thread(auction_prices.snapshot)
     if snapshot:
         snapshot.pop("modified", None)
-    channel = request.app[BOT_KEY].get_channel(int(config.AUCTION_PRICE_CHANNEL_ID or 0))
+    channel = request.app[BOT_KEY].get_channel(int(config.AUCTION_PRICE_CHANNEL_ID or 0))  # the guild chat
     return json_response({
         "ruleset_id": int(config.AUCTION_RULESET_ID or 0),
         "house_id": int(config.AUCTION_HOUSE_ID or 0) or None,
@@ -70,6 +75,7 @@ async def overview(request):
         "triggers": list(config.AUCTION_PRICE_TRIGGERS or []),
         "trigger_after_item": bool(config.AUCTION_PRICE_TRIGGER_AFTER_ITEM),
         "answer_in": config.AUCTION_PRICE_ANSWER_IN,
+        "answer_channel": _channel(request, config.AUCTION_PRICE_ANSWER_CHANNEL_ID),
     })
 
 

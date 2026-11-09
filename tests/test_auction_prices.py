@@ -70,6 +70,7 @@ class Scoped(DatabaseTestCase):
             AUCTION_HOUSE_ID=113, AUCTION_PRICE_CHANNEL_ID=777, AUCTION_PRICE_COOLDOWN_SECONDS=30,
             AUCTION_PRICE_TRIGGERS=["price", "price check", "pc", "what is the price of"],
             AUCTION_PRICE_TRIGGER_AFTER_ITEM=True, AUCTION_PRICE_ANSWER_IN="channel", AUCTION_PRICE_DM_FALLBACK=True,
+            AUCTION_PRICE_ANSWER_CHANNEL_ID=0,
             ITEM_LINK_URL="https://wh/item={id}")
         self._scope.start()
         auction_prices._search.clear()
@@ -175,6 +176,8 @@ class ChatTests(Scoped, unittest.IsolatedAsyncioTestCase):
         self.bot.wait_until_ready = asyncio.Event().wait  # the refresh loop waits forever
         self.cog = auction_cog.AuctionPricesCog(self.bot)
         self.channel = SimpleNamespace(id=777, name="guild-chat", send=mock.AsyncMock())
+        self.answers = SimpleNamespace(id=888, name="price-check", send=mock.AsyncMock())
+        self.bot.get_channel = lambda cid: {777: self.channel, 888: self.answers}.get(cid)
 
     async def asyncTearDown(self):
         self.cog.cog_unload()
@@ -182,6 +185,16 @@ class ChatTests(Scoped, unittest.IsolatedAsyncioTestCase):
     def message(self, text, author=2, channel=None, bot=False):
         self.author = SimpleNamespace(id=author, bot=bot, send=mock.AsyncMock())
         return SimpleNamespace(content=text, author=self.author, channel=channel or self.channel, webhook_id=None)
+
+    async def test_answers_in_the_chosen_channel_mentioning_the_asker(self):
+        with mock.patch.object(config, "AUCTION_PRICE_ANSWER_CHANNEL_ID", 888):
+            message = self.message("price [Runecloth]")
+            self.author.mention = "<@2>"
+            await self.cog.on_message(message)
+        self.channel.send.assert_not_awaited()
+        args, kwargs = self.answers.send.await_args
+        self.assertTrue(args[0].startswith("<@2> The auction house price for [Runecloth]"))
+        self.assertEqual(kwargs["allowed_mentions"].users, [self.author])
 
     async def test_answers_by_dm(self):
         with mock.patch.object(config, "AUCTION_PRICE_ANSWER_IN", "dm"):

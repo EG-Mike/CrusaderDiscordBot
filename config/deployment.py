@@ -326,8 +326,14 @@ AUCTION_PRICE_TRIGGERS = ["price", "price check", "pc", "what is the price of", 
 
 # Where the answer goes: "dm" (a direct message to whoever asked; everyone
 # posting in the linked guild chat channel has linked their account, so
-# it's their own Discord account) or "channel" (a reply in the channel).
+# it's their own Discord account) or "channel" (a reply in the answer
+# channel below).
 AUCTION_PRICE_ANSWER_IN = "dm"
+
+# The channel for "channel" answers (and failed DMs), e.g. a #price-check
+# channel; the asker is mentioned. 0: the guild chat channel itself
+# (where Blizzard's link may not show the bot's messages in the game).
+AUCTION_PRICE_ANSWER_CHANNEL_ID = 0
 
 # When a DM can't be delivered (the player doesn't accept DMs from server
 # members), answer in the channel instead.

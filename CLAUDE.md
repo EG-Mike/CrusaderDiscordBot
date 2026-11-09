@@ -230,7 +230,9 @@ version or raid tier is a configuration change.
   after the item with `AUCTION_PRICE_TRIGGER_AFTER_ITEM`) in the guild chat
   channel (`AUCTION_PRICE_CHANNEL_ID`) with the "Price answer" bot
   messages, by DM to the asker (`AUCTION_PRICE_ANSWER_IN`; in the channel
-  when the DM fails and `AUCTION_PRICE_DM_FALLBACK`) or in the channel.
+  when the DM fails and `AUCTION_PRICE_DM_FALLBACK`) or in an answer
+  channel (`AUCTION_PRICE_ANSWER_CHANNEL_ID`, mentioning the asker; the
+  bot's messages in the linked channel don't reach the game).
   Only linked players can post in that channel, so the asker is always
   their own Discord account. In that channel (Blizzard's guild chat link) linked players'
   messages arrive as their own, linked items as "[Name]" without spaces

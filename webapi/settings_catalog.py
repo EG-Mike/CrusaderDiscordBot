@@ -345,10 +345,14 @@ CATALOG: Dict[str, Entry] = {
     "AUCTION_PRICE_ANSWER_IN": Entry("auction", "Answer by",
                                      "A direct message keeps the guild chat clean: only the player who asked sees "
                                      "the price.", choices=[("dm", "Direct message to the player who asked"),
-                                                            ("channel", "A reply in the guild chat channel")]),
+                                                            ("channel", "A reply in a channel (below)")]),
+    "AUCTION_PRICE_ANSWER_CHANNEL_ID": Entry("auction", "Answer channel",
+                                             "Where answers go when they're not a direct message (and when a direct "
+                                             "message can't be delivered), mentioning the player who asked. Empty: "
+                                             "the guild chat channel itself."),
     "AUCTION_PRICE_DM_FALLBACK": Entry("auction", "Answer in the channel when a DM fails",
                                        "Some players don't accept direct messages from server members. On: they get "
-                                       "the answer in the channel instead. Off: they get no answer."),
+                                       "the answer in the answer channel instead. Off: they get no answer."),
     "AUCTION_PRICE_TRIGGER_AFTER_ITEM": Entry("auction", "Also after the item",
                                               "Answer too when the words end the message after the item, e.g. "
                                               "\"[Iron Bar] price?\". Try messages on the Auction prices page."),
