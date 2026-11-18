@@ -198,6 +198,29 @@ class ChannelTests(Scoped):
         self.assertEqual(sections[0]["blocks"][0][0], "### ⭐ Featured recipes")
 
 
+class LockpickingTests(Scoped):
+    def test_list_and_section(self):
+        member = SimpleNamespace(mention="<@111>")
+        guild = SimpleNamespace(get_member=lambda i: member if i == 111 else None)
+        self.assertIsNone(crafting_cog.lockpicking_section([], guild))
+        crafting.add_lockpicker("jaina-proud", by="Mike (1)")
+        crafting.add_lockpicker("eggmike-thewhite", by="Mike (1)")
+        with self.assertRaises(crafting.CraftingError):
+            crafting.add_lockpicker("eggmike-thewhite", by="Mike (1)")  # already listed
+        with self.assertRaises(crafting.CraftingError):
+            crafting.add_lockpicker("nobody-known", by="Mike (1)")
+        crafting.add_lockpicker("out-sider", by="Mike (1)")  # not in the guild: not a crafter, so not posted
+        listed = crafting.lockpickers(crafting.crafters())
+        self.assertEqual([c["slug"] for c in listed], ["eggmike-thewhite", "jaina-proud"])  # highest level first
+        section = crafting_cog.lockpicking_section(listed, guild)
+        self.assertEqual(section["title"], "## 🔓 Lockpicking")
+        self.assertEqual(section["blocks"][0][1:], ["<@111> (Eggmike Thewhite)", "Jaina Proud"])
+        crafting.remove_lockpicker("jaina-proud")
+        with self.assertRaises(crafting.CraftingError):
+            crafting.remove_lockpicker("jaina-proud")
+        self.assertEqual(crafting.lockpicker_slugs(), ["eggmike-thewhite", "out-sider"])
+
+
 class SplitTests(unittest.TestCase):
     def test_a_long_profession_continues_without_splitting_a_recipe(self):
         blocks = [[f"recipe {i}", "-# " + "x" * 60] for i in range(10)]
@@ -317,10 +340,34 @@ class ApiTests(Scoped, unittest.IsolatedAsyncioTestCase):
         self.assertIn("crafting.feature", actions)
         self.assertIn("crafting.unfeature", actions)
 
+    async def test_lockpickers(self):
+        roster.store_roster([char(5, 28, name="Vile", surname="Scarfex", class_id=4)], "encore")
+        with mock.patch.object(wow_api, "reference", mock.AsyncMock(return_value={"classes": [
+                {"id": 5, "name": "Priest"}, {"id": 4, "name": "Rogue"}]})):
+            body = await (await self.client.get("/api/crafting")).json()
+            self.assertEqual([c["slug"] for c in body["lockpick_candidates"]], ["vile-scarfex"])  # rogues only
+            resp = await self.client.post("/api/crafting/lockpickers", json={"slug": "vile-scarfex"},
+                                          headers=self.headers)
+            self.assertEqual(resp.status, 201)
+            self.cog.publish_soon.assert_called_once()
+            body = await (await self.client.get("/api/crafting")).json()
+        self.assertEqual([(c["slug"], c["class_name"]) for c in body["lockpickers"]], [("vile-scarfex", "Rogue")])
+        self.assertEqual(body["lockpick_candidates"], [])
+        resp = await self.client.delete("/api/crafting/lockpickers/vile-scarfex", headers=self.headers)
+        self.assertEqual(resp.status, 200)
+        resp = await self.client.delete("/api/crafting/lockpickers/vile-scarfex", headers=self.headers)
+        self.assertEqual(resp.status, 404)
+        actions = [e["action"] for e in (await (await self.client.get("/api/audit")).json())["events"]]
+        self.assertIn("crafting.lockpicker", actions)
+        self.assertIn("crafting.lockpicker_removed", actions)
+
     async def test_moderators_only(self):
         self.levels = set()
         self.assertEqual((await self.client.get("/api/crafting")).status, 403)
         resp = await self.client.post("/api/crafting/featured", json={"recipe_id": 6577, "profession_id": 197},
+                                      headers=self.headers)
+        self.assertEqual(resp.status, 403)
+        resp = await self.client.post("/api/crafting/lockpickers", json={"slug": "eggmike-thewhite"},
                                       headers=self.headers)
         self.assertEqual(resp.status, 403)
 

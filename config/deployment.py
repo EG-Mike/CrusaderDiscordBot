@@ -316,6 +316,10 @@ CRAFTING_CRAFTERS_PER_PROFESSION = 10
 # stay on the Crafting page, marked as hidden).
 CRAFTING_HIDE_UNKNOWN_RECIPES = False
 
+# List the rogues with maximum Lockpicking (marked by moderators on the
+# Crafting page; Blizzard's API doesn't report it) in the crafting channel.
+CRAFTING_SHOW_LOCKPICKING = True
+
 # --- Rank sync (rank_sync.py, cogs/rank_sync.py) ---
 # Channel where the bot keeps the members to promote in the game posted
 # (Discord role says a higher rank than they have in the guild; the rules

@@ -90,6 +90,15 @@ def recipe_lines(r: dict, knows: Dict[int, List[dict]], guild, recipe_icons: Dic
     return lines
 
 
+def lockpicking_section(lockpickers: List[dict], guild) -> Optional[dict]:
+    """The rogues with maximum Lockpicking as a section of its own, or None when nobody is listed."""
+    if not lockpickers:
+        return None
+    return {"title": "## 🔓 Lockpicking",
+            "blocks": [["-# Rogues with maximum Lockpicking: ask one of them to open your lockboxes.",
+                        *(member_label(guild, c) for c in lockpickers)]]}
+
+
 def profession_sections(professions: List[dict], overview: Dict[int, List[dict]], featured: List[dict],
                         knows: Dict[int, List[dict]], guild, profession_icons: Dict[int, str],
                         recipe_icons: Dict[int, str], *, show_crafters: bool = True,
@@ -181,6 +190,9 @@ class CraftingCog(commands.Cog):
             professions, crafting.profession_overview(characters), featured, crafting.who_knows(characters),
             channel.guild, profession_icons, recipe_icons, show_crafters=bool(professions),
             hide_unknown=bool(config.CRAFTING_HIDE_UNKNOWN_RECIPES))
+        if config.CRAFTING_SHOW_LOCKPICKING:
+            lockpicking = lockpicking_section(crafting.lockpickers(characters), channel.guild)
+            sections += [lockpicking] if lockpicking else []
         intro = [f"-# Nobody in the guild has {', '.join(nobody)} yet."] if nobody else []
         if not sections:
             intro.append("-# Nothing to show yet: professions appear once members log out in the game, and featured "

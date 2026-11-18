@@ -26,6 +26,84 @@ function CrafterChip({ c }: { c: Crafter }) {
   );
 }
 
+/** Rogues with maximum Lockpicking: Blizzard doesn't report it, so moderators list them here. */
+function LockpickingCard({ data, onChanged }: { data: CraftingOverview; onChanged: () => void }) {
+  const toast = useToast();
+  const [slug, setSlug] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const call = async (run: () => Promise<unknown>, failed: string) => {
+    setBusy(true);
+    try {
+      await run();
+      onChanged();
+    } catch (e) {
+      toast("error", e instanceof ApiError ? e.message : failed);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="card">
+      <header className="border-b border-line px-4 py-3 md:px-5">
+        <div className="label">Lockpicking</div>
+        <p className="mt-0.5 text-2xs text-faint">
+          Rogues with maximum Lockpicking. The game doesn't report it, so list them yourself.
+          {!data.show_lockpicking && (
+            <>
+              {" "}
+              Not shown in the channel:{" "}
+              <Link to="/settings?group=crafting#CRAFTING_SHOW_LOCKPICKING" className="text-gold hover:underline">
+                turn it on
+              </Link>
+              .
+            </>
+          )}
+        </p>
+      </header>
+      {data.lockpickers.length ? (
+        <ul className="divide-y divide-line">
+          {data.lockpickers.map((c) => (
+            <li key={c.slug} className="flex items-center gap-2 px-4 py-2 md:px-5">
+              <CrafterChip c={c} />
+              {!c.in_guild && <Badge tone="warn">Not in the guild</Badge>}
+              <button
+                type="button"
+                onClick={() => call(() => api.del(`/api/crafting/lockpickers/${encodeURIComponent(c.slug)}`), "Couldn't remove them")}
+                disabled={busy}
+                aria-label={`Take ${c.display_name} off the list`}
+                className="ml-auto rounded p-1 text-faint hover:text-crimson disabled:opacity-30"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="px-4 py-3 text-faint md:px-5">Nobody listed yet.</p>
+      )}
+      <div className="flex flex-wrap items-center gap-2 border-t border-line px-4 py-3 md:px-5">
+        <select className="input h-9 min-w-[10rem] flex-1 py-1 text-xs" value={slug} onChange={(e) => setSlug(e.target.value)} aria-label="Rogue">
+          <option value="">{data.lockpick_candidates.length ? "A rogue in the guild…" : "No other rogues in the guild"}</option>
+          {data.lockpick_candidates.map((c) => (
+            <option key={c.slug} value={c.slug}>
+              {c.display_name} ({c.level ?? "?"}){c.member ? ` · ${c.member.name}` : ""}
+            </option>
+          ))}
+        </select>
+        <Button
+          icon={<Plus className="h-3.5 w-3.5" />}
+          disabled={!slug || busy}
+          onClick={() => call(() => api.post("/api/crafting/lockpickers", { slug }).then(() => setSlug("")), "Couldn't add them")}
+        >
+          Add
+        </Button>
+      </div>
+    </section>
+  );
+}
+
 function RecipeIcon({ url }: { url: string | null }) {
   return url ? (
     <img src={url} alt="" className="h-9 w-9 shrink-0 rounded ring-1 ring-line" loading="lazy" />
@@ -387,34 +465,37 @@ export default function CraftingPage() {
               <RecipeBrowser data={data} onAdded={load} />
             </div>
 
-            <section className="card self-start">
-              <header className="border-b border-line px-4 py-3 md:px-5">
-                <div className="label">Professions</div>
-                <p className="mt-0.5 text-2xs text-faint">Read from Blizzard when a player logs out.</p>
-              </header>
-              <ul className="divide-y divide-line">
-                {data.professions.map((p) => (
-                  <li key={p.id} className="px-4 py-3 md:px-5">
-                    <div className="mb-1.5 flex items-center gap-2">
-                      {p.icon_url && <img src={p.icon_url} alt="" className="h-5 w-5 rounded-sm ring-1 ring-line" />}
-                      <span className="font-semibold">{p.name}</span>
-                      <span className="text-2xs text-faint">
-                        {p.crafters.length} crafter{p.crafters.length === 1 ? "" : "s"}
-                      </span>
-                    </div>
-                    {p.crafters.length ? (
-                      <div className="flex flex-wrap gap-1.5">
-                        {p.crafters.map((c) => (
-                          <CrafterChip key={c.slug} c={c} />
-                        ))}
+            <div className="space-y-5 self-start">
+              <LockpickingCard data={data} onChanged={load} />
+              <section className="card">
+                <header className="border-b border-line px-4 py-3 md:px-5">
+                  <div className="label">Professions</div>
+                  <p className="mt-0.5 text-2xs text-faint">Read from Blizzard when a player logs out.</p>
+                </header>
+                <ul className="divide-y divide-line">
+                  {data.professions.map((p) => (
+                    <li key={p.id} className="px-4 py-3 md:px-5">
+                      <div className="mb-1.5 flex items-center gap-2">
+                        {p.icon_url && <img src={p.icon_url} alt="" className="h-5 w-5 rounded-sm ring-1 ring-line" />}
+                        <span className="font-semibold">{p.name}</span>
+                        <span className="text-2xs text-faint">
+                          {p.crafters.length} crafter{p.crafters.length === 1 ? "" : "s"}
+                        </span>
                       </div>
-                    ) : (
-                      <p className="text-2xs text-faint">Nobody in the guild yet.</p>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </section>
+                      {p.crafters.length ? (
+                        <div className="flex flex-wrap gap-1.5">
+                          {p.crafters.map((c) => (
+                            <CrafterChip key={c.slug} c={c} />
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-2xs text-faint">Nobody in the guild yet.</p>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            </div>
           </div>
         </>
       )}

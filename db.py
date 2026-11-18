@@ -310,6 +310,19 @@ _SCHEMA = [
         PRIMARY KEY (game, recipe_id)
     )
     """,
+    # Lockpicking (crafting.py): rogues with maximum Lockpicking, picked by
+    # moderators on the Crafting page (Blizzard's API doesn't report class
+    # skills such as Lockpicking).
+    """
+    CREATE TABLE IF NOT EXISTS crafting_lockpickers (
+        game     TEXT NOT NULL,
+        region   TEXT NOT NULL,
+        slug     TEXT NOT NULL,
+        added_by TEXT,
+        added_at TEXT NOT NULL,
+        PRIMARY KEY (game, region, slug)
+    )
+    """,
     # Statistics on the application card (card_stats.py): every statistic
     # the bot has seen on a character (Blizzard has no list of them), and
     # the ones moderators chose, in order. Per game version.

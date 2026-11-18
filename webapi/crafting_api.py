@@ -10,6 +10,8 @@ Dashboard API for crafting (crafting.py, cogs/crafting.py).
   POST   /api/crafting/order                 {"profession_id", "recipe_ids": [...] | null}: a profession's
                                              featured recipes in this order (null: hardest first again)
   POST   /api/crafting/post                  post or update the crafting channel now
+  POST   /api/crafting/lockpickers           {"slug"}: list a rogue as having maximum Lockpicking
+  DELETE /api/crafting/lockpickers/{slug}    take them off the list
 
 Moderators only. Featuring and removing recipes is audited, and the
 crafting channel is updated right after.
@@ -28,6 +30,7 @@ from webapi.common import BOT_KEY, HUB_KEY, BadRequest, actor_label, audit, erro
     read_json
 
 LEVEL = "moderator"
+ROGUE = "Rogue"  # the class whose characters can be listed as lockpickers (Blizzard's class name)
 
 
 def _guard(request):
@@ -70,6 +73,7 @@ async def overview(request):
     await crafting.fill_difficulty(bot)
     characters = await asyncio.to_thread(crafting.crafters)
     featured = await asyncio.to_thread(crafting.featured)
+    lockpicker_slugs = set(await asyncio.to_thread(crafting.lockpicker_slugs))
     by_profession = crafting.profession_overview(characters)
     hide_unknown = bool(config.CRAFTING_HIDE_UNKNOWN_RECIPES)
     knows = crafting.who_knows(characters)
@@ -91,6 +95,10 @@ async def overview(request):
         "custom_order": sorted({r["profession_id"] for r in featured
                                 if crafting.custom_order(featured, r["profession_id"])}),
         "hide_unknown_recipes": hide_unknown,
+        "show_lockpicking": bool(config.CRAFTING_SHOW_LOCKPICKING),
+        "lockpickers": [_crafter(c, guild, class_names) for c in await asyncio.to_thread(_marked_lockpickers)],
+        "lockpick_candidates": [_crafter(c, guild, class_names) for c in characters
+                                if class_names.get(c["class_id"]) == ROGUE and c["slug"] not in lockpicker_slugs],
         "characters_with_recipes": sum(1 for c in characters if roster.known_recipes(c)),
         "characters": len(characters),
         "channel_problem": cog.channel_problem(),
@@ -187,6 +195,44 @@ async def post_now(request):
     return json_response({"result": result})
 
 
+def _marked_lockpickers() -> List[dict]:
+    """Every marked character, also those no longer in the guild (shown as such on the page)."""
+    return [c for c in (roster.get(slug) for slug in crafting.lockpicker_slugs()) if c is not None]
+
+
+async def add_lockpicker(request):
+    denied, cog = _guard(request)
+    if denied:
+        return denied
+    try:
+        body = await read_json(request)
+        slug = body.get("slug")
+        if not isinstance(slug, str) or not slug:
+            raise BadRequest("Pick a character.")
+        c = await asyncio.to_thread(crafting.add_lockpicker, slug, by=actor_label(request))
+    except (BadRequest, crafting.CraftingError) as exc:
+        return error(str(exc), 400)
+    audit(request, "crafting", "crafting.lockpicker", f"Listed {roster.display_name(c)} as a lockpicker",
+          target=slug, details={"character": slug})
+    await _changed(request, cog)
+    return json_response({"ok": True}, status=201)
+
+
+async def remove_lockpicker(request):
+    denied, cog = _guard(request)
+    if denied:
+        return denied
+    slug = request.match_info["slug"]
+    try:
+        c = await asyncio.to_thread(crafting.remove_lockpicker, slug)
+    except crafting.CraftingError as exc:
+        return error(str(exc), 404)
+    audit(request, "crafting", "crafting.lockpicker_removed", f"Took {roster.display_name(c)} off the lockpickers",
+          target=slug, details={"character": slug})
+    await _changed(request, cog)
+    return json_response({"ok": True})
+
+
 def register(app):
     app.router.add_get("/api/crafting", overview)
     app.router.add_get("/api/crafting/professions/{id}", profession_recipes)
@@ -194,3 +240,5 @@ def register(app):
     app.router.add_delete("/api/crafting/featured/{recipe_id}", remove_featured)
     app.router.add_post("/api/crafting/order", set_order)
     app.router.add_post("/api/crafting/post", post_now)
+    app.router.add_post("/api/crafting/lockpickers", add_lockpicker)
+    app.router.add_delete("/api/crafting/lockpickers/{slug}", remove_lockpicker)
