@@ -125,6 +125,16 @@ settings change, not a code change.
   so per-character profiles are fresher. `/activity` and `/achievements`
   answer too.
 - **Not yet (404)**: protected characters, `character-media`.
+- **Class skills (not available)**: a rogue's Lockpicking skill appears
+  nowhere. Checked 2026-11-18 on rogues in the guild: not in the
+  profession index (Tailoring, Cooking, Leatherworking, Skinning,
+  Enchanting, Mining, Blacksmithing, Engineering, Fishing, Alchemy,
+  Herbalism, First Aid), not in `/professions`, not in any profile
+  document, and not in the achievement statistics ("Skills" covers
+  professions, Cooking, First Aid and weapon skills only). The Pick Lock
+  spell (1804) is a 404 and a spell search finds nothing. Same for a
+  mage's "Comprehension". Anything built on these needs players to report
+  their skill themselves.
 
 Forever names look unique per region (first name + surname), which is why
 character links carry no realm.

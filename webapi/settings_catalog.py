@@ -335,6 +335,9 @@ CATALOG: Dict[str, Entry] = {
     "CRAFTING_HIDE_UNKNOWN_RECIPES": Entry("crafting", "Only list recipes someone can make",
                                            "Featured recipes nobody in the guild knows yet are left out of the "
                                            "channel. They stay on the Crafting page, marked as hidden."),
+    "CRAFTING_SHOW_LOCKPICKING": Entry("crafting", "List lockpickers",
+                                       "The rogues with maximum Lockpicking, in their own message in the crafting "
+                                       "channel. You mark them on the Crafting page (the game doesn't report it)."),
     "CRAFTING_CRAFTERS_PER_PROFESSION": Entry("crafting", "Crafters per profession",
                                               "At most this many per profession in the channel, highest skill first. "
                                               "The Crafting page shows them all.", unit="crafters", advanced=True),

@@ -201,7 +201,10 @@ version or raid tier is a configuration change.
   message, then one message per profession with its crafters and its
   featured recipes (crafters highest skill first, materials); a profession
   too long for one message continues under "(continued)", split between
-  recipes (`channel_posts.split_blocks`). Featured recipes are ordered per
+  recipes (`channel_posts.split_blocks`). Rogues with maximum Lockpicking
+  are listed by moderators on the Crafting page (table
+  `crafting_lockpickers`; Blizzard's API doesn't report class skills) and
+  get their own message (`CRAFTING_SHOW_LOCKPICKING`). Featured recipes are ordered per
   profession by a moderator (`position`) or else hardest first: Blizzard
   gives no required skill, so `difficulty` is the recipe's place in its
   category of Blizzard's list (easiest to hardest). Recipes nobody knows

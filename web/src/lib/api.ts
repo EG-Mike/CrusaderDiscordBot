@@ -772,6 +772,11 @@ export interface CraftingOverview {
   /** Professions whose featured recipes a moderator ordered by hand. */
   custom_order: number[];
   hide_unknown_recipes: boolean;
+  /** Rogues moderators marked as having maximum Lockpicking (the game doesn't report it). */
+  show_lockpicking: boolean;
+  lockpickers: Crafter[];
+  /** The guild's rogues not listed yet. */
+  lockpick_candidates: Crafter[];
   characters: number;
   characters_with_recipes: number;
   channel_problem: string | null;

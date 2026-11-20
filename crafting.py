@@ -14,7 +14,8 @@ Where it comes from:
     change during a game version.
 
 Moderators pick "featured" recipes (e.g. high-value ones) on the
-dashboard. The crafting channel lists every profession with its crafters
+dashboard, and mark the rogues with maximum Lockpicking (Blizzard doesn't
+report it). The crafting channel lists every profession with its crafters
 and each featured recipe with who can make it and what to send them.
 
 Order of the featured recipes within a profession: a moderator's own
@@ -295,3 +296,41 @@ def profession_overview(characters: List[dict]) -> Dict[int, List[dict]]:
     for rows in found.values():
         rows.sort(key=lambda r: (-(r["skill"] or 0), roster.display_name(r["character"])))
     return found
+
+
+# --- lockpicking ---------------------------------------------------------------------------------------
+# Blizzard's API doesn't report class skills such as a rogue's Lockpicking
+# (docs/wow-forever-api.md), so moderators mark the rogues with maximum
+# Lockpicking on the Crafting page; the crafting channel lists them.
+
+def lockpicker_slugs() -> List[str]:
+    game, region = _game(), wow_api.region()
+    return [r["slug"] for r in db.query("SELECT slug FROM crafting_lockpickers WHERE game = ? AND region = ? "
+                                        "ORDER BY added_at", (game, region))]
+
+
+def lockpickers(characters: List[dict]) -> List[dict]:
+    """The marked characters among `characters` (e.g. crafters()), highest level first."""
+    marked = set(lockpicker_slugs())
+    return [c for c in characters if c["slug"] in marked]
+
+
+def add_lockpicker(character_slug: str, *, by: str) -> dict:
+    """Marks a character on the roster as having maximum Lockpicking."""
+    c = roster.get(character_slug)
+    if c is None:
+        raise CraftingError("That character isn't on the guild roster.")
+    if character_slug in lockpicker_slugs():
+        raise CraftingError(f"{roster.display_name(c)} is already listed.")
+    db.execute("INSERT INTO crafting_lockpickers (game, region, slug, added_by, added_at) VALUES (?, ?, ?, ?, ?)",
+               (_game(), wow_api.region(), character_slug, by, roster.timestamp()))
+    return c
+
+
+def remove_lockpicker(character_slug: str) -> dict:
+    c = roster.get(character_slug)
+    cursor = db.execute("DELETE FROM crafting_lockpickers WHERE game = ? AND region = ? AND slug = ?",
+                        (_game(), wow_api.region(), character_slug))
+    if not cursor.rowcount:
+        raise CraftingError("That character isn't listed.")
+    return c or {"slug": character_slug, "name": character_slug, "surname": None}
