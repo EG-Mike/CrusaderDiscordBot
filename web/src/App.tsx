@@ -29,15 +29,17 @@ import RankSyncPage from "./pages/RankSync";
 import CardStatisticsPage from "./pages/CardStatistics";
 import { ApplicationPage, ApplicationsPage } from "./pages/Applications";
 import { ToastProvider } from "./components/Toast";
+import { RequireLevel } from "./components/RequireLevel";
+import { can } from "./lib/access";
 
 // First visit after install: open the setup wizard once per browser session
 // while required settings are missing and setup was never finished.
-function SetupRedirect() {
+function SetupRedirect({ me }: { me: Me }) {
   const { status } = useLive();
   const { pathname } = useLocation();
   const navigate = useNavigate();
   useEffect(() => {
-    if (!status || status.setup_completed || !status.missing_setup.length || pathname !== "/") return;
+    if (!can(me, "admin") || !status || status.setup_completed || !status.missing_setup.length || pathname !== "/") return;
     try {
       if (sessionStorage.getItem("setupPrompted")) return;
       sessionStorage.setItem("setupPrompted", "1");
@@ -45,7 +47,7 @@ function SetupRedirect() {
       /* storage unavailable: still redirect */
     }
     navigate("/setup");
-  }, [status, pathname, navigate]);
+  }, [me, status, pathname, navigate]);
   return null;
 }
 
@@ -76,32 +78,32 @@ export default function App() {
     <MeContext.Provider value={me}>
     <ToastProvider>
     <LiveProvider>
-      <SetupRedirect />
+      <SetupRedirect me={me} />
       <WowheadTooltips />
       <Layout me={me}>
         <Routes>
           <Route path="/" element={<Overview me={me} />} />
-          <Route path="/setup" element={<SetupPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
-          <Route path="/audit-log" element={<AuditLogPage />} />
-          <Route path="/system-log" element={<SystemLogPage />} />
-          <Route path="/announcements" element={<AnnouncementsPage />} />
-          <Route path="/announcements/:id" element={<AnnouncementEditor />} />
-          <Route path="/bot-messages" element={<BotMessagesPage />} />
-          <Route path="/emoji" element={<EmojiPage />} />
-          <Route path="/maintenance" element={<MaintenancePage />} />
-          <Route path="/polls" element={<PollsPage />} />
-          <Route path="/roster" element={<RosterPage />} />
-          <Route path="/leveling" element={<LevelingPage />} />
-          <Route path="/lookup" element={<LookupPage />} />
-          <Route path="/crafting" element={<CraftingPage />} />
-          <Route path="/auction-prices" element={<AuctionPricesPage />} />
-          <Route path="/rank-sync" element={<RankSyncPage />} />
-          <Route path="/applications" element={<ApplicationsPage />} />
-          <Route path="/applications/statistics" element={<CardStatisticsPage />} />
-          <Route path="/applications/:id" element={<ApplicationPage />} />
+          <Route path="/setup" element={<RequireLevel level="admin"><SetupPage /></RequireLevel>} />
+          <Route path="/settings" element={<RequireLevel level="admin"><SettingsPage /></RequireLevel>} />
+          <Route path="/audit-log" element={<RequireLevel level="moderator"><AuditLogPage /></RequireLevel>} />
+          <Route path="/system-log" element={<RequireLevel level="moderator"><SystemLogPage /></RequireLevel>} />
+          <Route path="/announcements" element={<RequireLevel level="moderator"><AnnouncementsPage /></RequireLevel>} />
+          <Route path="/announcements/:id" element={<RequireLevel level="moderator"><AnnouncementEditor /></RequireLevel>} />
+          <Route path="/bot-messages" element={<RequireLevel level="moderator"><BotMessagesPage /></RequireLevel>} />
+          <Route path="/emoji" element={<RequireLevel level="moderator"><EmojiPage /></RequireLevel>} />
+          <Route path="/maintenance" element={<RequireLevel level="moderator"><MaintenancePage /></RequireLevel>} />
+          <Route path="/polls" element={<RequireLevel level="moderator"><PollsPage /></RequireLevel>} />
+          <Route path="/roster" element={<RequireLevel level="viewer"><RosterPage /></RequireLevel>} />
+          <Route path="/leveling" element={<RequireLevel level="viewer"><LevelingPage /></RequireLevel>} />
+          <Route path="/lookup" element={<RequireLevel level="reviewer"><LookupPage /></RequireLevel>} />
+          <Route path="/crafting" element={<RequireLevel level="viewer"><CraftingPage /></RequireLevel>} />
+          <Route path="/auction-prices" element={<RequireLevel level="moderator"><AuctionPricesPage /></RequireLevel>} />
+          <Route path="/rank-sync" element={<RequireLevel level="moderator"><RankSyncPage /></RequireLevel>} />
+          <Route path="/applications" element={<RequireLevel level="reviewer"><ApplicationsPage /></RequireLevel>} />
+          <Route path="/applications/statistics" element={<RequireLevel level="moderator"><CardStatisticsPage /></RequireLevel>} />
+          <Route path="/applications/:id" element={<RequireLevel level="reviewer"><ApplicationPage /></RequireLevel>} />
           {soon.map((item) => (
-            <Route key={item.to} path={item.to} element={<ComingSoon item={item} />} />
+            <Route key={item.to} path={item.to} element={<RequireLevel level={item.level}><ComingSoon item={item} /></RequireLevel>} />
           ))}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

@@ -1,7 +1,7 @@
 // Character lookup: started by moderators, for any character
 // in the region (webapi/lookup_api.py). The name is in the address
 // (/lookup?name=...), so a lookup can be linked or bookmarked.
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { AlertTriangle, BookOpen, Search, Shield, UserPlus, Users } from "lucide-react";
 import { ApiError, api, type LookupResult, type RosterCharacter } from "../lib/api";
@@ -11,6 +11,8 @@ import { CardStatisticsCard, GearCard, ProfessionsCard, StatsCard, TalentsCard }
 import { Avatar } from "../components/Audit";
 import { useToast } from "../components/Toast";
 import { Badge, Button, EmptyState, SectionHeader, Skeleton, StatTile } from "../components/ui";
+import { can } from "../lib/access";
+import { useMe } from "../lib/me";
 
 const RECENT_KEY = "lookup.recent";
 
@@ -31,7 +33,20 @@ function remember(name: string) {
   }
 }
 
+/** A link to the roster page for those who can open it, else the same chip without a link. */
+function RosterChip({ className, children }: { className: string; children: ReactNode }) {
+  return can(useMe(), "viewer") ? (
+    <Link to="/roster" className={className}>
+      {children}
+    </Link>
+  ) : (
+    <span className={className}>{children}</span>
+  );
+}
+
 export default function LookupPage() {
+  // Reviewers look characters up; adding one to the roster is for moderators.
+  const canEdit = can(useMe(), "moderator");
   const toast = useToast();
   const [params, setParams] = useSearchParams();
   const name = params.get("name") ?? "";
@@ -154,15 +169,17 @@ export default function LookupPage() {
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {result!.roster?.member ? (
-                <Link to="/roster" className="inline-flex items-center gap-2 rounded-lg border border-line px-2.5 py-1 text-xs transition hover:bg-raised">
+                <RosterChip className="inline-flex items-center gap-2 rounded-lg border border-line px-2.5 py-1 text-xs transition hover:bg-raised">
                   <Avatar url={result!.roster.member.avatar_url} name={result!.roster.member.name} size="h-5 w-5" />
                   {result!.roster.member.name}
                   {result!.roster.is_main && <Badge tone="gold">Main</Badge>}
-                </Link>
+                </RosterChip>
               ) : result!.roster ? (
-                <Link to="/roster" className="inline-flex items-center gap-1.5 text-xs text-gold hover:underline">
+                <RosterChip className="inline-flex items-center gap-1.5 text-xs text-gold hover:underline">
                   <Users className="h-3.5 w-3.5" /> On the roster, not linked
-                </Link>
+                </RosterChip>
+              ) : !canEdit ? (
+                <span className="text-xs text-faint">Not on the roster</span>
               ) : (
                 <Button size="sm" icon={<UserPlus className="h-3.5 w-3.5" />} loading={adding} onClick={addToRoster}>
                   Add to roster

@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import { ChevronDown, LogOut, Menu, X } from "lucide-react";
 import { api, type Me } from "../lib/api";
-import { NAV } from "../lib/nav";
+import { NAV, navFor } from "../lib/nav";
+import { LEVEL_LABELS } from "../lib/access";
 import { useMe } from "../lib/me";
 import { formatDuration, useLive } from "../lib/live";
 import { CommandPalette, PaletteTrigger, useCommandPalette } from "./CommandPalette";
@@ -26,7 +27,7 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       </div>
 
       <nav className="scrollbar-thin flex-1 overflow-y-auto px-2.5 py-3">
-        {NAV.map(({ group, items }) => (
+        {navFor(me).map(({ group, items }) => (
           <div key={group || "root"} className="mb-3">
             {group && <div className="label px-2 pb-1.5 pt-2">{group}</div>}
             {items.filter((item) => !(status && item.hidden?.(status))).map((item) => (
@@ -129,11 +130,7 @@ function UserMenu({ me }: { me: Me }) {
           <div className="px-2.5 py-2">
             <div className="font-medium">{me.username}</div>
             <div className="mt-1.5 flex flex-wrap gap-1">
-              {me.levels.map((level) => (
-                <Badge key={level} tone={level === "admin" ? "gold" : "neutral"}>
-                  {level}
-                </Badge>
-              ))}
+              <Badge tone={me.level === "admin" ? "gold" : "neutral"}>{LEVEL_LABELS[me.level]}</Badge>
             </div>
           </div>
           <div className="my-1 h-px bg-line" />

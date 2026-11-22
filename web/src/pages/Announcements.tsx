@@ -6,6 +6,7 @@ import { useLive } from "../lib/live";
 import { timeAgo, useNow } from "../lib/time";
 import { useToast } from "../components/Toast";
 import { Button, Dialog, EmptyState, SectionHeader, Segmented, Skeleton, cx } from "../components/ui";
+import { SettingsLink } from "../components/SettingsLink";
 
 type Tab = "draft" | "published" | "templates";
 
@@ -128,9 +129,9 @@ export default function AnnouncementsPage() {
             <span className="font-medium text-warn">Announcements are switched off.</span> You can read what's here, but not write or
             publish until the feature is on.
           </span>
-          <Link to="/settings?group=features#FEATURE_ANNOUNCEMENTS_ENABLED" className="text-xs text-gold hover:underline">
+          <SettingsLink to="/settings?group=features#FEATURE_ANNOUNCEMENTS_ENABLED" className="text-xs text-gold hover:underline">
             Turn it on
-          </Link>
+          </SettingsLink>
         </div>
       )}
 

@@ -40,7 +40,7 @@ const STEPS: Step[] = [
     title: "Roles",
     icon: Shield,
     intro:
-      "Which roles the bot works with. Moderators can use the mod commands and this dashboard; approvers decide on applications.",
+      "Which roles the bot works with. Moderators can use the mod commands and manage the guild here; reviewers decide on applications. Admin roles are under Settings, Dashboard access.",
     keys: ["MOD_ROLE_ID", "APPROVER_ROLE_ID", "FRESH_ROLE_ID", "REGULAR_ROLE_ID", "ORGANIZER_ROLE_ID"],
   },
   {

@@ -21,7 +21,8 @@ import {
 import { ApiError, api, type Announcement, type AnnouncementList, type BotMessage, type Setting, type SettingGroup } from "../lib/api";
 import { useLive } from "../lib/live";
 import { useMe } from "../lib/me";
-import { NAV } from "../lib/nav";
+import { navFor } from "../lib/nav";
+import { can } from "../lib/access";
 import { canRestart, useRestart } from "./Restart";
 import { useToast } from "./Toast";
 import { Button, Dialog, cx } from "./ui";
@@ -110,16 +111,20 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     setQ("");
     setActive(0);
     window.setTimeout(() => inputRef.current?.focus(), 0);
-    api
-      .get<{ settings: Setting[]; groups: SettingGroup[] }>("/api/settings")
-      .then((d) => {
-        setSettings(d.settings);
-        setSettingTabs(Object.fromEntries(d.groups.map((g) => [g.id, g.label])));
-      })
-      .catch(() => undefined);
-    api.get<AnnouncementList>("/api/announcements").then((d) => setAnnouncements(d.announcements)).catch(() => undefined);
-    api.get<BotMessage[]>("/api/bot-messages").then(setMessages).catch(() => undefined);
-  }, [open]);
+    // Only what this user may open (the server refuses the rest anyway).
+    if (can(me, "admin"))
+      api
+        .get<{ settings: Setting[]; groups: SettingGroup[] }>("/api/settings")
+        .then((d) => {
+          setSettings(d.settings);
+          setSettingTabs(Object.fromEntries(d.groups.map((g) => [g.id, g.label])));
+        })
+        .catch(() => undefined);
+    if (can(me, "moderator")) {
+      api.get<AnnouncementList>("/api/announcements").then((d) => setAnnouncements(d.announcements)).catch(() => undefined);
+      api.get<BotMessage[]>("/api/bot-messages").then(setMessages).catch(() => undefined);
+    }
+  }, [open, me]);
 
   const go = useCallback(
     (path: string) => () => {
@@ -129,7 +134,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
   );
 
   const commands: Command[] = useMemo(() => {
-    const list: Command[] = [
+    const moderatorActions: Command[] = [
       {
         id: "new-announcement",
         group: "Actions",
@@ -163,6 +168,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
       { id: "add-emoji", group: "Actions", label: "Add an emoji", keywords: "icon item spell", icon: Smile, run: go("/emoji") },
       { id: "errors", group: "Actions", label: "Show recent errors", keywords: "system log console problems", icon: FileText, run: go("/system-log?view=errors&range=24h") },
     ];
+    const list: Command[] = can(me, "moderator") ? moderatorActions : [];
     if (canRestart(me, status))
       list.push({ id: "restart", group: "Actions", label: "Restart the bot", keywords: "reboot reload apply settings", icon: RotateCcw, run: () => setConfirmRestart(true) });
     list.push({
@@ -175,7 +181,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
         window.location.href = "/login";
       },
     });
-    for (const { group, items } of NAV)
+    for (const { group, items } of navFor(me))
       for (const item of items)
         list.push({
           id: `page:${item.to}`,

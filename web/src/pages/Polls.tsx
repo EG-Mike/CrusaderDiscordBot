@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import { AlertTriangle, Clock, ExternalLink, Hash, Lock, Plus, Trash2, Users, Vote, X } from "lucide-react";
 import { ApiError, api, type Channel, type Poll, type PollList, type PollPhase, type PollSettings } from "../lib/api";
 import { useGuildLookups } from "../lib/guild";
@@ -7,6 +7,7 @@ import { useLive } from "../lib/live";
 import { useNow } from "../lib/time";
 import { useToast } from "../components/Toast";
 import { Badge, Button, Dialog, EmptyState, SectionHeader, Segmented, Skeleton, Toggle, cx } from "../components/ui";
+import { SettingsLink } from "../components/SettingsLink";
 
 const PHASES: Record<PollPhase, { label: string; tone: "info" | "gold" | "neutral" }> = {
   adding: { label: "Collecting options", tone: "info" },
@@ -593,9 +594,9 @@ export default function PollsPage() {
         <div className="mb-5 flex flex-wrap items-center gap-3 rounded-xl border border-warn/30 bg-warn/[0.06] px-4 py-3">
           <AlertTriangle className="h-4 w-4 shrink-0 text-warn" />
           <span className="min-w-0 flex-1 text-muted">Polls are switched off.</span>
-          <Link to="/settings?group=features#FEATURE_POLLS_ENABLED" className="text-xs text-gold hover:underline">
+          <SettingsLink to="/settings?group=features#FEATURE_POLLS_ENABLED" className="text-xs text-gold hover:underline">
             Turn them on
-          </Link>
+          </SettingsLink>
         </div>
       )}
       {error ? (

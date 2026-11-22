@@ -19,7 +19,7 @@ from webapi import settings_catalog as catalog
 
 # Settings read at the moment they're used (not cached at startup), so a
 # saved value is applied to the running bot straight away - no restart.
-LIVE_PREFIXES = ("NOTIFY_", "NOTIFICATIONS_", "AUCTION_")
+LIVE_PREFIXES = ("NOTIFY_", "NOTIFICATIONS_", "AUCTION_", "WEB_ACCESS_")
 LIVE_KEYS = {"GUILD_DISPLAY_NAME"}
 
 

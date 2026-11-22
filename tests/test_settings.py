@@ -56,7 +56,7 @@ class SettingsTests(DatabaseTestCase):
         self.assertEqual(tabs["integrations"]["groups"], ["api_keys", "blizzard", "warcraftlogs", "icons"])
         self.assertEqual(tabs["logs"]["groups"], ["logging", "audit"])
         self.assertNotIn("api_keys", tabs)
-        self.assertEqual([t["id"] for t in data["tabs"] if t["section"] == "general"], ["guild", "discord", "integrations"])
+        self.assertEqual([t["id"] for t in data["tabs"] if t["section"] == "general"], ["guild", "discord", "access", "integrations"])
         namespaces = settings.describe("EMOJI_BLIZZARD_NAMESPACES")
         self.assertEqual((namespaces["kind"], namespaces["widget"]), ("json", "choice_list"))
 

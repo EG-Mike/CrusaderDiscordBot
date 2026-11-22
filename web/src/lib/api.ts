@@ -31,13 +31,17 @@ export const api = {
 
 // --- API types -------------------------------------------------------------
 
-export type Level = "moderator" | "approver" | "admin";
+/** Dashboard access levels (webapi/access.py). Higher ones include the lower. */
+export type Level = "admin" | "moderator" | "reviewer" | "viewer";
 
 export interface Me {
   id: string;
   username: string;
   avatar_url: string;
+  /** Every level this user has, including the ones their highest level includes. */
   levels: Level[];
+  /** Their highest level, for display. */
+  level: Level;
 }
 
 export interface Status {
@@ -688,6 +692,8 @@ export interface ApplicationList {
   counts: Record<ApplicationStatus, number>;
   running: boolean;
   can_decide: boolean;
+  /** Moderators: archive decided applications, choose the card statistics. */
+  can_manage: boolean;
   archive_problem: string | null;
 }
 

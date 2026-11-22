@@ -19,7 +19,7 @@ import wow_api
 from webapi import auth
 from webapi.common import BOT_KEY, error, forbidden_unless, json_response
 
-LEVEL = "moderator"
+LEVEL = "reviewer"  # reviewers look up applicants
 
 
 def _roster_entry(guild, character_slug: str):

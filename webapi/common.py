@@ -11,6 +11,7 @@ from typing import Optional
 from aiohttp import web
 
 import audit as audit_store
+from webapi import access
 
 CSRF_HEADER = "X-Crusader-Request"
 
@@ -42,8 +43,9 @@ async def read_json(request) -> dict:
 
 
 def forbidden_unless(request, level: str, what: str) -> Optional[web.Response]:
-    """A 403 response if the user lacks `level`, else None."""
-    if level not in request["levels"]:
+    """A 403 response if the user lacks `level`, else None. The feature
+    modules' own check, behind the route table in access.ROUTES."""
+    if not access.allows(request["levels"], level):
         return error(f"You don't have access to {what}", 403)
     return None
 
@@ -64,10 +66,14 @@ class Hub:
     def discard(self, ws):
         self.sockets.pop(ws, None)
 
-    async def broadcast(self, event: dict, level: str = "moderator"):
+    async def broadcast(self, event: dict, level: str = access.MODERATOR, *, unless: Optional[str] = None):
+        """Sends `event` to the sockets whose user has `level` (and, with
+        `unless`, not that level - for a trimmed copy of an event)."""
         payload = json.dumps(event, default=str)
         for ws, info in list(self.sockets.items()):
-            if level not in info["levels"]:
+            if not access.allows(info["levels"], level):
+                continue
+            if unless is not None and access.allows(info["levels"], unless):
                 continue
             try:
                 await ws.send_str(payload)

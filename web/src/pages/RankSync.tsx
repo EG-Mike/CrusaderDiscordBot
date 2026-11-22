@@ -3,7 +3,6 @@
 // moderators know whom to promote in the game. Rules (role -> rank) and the
 // ranks' names (Blizzard only gives numbers) are set here.
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
 import { ChevronsUp, Plus, Send, X } from "lucide-react";
 import { ApiError, api, type RankSyncEntry, type RankSyncOverview, type RankSyncStatus } from "../lib/api";
 import { useGuildLookups } from "../lib/guild";
@@ -13,6 +12,7 @@ import { classColor } from "../lib/wow";
 import { Avatar } from "../components/Audit";
 import { useToast } from "../components/Toast";
 import { Badge, Button, EmptyState, SectionHeader, Skeleton, cx } from "../components/ui";
+import { SettingsLink } from "../components/SettingsLink";
 
 const GROUPS: { status: RankSyncStatus; label: string; hint: string }[] = [
   { status: "promote", label: "To promote", hint: "In the guild, but below the rank their role comes with. Promote them in the game." },
@@ -264,7 +264,7 @@ export default function RankSyncPage() {
       ) : !overview.guild_name ? (
         <div className="card">
           <EmptyState icon={<ChevronsUp className="h-6 w-6" />} title="No guild set">
-            Ranks come from your guild's roster. <Link to="/settings?group=roster#GUILD_ROSTER_GUILD" className="text-gold hover:underline">Set your guild</Link> first.
+            Ranks come from your guild's roster. <SettingsLink to="/settings?group=roster#GUILD_ROSTER_GUILD" className="text-gold hover:underline">Set your guild</SettingsLink> first.
           </EmptyState>
         </div>
       ) : (
@@ -283,9 +283,9 @@ export default function RankSyncPage() {
             ) : (
               <span>
                 Not posted in Discord.{" "}
-                <Link to="/settings?group=rank_sync#RANK_SYNC_CHANNEL_ID" className="text-gold hover:underline">
+                <SettingsLink to="/settings?group=rank_sync#RANK_SYNC_CHANNEL_ID" className="text-gold hover:underline">
                   Pick a channel
-                </Link>
+                </SettingsLink>
               </span>
             )}
             <span className="text-faint">Ranks update with the guild roster (Blizzard's can be up to 3 hours old).</span>

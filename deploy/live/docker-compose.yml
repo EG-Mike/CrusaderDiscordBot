@@ -38,8 +38,23 @@ services:
       # 127.0.0.1 = NOT reachable from the internet. Open it from your own
       # computer through an SSH tunnel to port 8082 (see README).
       - "127.0.0.1:8082:8081"
+    # Optional: to reach the dashboard from the internet through a Caddy
+    # container on the same server (README, "Opening the dashboard to the
+    # internet"), uncomment these lines (indented like `ports:`) and the
+    # `networks:` block at the end. Caddy then reaches the bot as
+    # crusader-live:8081.
+    # networks:
+    #   - default
+    #   - proxy-net
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
+
+# Caddy's Docker network, which the bot joins so Caddy can reach it (see
+# `docker inspect caddy`; use its name if it isn't proxy-net). Uncomment
+# with `networks:` above.
+# networks:
+#   proxy-net:
+#     external: true

@@ -5,7 +5,7 @@
 // compare how much of an item each has for sale (match it with the game).
 // The search text is in the address (/auction-prices?q=...).
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import { Check, Coins, FlaskConical, MessageSquare, RefreshCw, Scale, Search, Settings2, Store } from "lucide-react";
 import {
   ApiError,
@@ -20,6 +20,7 @@ import { fullDateTime, useNow } from "../lib/time";
 import { QUALITY_COLORS } from "../lib/wow";
 import { useToast } from "../components/Toast";
 import { Badge, Button, EmptyState, SectionHeader, Skeleton, cx } from "../components/ui";
+import { SettingsLink } from "../components/SettingsLink";
 
 /** The game's coin colours. */
 const COIN_COLORS = { g: "#ffd700", s: "#c7c7cf", c: "#eda55f" } as const;
@@ -271,9 +272,9 @@ function ChatAnswers({ overview }: { overview: AuctionOverview }) {
             {overview.trigger_after_item ? ", or ends the message right after one (\"[Iron Bar] price?\")" : ""}. Case doesn't matter.
           </p>
         </div>
-        <Link to="/settings?group=auction#AUCTION_PRICE_TRIGGERS" className="inline-flex items-center gap-1 text-2xs text-gold hover:underline">
+        <SettingsLink to="/settings?group=auction#AUCTION_PRICE_TRIGGERS" className="inline-flex items-center gap-1 text-2xs text-gold hover:underline">
           <Settings2 className="h-3 w-3" /> Edit
-        </Link>
+        </SettingsLink>
       </header>
       <div className="space-y-3 px-4 py-3 md:px-5">
         <div className="flex flex-wrap gap-1.5">
@@ -455,9 +456,9 @@ export default function AuctionPricesPage() {
               ) : (
                 <>
                   Not answering price questions in Discord.{" "}
-                  <Link to="/settings?group=auction#AUCTION_PRICE_CHANNEL_ID" className="text-gold hover:underline">
+                  <SettingsLink to="/settings?group=auction#AUCTION_PRICE_CHANNEL_ID" className="text-gold hover:underline">
                     Pick the guild chat channel
-                  </Link>
+                  </SettingsLink>
                 </>
               )}
             </span>

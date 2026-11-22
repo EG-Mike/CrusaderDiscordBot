@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { api, type AuditEvent, type AuditPage, type Me } from "../lib/api";
 import { formatDuration, useLive } from "../lib/live";
+import { can } from "../lib/access";
 import { fullDateTime, timeAgo, useNow } from "../lib/time";
 import { Badge, EmptyState, Skeleton, StatTile, cx } from "../components/ui";
 import { RestartButton } from "../components/Restart";
@@ -130,7 +131,10 @@ export default function Overview({ me }: { me: Me }) {
   const features = Object.entries(status.features);
   const enabled = features.filter(([, on]) => on).length;
   const missing = status.missing_setup;
-  const isAdmin = me.levels.includes("admin");
+  const isAdmin = can(me, "admin");
+  // Setup, configuration, logs and the activity feed are for moderators;
+  // reviewers and viewers get the bot's status (the server trims the rest).
+  const isModerator = can(me, "moderator");
   // Console errors are admin-only (see the System log page); unexpected
   // stops are shown to every moderator.
   const errors = isAdmin ? status.system.errors_24h : 0;
@@ -154,7 +158,11 @@ export default function Overview({ me }: { me: Me }) {
         <p className="mt-1 max-w-2xl text-muted">
           {status.bot.name ?? "The bot"} is {status.online ? "online" : "offline"} in{" "}
           <span className="text-fg">{status.guild?.name ?? "your server"}</span>.{" "}
-          {attention ? `${attention} thing${attention === 1 ? " needs" : "s need"} your attention.` : "Everything looks good."}
+          {!isModerator
+            ? ""
+            : attention
+              ? `${attention} thing${attention === 1 ? " needs" : "s need"} your attention.`
+              : "Everything looks good."}
         </p>
         <p className="mt-2 flex flex-wrap items-center gap-x-1.5 text-xs text-faint">
           <GitCommitHorizontal className="h-3.5 w-3.5" />
@@ -169,14 +177,20 @@ export default function Overview({ me }: { me: Me }) {
           {status.version_info.title && <span className="max-w-full truncate">· {status.version_info.title}</span>}
           <span>
             ·{" "}
-            <Link to="/system-log?view=lifecycle" className="hover:text-gold">
-              {lastUpdate ? `updated ${timeAgo(lastUpdate.at)}` : "no updates recorded yet"}
-            </Link>
+            {isModerator ? (
+              <Link to="/system-log?view=lifecycle" className="hover:text-gold">
+                {lastUpdate ? `updated ${timeAgo(lastUpdate.at)}` : "no updates recorded yet"}
+              </Link>
+            ) : lastUpdate ? (
+              `updated ${timeAgo(lastUpdate.at)}`
+            ) : (
+              "no updates recorded yet"
+            )}
           </span>
         </p>
       </div>
 
-      {missing.length > 0 && (
+      {isAdmin && missing.length > 0 && (
         <section className="card mb-5 border-gold/30 p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
@@ -218,12 +232,14 @@ export default function Overview({ me }: { me: Me }) {
           tone={status.online ? "ok" : "crimson"}
         />
         <StatTile value={formatDuration(status.uptime_seconds)} label="Uptime" icon={<Clock className="h-3 w-3" />} />
-        <StatTile
-          value={status.counts.pending_applications}
-          label="Pending applications"
-          icon={<ClipboardList className="h-3 w-3" />}
-          tone={status.counts.pending_applications ? "gold" : undefined}
-        />
+        {can(me, "reviewer") && (
+          <StatTile
+            value={status.counts.pending_applications}
+            label="Pending applications"
+            icon={<ClipboardList className="h-3 w-3" />}
+            tone={status.counts.pending_applications ? "gold" : undefined}
+          />
+        )}
         <StatTile
           value={`${enabled}/${features.length}`}
           label="Features on"
@@ -231,6 +247,7 @@ export default function Overview({ me }: { me: Me }) {
         />
       </div>
 
+      {isModerator && (
       <div className="grid gap-5 lg:grid-cols-5">
         <section className="card lg:col-span-3">
           <header className="flex items-center justify-between border-b border-line px-5 py-3.5">
@@ -253,9 +270,11 @@ export default function Overview({ me }: { me: Me }) {
                   </p>
                 </div>
                 <div className="flex shrink-0 items-center gap-3 self-center">
-                  <Link to="/settings?filter=pending" className="text-xs text-gold hover:underline">
-                    Review
-                  </Link>
+                  {isAdmin && (
+                    <Link to="/settings?filter=pending" className="text-xs text-gold hover:underline">
+                      Review
+                    </Link>
+                  )}
                   <RestartButton />
                 </div>
               </div>
@@ -308,9 +327,11 @@ export default function Overview({ me }: { me: Me }) {
         <section className="card lg:col-span-2">
           <header className="flex items-center justify-between border-b border-line px-5 py-3.5">
             <div className="label">Features</div>
-            <Link to="/settings?group=features" className="text-xs text-gold hover:underline">
-              Manage
-            </Link>
+            {isAdmin && (
+              <Link to="/settings?group=features" className="text-xs text-gold hover:underline">
+                Manage
+              </Link>
+            )}
           </header>
           <ul className="grid grid-cols-1 gap-px p-2 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
             {features.map(([key, on]) => (
@@ -324,6 +345,7 @@ export default function Overview({ me }: { me: Me }) {
 
         <ActivityFeed className="lg:col-span-5" />
       </div>
+      )}
     </>
   );
 }

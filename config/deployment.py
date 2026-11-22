@@ -176,6 +176,23 @@ FEATURE_AUCTION_PRICES_ENABLED = True
 # environment (that's how the Docker setup in deploy/ does it).
 FEATURE_WEB_DASHBOARD_ENABLED = _os.environ.get("WEB_DASHBOARD_ENABLED", "").strip().lower() in ("1", "true", "yes")
 
+# --- Dashboard access (webapi/auth.py, webapi/access.py) ---
+# Who may use which part of the dashboard, by Discord role. Levels:
+#   admin      the server owner, the user IDs in WEB_ADMIN_USER_IDS (.env),
+#              and these roles: settings, API keys, setup, restart,
+#              maintenance tools, console output
+#   moderator  MOD_ROLE_ID or the Manage Roles permission: the guild
+#              management pages
+#   reviewer   APPROVER_ROLE_ID: the Applications and Character lookup pages
+#   viewer     read-only general pages, only while WEB_ACCESS_VIEWER_ENABLED
+# Higher levels include the lower ones. Read on every permission check
+# (webapi/settings.LIVE_PREFIXES), so a change applies within a minute.
+# Role-ID dicts like FRESH_EXEMPT_ROLE_IDS (role ID -> name); the
+# dashboard saves the keys as strings, so readers convert with int().
+WEB_ACCESS_ADMIN_ROLE_IDS = {}
+WEB_ACCESS_VIEWER_ENABLED = False
+WEB_ACCESS_VIEWER_ROLE_IDS = {}
+
 # --- Audit log (audit.py, cogs/audit_log.py) ---
 # Every action is stored in the database (crusader.db) for the dashboard's
 # Audit log page, and also written as one line to a

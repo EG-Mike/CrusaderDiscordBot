@@ -762,9 +762,8 @@ Check the console for `Synced N command(s): [...]` and
 
 A browser dashboard for managing the bot, running **inside the bot
 process** (so it uses the same live data and Discord connection as the
-slash commands). Log in with Discord; only members with the moderator role
-(`MOD_ROLE_ID` or Manage Roles), the server owner, and `WEB_ADMIN_USER_IDS`
-get in, checked against their current roles on every request.
+slash commands). Log in with Discord; what you can open depends on your
+current roles, checked on every request (see "Dashboard access" below).
 
 Built so far (phases 0 and 1):
 
@@ -796,6 +795,97 @@ Built so far (phases 0 and 1):
 **Nothing changes for an existing deployment** until you opt in: the
 dashboard is off (`FEATURE_WEB_DASHBOARD_ENABLED = False`) and storage
 stays on JSON files (`STORAGE_BACKEND=json`) by default.
+
+### Dashboard access
+
+Everyone logs in with Discord. What they can open depends on their roles
+in the server, re-checked every minute (removing a role in Discord removes
+the access):
+
+| Level | Who | Can use |
+|---|---|---|
+| Admin | The server owner, `WEB_ADMIN_USER_IDS` (.env), and the admin roles | Settings (incl. API keys), setup guide, restart, maintenance tools, console output, the bot's profile and the guild logo |
+| Moderator | The moderator role (`MOD_ROLE_ID`) or the Manage Roles permission | Announcements, bot messages, emoji, polls, roster, leveling, rank sync, crafting, auction prices, audit log, system log, applications |
+| Reviewer | The reviewer role (`APPROVER_ROLE_ID`) | Applications (read and decide) and Character lookup |
+| Viewer | The viewer roles, only while "Viewer access" is on (off by default) | Read-only Overview, Guild roster, Leveling and Crafting |
+
+Higher levels include the lower ones. Anyone else is refused at login.
+The roles are set in Settings, General, **Dashboard access** (admin and
+viewer roles), Moderation (moderator role) and Applications (reviewer
+role); only admins can change settings, so a moderator can't give
+themselves more access. The server enforces all of this
+(`webapi/access.py` lists the level of every API route); the menus only
+hide what you couldn't open anyway.
+
+### Opening the dashboard to the internet
+
+By default the dashboard is only reachable over an SSH tunnel. To open it
+to the internet, put **Caddy** in front of it for HTTPS. These steps assume
+Caddy already runs in Docker on the same server (and the bot in Docker, see
+deploy/). Without a domain, use `<ip-with-dashes>.sslip.io` (e.g.
+`203-0-113-7.sslip.io` for 203.0.113.7): a free name that points at the IP,
+so Caddy can get a normal Let's Encrypt certificate.
+
+1. Make sure the server's public IP is reserved (Oracle Cloud: Instance,
+   Attached VNICs, IPv4 Addresses: "Reserved"), and ports 80 and 443 are
+   open (Security List ingress rules, and the server's own firewall).
+2. Check the bot's port is not public: `sudo ss -tlnp | grep -E '8081|8082'`
+   must show `127.0.0.1:...`. Never change the `127.0.0.1:` in `ports:`.
+3. Find Caddy's Docker network:
+   `docker inspect caddy --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}'`.
+   The bot joins that network so Caddy can reach it by container name. The
+   compose files in deploy/ assume it's called `proxy-net` (a network
+   shared by the sites Caddy serves). If Caddy has none of its own (only
+   `caddy_default`), create one (`docker network create proxy-net`), add it
+   to Caddy's compose file (`networks: [proxy-net]` under the service,
+   `networks: {proxy-net: {external: true}}` at the end) and run
+   `docker compose up -d` there. If yours has another name, use that name
+   in the next step.
+4. In the bot's `docker-compose.yml`, uncomment the two `networks:` blocks
+   (indented exactly like `ports:`), check it with
+   `docker compose config --quiet && echo OK`, then `docker compose up -d`.
+   Check: `docker exec caddy wget -qO- http://crusader-test:8081/api/me`
+   answers "401 Unauthorized" (= reachable, not logged in).
+5. Add the site to the Caddyfile:
+
+   ```
+   test.203-0-113-7.sslip.io {
+       encode zstd gzip
+       reverse_proxy crusader-test:8081
+   }
+   ```
+
+   Use the container name, not `127.0.0.1` (inside Caddy's container that
+   is Caddy itself), and port 8081, the port inside the bot's container:
+   also for the live bot, `crusader-live:8081`. The dashboard sends its own
+   security headers (HSTS, Content-Security-Policy, ...).
+6. Check it with `docker exec -w /etc/caddy caddy caddy validate`, then
+   load it with `docker exec -w /etc/caddy caddy caddy reload`. When the
+   Caddyfile is mounted as a single file (`./Caddyfile:/etc/caddy/Caddyfile`)
+   and was saved by an editor that replaces the file, the container keeps
+   the old one, even after a restart: `docker exec caddy cat
+   /etc/caddy/Caddyfile` shows what it sees, and `docker compose up -d
+   --force-recreate caddy` (in Caddy's folder) makes it read the current
+   file. `docker logs --since 5m caddy` should then show
+   "certificate obtained successfully" for the address. A browser error
+   `ERR_SSL_PROTOCOL_ERROR` means Caddy has no certificate for it yet.
+7. In the Discord Developer Portal (OAuth2, Redirects), add
+   `https://<that address>/auth/callback`.
+8. In the bot's `.env`, set `WEB_BASE_URL=https://<that address>`, then
+   `docker compose up -d --force-recreate`. Login cookies are then
+   HTTPS-only, and requests from other websites are refused. Logins then
+   go to the new address; the SSH tunnel no longer works for them.
+9. As an admin, pick the roles in Settings, General, Dashboard access.
+
+Never open the bot's own port (8081/8082) in Oracle's Security List or the
+firewall: visitors only reach Caddy on 443.
+
+Logins are limited per address (about 15 per 10 minutes). The visitor's
+address comes from Caddy's `X-Forwarded-For`, which is only believed from
+the server itself and Docker's private networks (`WEB_TRUSTED_PROXIES`).
+To close it again, remove the site from the Caddyfile and reload Caddy;
+the SSH tunnel keeps working once `WEB_BASE_URL` is back on
+`http://localhost:808x`.
 
 ### How settings are layered
 

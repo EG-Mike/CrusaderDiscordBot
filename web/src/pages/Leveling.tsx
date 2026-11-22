@@ -11,6 +11,9 @@ import { Avatar } from "../components/Audit";
 import { CharacterName } from "../components/CharacterName";
 import { useToast } from "../components/Toast";
 import { Badge, Button, EmptyState, SectionHeader, Segmented, Skeleton } from "../components/ui";
+import { SettingsLink } from "../components/SettingsLink";
+import { can } from "../lib/access";
+import { useMe } from "../lib/me";
 
 type Scope = "mains" | "all";
 
@@ -23,6 +26,9 @@ const OUTCOMES: Record<string, { label: string; tone: "ok" | "neutral" | "warn" 
 };
 
 export default function LevelingPage() {
+  // Viewers read the leaderboard; checking now and editing are for moderators.
+  const me = useMe();
+  const canEdit = can(me, "moderator");
   const toast = useToast();
   const { subscribe } = useLive();
   const [data, setData] = useState<LevelingOverview | null>(null);
@@ -73,7 +79,7 @@ export default function LevelingPage() {
         title="Leveling"
         description="The guild's highest levels, and the level-ups the bot congratulated. Levels update when a player logs out."
         actions={
-          <Button icon={<RefreshCw className="h-3.5 w-3.5" />} loading={checking} onClick={check}>
+          canEdit && <Button icon={<RefreshCw className="h-3.5 w-3.5" />} loading={checking} onClick={check}>
             Check now
           </Button>
         }
@@ -82,9 +88,9 @@ export default function LevelingPage() {
       {data && !data.enabled && (
         <div className="mb-5 rounded-xl border border-warn/30 bg-warn/[0.06] px-4 py-3 text-muted">
           <span className="font-medium text-warn">Leveling is switched off.</span>{" "}
-          <Link to="/settings?group=features#FEATURE_LEVELING_ENABLED" className="text-gold hover:underline">
+          <SettingsLink to="/settings?group=features#FEATURE_LEVELING_ENABLED" className="text-gold hover:underline">
             Turn it on
-          </Link>
+          </SettingsLink>
         </div>
       )}
 
@@ -111,12 +117,16 @@ export default function LevelingPage() {
         </span>
         <span className="text-faint">{data ? (data.announce_alts ? "Alts are announced too" : "Mains only") : ""}</span>
         <span className="flex-1" />
-        <Link to="/settings?group=leveling" className="text-xs text-gold hover:underline">
-          Change in Settings
-        </Link>
-        <Link to="/bot-messages?key=level_milestone" className="inline-flex items-center gap-1 text-xs text-gold hover:underline">
-          <MessageSquareText className="h-3 w-3" /> Edit the message
-        </Link>
+        {can(me, "admin") && (
+          <SettingsLink to="/settings?group=leveling" className="text-xs text-gold hover:underline">
+            Change in Settings
+          </SettingsLink>
+        )}
+        {canEdit && (
+          <Link to="/bot-messages?key=level_milestone" className="inline-flex items-center gap-1 text-xs text-gold hover:underline">
+            <MessageSquareText className="h-3 w-3" /> Edit the message
+          </Link>
+        )}
       </section>
 
       <div className="grid gap-5 lg:grid-cols-2">

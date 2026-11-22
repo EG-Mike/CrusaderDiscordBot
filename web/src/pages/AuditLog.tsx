@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import {
   Activity,
   AlertTriangle,
@@ -21,6 +21,7 @@ import { useLive } from "../lib/live";
 import { fullDateTime, shortDateTime, useNow } from "../lib/time";
 import { Avatar, EventDetails, KINDS, KindBadge, Where } from "../components/Audit";
 import { Button, EmptyState, SectionHeader, Segmented, Skeleton, StatTile, cx } from "../components/ui";
+import { SettingsLink } from "../components/SettingsLink";
 
 const PAGE_SIZE = 50;
 
@@ -350,9 +351,9 @@ export default function AuditLogPage() {
             <span className="font-medium text-warn">Discord actions aren't being recorded.</span>{" "}
             <span className="text-muted">The Audit log feature is off, so only dashboard actions show up here.</span>
           </span>
-          <Link to="/settings?group=features#FEATURE_AUDIT_LOG_ENABLED" className="text-xs text-gold hover:underline">
+          <SettingsLink to="/settings?group=features#FEATURE_AUDIT_LOG_ENABLED" className="text-xs text-gold hover:underline">
             Turn it on
-          </Link>
+          </SettingsLink>
         </div>
       )}
 

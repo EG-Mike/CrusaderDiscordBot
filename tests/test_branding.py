@@ -56,6 +56,10 @@ class BrandingTests(DatabaseTestCase, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["name"], "Crusader")
 
     async def test_logo_upload_checks_the_image(self):
+        resp = await self.client.put("/api/branding/logo", json={"data": base64.b64encode(PNG).decode()},
+                                     headers=self.headers)
+        self.assertEqual(resp.status, 403)  # the guild's logo is set by admins (Settings)
+        self.levels = {"admin"}
         resp = await self.client.put("/api/branding/logo", json={"data": base64.b64encode(b"<svg>").decode()},
                                      headers=self.headers)
         self.assertEqual(resp.status, 400)
@@ -72,11 +76,12 @@ class BrandingTests(DatabaseTestCase, unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.client.get("/branding/logo")).status, 404)
 
     async def test_bot_profile_is_for_admins(self):
-        body = await (await self.client.get("/api/bot/profile")).json()
-        self.assertEqual((body["username"], body["can_edit"]), ("Crusader", False))
+        self.assertEqual((await self.client.get("/api/bot/profile")).status, 403)
         resp = await self.client.put("/api/bot/profile", json={"username": "Crusader Bot"}, headers=self.headers)
         self.assertEqual(resp.status, 403)
-        self.levels = {"moderator", "admin"}
+        self.levels = {"admin"}
+        body = await (await self.client.get("/api/bot/profile")).json()
+        self.assertEqual((body["username"], body["can_edit"]), ("Crusader", True))
         resp = await self.client.put("/api/bot/profile", json={"avatar": "guild_logo"}, headers=self.headers)
         self.assertIn("Upload a guild logo first", (await resp.json())["error"])
         await self.client.put("/api/branding/logo", json={"data": base64.b64encode(PNG).decode()}, headers=self.headers)

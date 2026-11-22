@@ -9,6 +9,7 @@ import { ArrowDown, ArrowLeft, ArrowUp, BarChart3, Plus, Radar, Search, X } from
 import { ApiError, api, type CardStatistic, type CardStatisticsConfig } from "../lib/api";
 import { useToast } from "../components/Toast";
 import { Badge, Button, EmptyState, SectionHeader, Skeleton } from "../components/ui";
+import { SettingsLink } from "../components/SettingsLink";
 
 const BOSS_KILLS = "Dungeons & Raids > Boss Kills";
 
@@ -113,9 +114,9 @@ export default function CardStatisticsPage() {
               <div className="label">On the card</div>
               <p className="mt-0.5 text-2xs text-faint">
                 Heading: <span className="text-muted">{data.title || "none"}</span>{" "}
-                <Link to="/settings?group=applications#APPLICATION_STATISTICS_TITLE" className="text-gold hover:underline">
+                <SettingsLink to="/settings?group=applications#APPLICATION_STATISTICS_TITLE" className="text-gold hover:underline">
                   Change
-                </Link>
+                </SettingsLink>
               </p>
             </header>
             {data.chosen.length === 0 ? (

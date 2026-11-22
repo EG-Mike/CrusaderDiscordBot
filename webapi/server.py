@@ -6,14 +6,17 @@ the same files.
 
 Routes:
   /auth/login, /auth/callback, /auth/logout   Discord login
-  /api/...                                    JSON API (login required)
+  /api/...                                    JSON API (login required;
+                                              the level each route needs
+                                              is in webapi/access.py)
   /api/ws                                     live updates (WebSocket):
                                               bot status, setting changes,
                                               new audit and system log entries
   everything else                             the built frontend (web/dist)
 
 Binds to 127.0.0.1 by default: put a reverse proxy (Caddy) in front of it
-for real use, or reach it over an SSH tunnel while testing.
+to reach it from the internet (HTTPS; WEB_BASE_URL is then the https://
+address), or reach it over an SSH tunnel.
 """
 
 import asyncio
@@ -38,7 +41,7 @@ import gear
 import secret_store
 import system_log
 from webapi import (
-    announcements_api, applications_api, auction_api, auth, bot_messages_api, branding_api, common, crafting_api, emoji_api,
+    access, announcements_api, applications_api, auction_api, auth, bot_messages_api, branding_api, common, crafting_api, emoji_api,
     game_api, integrations, lookup_api, maintenance_api, notifications_api, polls_api, rank_sync_api, roster_api,
 )
 from webapi import settings as settings_api
@@ -86,13 +89,45 @@ def _public_event(event: dict, guild) -> dict:
 
 # --- middlewares ---------------------------------------------------------------------
 
+# What the dashboard's pages may load. Besides its own files: Wowhead's
+# tooltip script and its data (WOWHEAD_TOOLTIPS_ENABLED), and images from
+# anywhere over HTTPS (Discord avatars, Blizzard and Wowhead icons).
+CONTENT_SECURITY_POLICY = "; ".join([
+    "default-src 'self'",
+    "script-src 'self' https://wow.zamimg.com https://*.wowhead.com",
+    "style-src 'self' 'unsafe-inline' https://wow.zamimg.com",
+    "img-src 'self' data: blob: https:",
+    "font-src 'self' data: https://wow.zamimg.com",
+    "connect-src 'self' https://*.wowhead.com https://wow.zamimg.com",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+])
+
+
 @web.middleware
 async def security_headers(request, handler):
-    response = await handler(request)
-    response.headers.setdefault("X-Content-Type-Options", "nosniff")
-    response.headers.setdefault("X-Frame-Options", "DENY")
-    response.headers.setdefault("Referrer-Policy", "same-origin")
+    try:
+        response = await handler(request)
+    except web.HTTPException as exc:  # redirects and errors get the headers too
+        response = exc
+        _add_security_headers(response)
+        raise
+    _add_security_headers(response)
     return response
+
+
+def _add_security_headers(response):
+    headers = response.headers
+    headers.setdefault("X-Content-Type-Options", "nosniff")
+    headers.setdefault("X-Frame-Options", "DENY")
+    headers.setdefault("Referrer-Policy", "same-origin")
+    headers.setdefault("Content-Security-Policy", CONTENT_SECURITY_POLICY)
+    headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+    headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
+    if auth.cookie_secure():  # served over HTTPS: browsers keep using HTTPS
+        headers.setdefault("Strict-Transport-Security", "max-age=31536000")
 
 
 @web.middleware
@@ -110,13 +145,37 @@ async def require_login(request, handler):
 
     # CSRF: browsers won't send a custom header cross-site without a CORS
     # preflight (which this server never approves), and SameSite=Lax
-    # cookies aren't sent on cross-site POSTs in the first place.
-    if request.method not in ("GET", "HEAD", "OPTIONS") and request.headers.get(CSRF_HEADER) != "1":
+    # cookies aren't sent on cross-site POSTs in the first place. The
+    # Origin check is a second layer, and the only one for the WebSocket.
+    changes = request.method not in ("GET", "HEAD", "OPTIONS")
+    if changes and request.headers.get(CSRF_HEADER) != "1":
         return _error("Missing request header", 403)
+    if (changes or request.path == "/api/ws") and not access.origin_allowed(request, auth.base_url()):
+        log.warning("Dashboard request refused: %s %s from another site (Origin %s)",
+                    request.method, request.path, request.headers.get("Origin"))
+        return _error("This request came from another website", 403)
+
+    # Deny by default: every API route is listed in access.ROUTES.
+    route = request.match_info.route
+    resource = getattr(route, "resource", None)
+    required = access.required_level(route.method, resource.canonical) if resource is not None else None
+    if required is None:
+        log.error("Dashboard API route without an access level: %s %s", request.method, request.path)
+        return _error("This part of the dashboard isn't available", 403)
+    if not access.allows(levels, required):
+        return _error(_NEEDS.get(required, "You don't have access to this"), 403)
 
     request["user"] = session
     request["levels"] = levels
     return await handler(request)
+
+
+_NEEDS = {
+    access.ADMIN: "Only dashboard admins can do this",
+    access.MODERATOR: "Only moderators can do this",
+    access.REVIEWER: "Only moderators and reviewers can open this",
+    access.VIEWER: "Your Discord roles don't give access to this page",
+}
 
 
 @web.middleware
@@ -134,8 +193,21 @@ async def errors(request, handler):
 
 # --- auth routes -------------------------------------------------------------------
 
+def _too_many_logins(request):
+    """A 429 page when this address started too many logins lately."""
+    address = access.client_ip(request)
+    if access.LOGIN_LIMIT.hit(address):
+        return None
+    log.warning("Dashboard login attempts limited for %s", address)
+    return web.Response(text="Too many login attempts from your address. Wait a few minutes, then try again.",
+                        status=429, headers={"Retry-After": "600"})
+
+
 async def login(request):
     bot = request.app[BOT_KEY]
+    limited = _too_many_logins(request)
+    if limited is not None:
+        return limited
     if not auth.client_secret():
         return web.Response(text="DISCORD_CLIENT_SECRET isn't set in .env - see the README's Web dashboard section.",
                             status=500)
@@ -152,6 +224,9 @@ def _login_error(message):
 
 async def callback(request):
     bot = request.app[BOT_KEY]
+    limited = _too_many_logins(request)
+    if limited is not None:
+        return limited
     if request.query.get("error"):
         return _login_error("Login was cancelled.")
     state = request.query.get("state")
@@ -165,15 +240,17 @@ async def callback(request):
     levels = await auth.levels_for(bot, int(user["id"]), fresh=True)
     name = user.get("global_name") or user.get("username")
     if not auth.can_access(levels):
-        log.info("Dashboard login refused for %s (%s): no moderator role", user.get("username"), user["id"])
+        log.info("Dashboard login refused for %s (%s): no dashboard role (from %s)",
+                 user.get("username"), user["id"], access.client_ip(request))
         audit_store.record(source="dashboard", kind="login", action="auth.refused",
-                           summary="Was refused dashboard access (no moderator role)",
+                           summary="Was refused dashboard access (no dashboard role)",
                            actor_id=user["id"], actor_name=name)
-        return _login_error("Your Discord account doesn't have the moderator role in the server.")
+        return _login_error("Your Discord account doesn't have a role in the server that gives access to this "
+                            "dashboard. Ask an admin if you think it should.")
 
     token = auth.create_session(user)
     auth.purge_expired_sessions()
-    log.info("Dashboard login: %s (%s)", user.get("username"), user["id"])
+    log.info("Dashboard login: %s (%s) from %s", user.get("username"), user["id"], access.client_ip(request))
     audit_store.record(source="dashboard", kind="login", action="auth.login", summary="Logged in to the dashboard",
                        actor_id=user["id"], actor_name=name)
     response = web.HTTPFound("/")
@@ -184,7 +261,7 @@ async def callback(request):
 
 
 async def logout(request):
-    if request.headers.get(CSRF_HEADER) != "1":
+    if request.headers.get(CSRF_HEADER) != "1" or not access.origin_allowed(request, auth.base_url()):
         return _error("Missing request header", 403)
     token = request.cookies.get(auth.SESSION_COOKIE)
     session = auth.get_session(token)
@@ -207,6 +284,7 @@ async def me(request):
         "username": user["username"],
         "avatar_url": auth.avatar_url(user["user_id"], user["avatar"]),
         "levels": sorted(request["levels"]),
+        "level": next((level for level in access.LEVELS if level in request["levels"]), None),
     })
 
 
@@ -226,7 +304,10 @@ def _system_status() -> dict:
     }
 
 
-def _status(app) -> dict:
+def _status(app, levels=frozenset({access.ADMIN})) -> dict:
+    """The bot's status for the Overview and the header. Members below
+    moderator get it without the setup, configuration and log details,
+    and reviewers' pending-application count only when they can see them."""
     bot = app[BOT_KEY]
     guild = auth.guild_for(bot)
     pending_applications = sum(
@@ -238,7 +319,7 @@ def _status(app) -> dict:
     if os.environ.get("STORAGE_BACKEND", "json").lower() != "sqlite":
         warnings.append("Data is still stored in JSON files (STORAGE_BACKEND isn't set to sqlite).")
     latency = bot.latency
-    return {
+    data = {
         "online": bot.is_ready() and not bot.is_closed(),
         "latency_ms": round(latency * 1000) if latency == latency and latency != float("inf") else None,
         "uptime_seconds": round(time.monotonic() - app[STARTED_KEY]),
@@ -277,10 +358,19 @@ def _status(app) -> dict:
         "pending_restart": pending_restart,
         "warnings": warnings,
     }
+    if not access.allows(levels, access.MODERATOR):
+        data.update({
+            "system": {"errors_24h": 0, "warnings_24h": 0, "crashes_7d": 0, "last_error_at": None,
+                       "last_update": data["system"]["last_update"]},
+            "missing_setup": [], "pending_restart": [], "warnings": [], "restart_available": False,
+        })
+        if not access.allows(levels, access.REVIEWER):
+            data["counts"] = {"pending_applications": 0}
+    return data
 
 
 async def status(request):
-    return _json(_status(request.app))
+    return _json(_status(request.app, request["levels"]))
 
 
 async def guild_channels(request):
@@ -341,6 +431,8 @@ async def settings_update(request):
     user = request["user"]
     before = settings_api.describe(key)
     result = settings_api.save(key, typed, f"{user['username']} ({user['user_id']})")
+    if key.startswith("WEB_ACCESS_"):
+        auth.forget_levels()  # who may use the dashboard changed: apply it now
     _audit_setting(request, "settings.update", f"Changed setting {result['label']}", before, result, guild)
     await request.app[HUB_KEY].broadcast({"type": "settings.changed", "key": key})
     return _json(result)
@@ -356,6 +448,8 @@ async def settings_reset(request):
         result = settings_api.reset(key, f"{user['username']} ({user['user_id']})")
     except settings_api.SettingError as exc:
         return _error(str(exc), 400)
+    if key.startswith("WEB_ACCESS_"):
+        auth.forget_levels()
     _audit_setting(request, "settings.reset", f"Reset setting {result['label']} to its default", before, result,
                    auth.guild_for(request.app[BOT_KEY]))
     await request.app[HUB_KEY].broadcast({"type": "settings.changed", "key": key})
@@ -684,7 +778,8 @@ async def websocket(request):
     hub = request.app[HUB_KEY]
     hub.add(ws, request["user"]["user_id"], request.cookies.get(auth.SESSION_COOKIE), request["levels"])
     try:
-        await ws.send_str(json.dumps({"type": "status", "data": _status(request.app)}, default=str))
+        await ws.send_str(json.dumps({"type": "status", "data": _status(request.app, request["levels"])},
+                                     default=str))
         async for msg in ws:
             if msg.type == WSMsgType.ERROR:
                 break
@@ -703,6 +798,12 @@ async def _status_pusher(app):
             try:
                 await _revalidate_sockets(app)
                 await hub.broadcast({"type": "status", "data": _status(app)})
+                # Everyone below moderator gets the trimmed copy (reviewers
+                # with their pending-application count).
+                await hub.broadcast({"type": "status", "data": _status(app, {access.REVIEWER})},
+                                    level=access.REVIEWER, unless=access.MODERATOR)
+                await hub.broadcast({"type": "status", "data": _status(app, {access.VIEWER})},
+                                    level=access.ANY, unless=access.REVIEWER)
             except Exception:
                 log.exception("Status push failed")
 
