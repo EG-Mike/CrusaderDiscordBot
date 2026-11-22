@@ -1,6 +1,5 @@
 // Building blocks shared by the Audit log page and the Overview activity feed.
 import { useState, type ReactNode } from "react";
-import { Link } from "react-router-dom";
 import {
   Bot,
   Check,
@@ -32,6 +31,7 @@ import {
 import type { AuditEvent, AuditKind, Json } from "../lib/api";
 import { fullDateTime } from "../lib/time";
 import { Badge, cx } from "./ui";
+import { SettingsLink } from "./SettingsLink";
 
 type Tone = "neutral" | "gold" | "crimson" | "ok" | "warn" | "info";
 
@@ -177,9 +177,9 @@ export function EventDetails({ event, guildId }: { event: AuditEvent; guildId?: 
       {event.kind === "setting" && (
         <>
           <Field label="Setting">
-            <Link to={`/settings?q=${encodeURIComponent(String(d.key ?? event.target ?? ""))}#${d.key ?? event.target}`} className="text-gold hover:underline">
+            <SettingsLink plain to={`/settings?q=${encodeURIComponent(String(d.key ?? event.target ?? ""))}#${d.key ?? event.target}`} className="text-gold hover:underline">
               {String(d.label ?? event.target)}
-            </Link>{" "}
+            </SettingsLink>{" "}
             <span className="font-mono text-2xs text-faint">{String(d.key ?? event.target ?? "")}</span>
           </Field>
           {"old" in d && (

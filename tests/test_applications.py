@@ -372,13 +372,13 @@ class ApiTests(Setup, DatabaseTestCase, unittest.IsolatedAsyncioTestCase):
         reviewer = self.cog.approve.await_args.args[1]
         self.assertEqual((reviewer.id, reviewer.name, reviewer.via), (222, "officer", "dashboard"))
 
-        self.levels = {"moderator", "approver"}
+        self.levels = {"moderator", "reviewer"}
         resp = await self.client.post(f"/api/applications/{MESSAGE_ID}/approve", json={}, headers=self.headers)
         self.assertEqual(resp.status, 200)
 
     async def test_a_level_outside_the_deciders_only_reads(self):
         from webapi import applications_api
-        with mock.patch.object(applications_api, "DECIDE_LEVELS", {"approver"}):  # as for a future viewer level
+        with mock.patch.object(applications_api, "DECIDE_LEVELS", {"admin"}):  # deciding limited to a higher level
             body = await (await self.client.get("/api/applications")).json()
             self.assertFalse(body["can_decide"])
             resp = await self.client.post(f"/api/applications/{MESSAGE_ID}/approve", json={}, headers=self.headers)
@@ -389,13 +389,13 @@ class ApiTests(Setup, DatabaseTestCase, unittest.IsolatedAsyncioTestCase):
         self.levels = set()
         resp = await self.client.get("/api/applications")
         self.assertEqual(resp.status, 403)
-        self.levels = {"moderator", "approver"}
+        self.levels = {"moderator", "reviewer"}
         resp = await self.client.post(f"/api/applications/{MESSAGE_ID}/approve", json={})
         self.assertEqual(resp.status, 403)  # no CSRF header
         self.cog.approve.assert_not_awaited()
 
     async def test_errors_are_plain_messages(self):
-        self.levels = {"moderator", "approver"}
+        self.levels = {"moderator", "reviewer"}
         resp = await self.client.post("/api/applications/12345/approve", json={}, headers=self.headers)
         self.assertEqual(resp.status, 404)
         self.cog.approve.side_effect = ApplicationError("This application was already approved.")

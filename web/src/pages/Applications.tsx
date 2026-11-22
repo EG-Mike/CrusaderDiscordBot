@@ -1,6 +1,7 @@
 // Applications (webapi/applications_api.py): the same applications as the
-// review channel, with the character read from Blizzard. Moderators read them;
-// moderators and approvers decide (the server checks it, these buttons only follow).
+// review channel, with the character read from Blizzard. Moderators and
+// reviewers read and decide; archiving and card statistics are for moderators
+// (the server checks it, these buttons only follow).
 // Decisions run the bot's own rules: roles, nickname, DM, roster link, and
 // the card in Discord updates too.
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -151,6 +152,7 @@ export function ApplicationsPage() {
         title="Applications"
         description="New members apply in Discord; the bot reads their character from Blizzard. Decide here or on the card in the review channel."
         actions={
+          data?.can_manage && (
           <>
             <Link to="/applications/statistics" className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-raised/60 px-3.5 text-[13px] font-medium transition hover:border-faint hover:bg-raised">
               <BarChart3 className="h-3.5 w-3.5" /> Card statistics
@@ -159,6 +161,7 @@ export function ApplicationsPage() {
               Archive decided
             </Button>
           </>
+          )
         }
       />
 
@@ -170,7 +173,7 @@ export function ApplicationsPage() {
 
       {data && !data.can_decide && (
         <p className="mb-4 rounded-lg border border-line bg-raised/40 px-3 py-2 text-xs text-muted">
-          You can read applications. Approving and denying needs the moderator or approver role (Settings, Applications).
+          You can read applications. Approving and denying needs the moderator or reviewer role.
         </p>
       )}
 
@@ -273,7 +276,7 @@ function DecisionPanel({ a, canDecide, onDone }: { a: ApplicationDetail; canDeci
   };
 
   const d = a.decision;
-  const noDecideHint = canDecide ? undefined : "Needs the moderator or approver role";
+  const noDecideHint = canDecide ? undefined : "Needs the moderator or reviewer role";
   return (
     <section className="card px-4 py-4 md:px-5">
       <div className="mb-3 flex items-center justify-between gap-2">

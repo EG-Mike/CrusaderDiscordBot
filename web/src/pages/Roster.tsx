@@ -12,6 +12,9 @@ import { Avatar } from "../components/Audit";
 import { useToast } from "../components/Toast";
 import { CharacterName } from "../components/CharacterName";
 import { Badge, Button, Dialog, EmptyState, SectionHeader, Segmented, Skeleton, StatTile } from "../components/ui";
+import { SettingsLink } from "../components/SettingsLink";
+import { can } from "../lib/access";
+import { useMe } from "../lib/me";
 
 type View = "all" | "linked" | "unlinked" | "left";
 
@@ -173,6 +176,8 @@ function CharacterDialog({
 }
 
 export default function RosterPage() {
+  // Viewers read the roster; syncing, posting and linking are for moderators.
+  const canEdit = can(useMe(), "moderator");
   const toast = useToast();
   const { subscribe } = useLive();
   const [data, setData] = useState<RosterOverview | null>(null);
@@ -269,18 +274,20 @@ export default function RosterPage() {
         title="Guild roster"
         description="Every character the bot knows from Blizzard, and who they belong to. Members link their own characters with /character link."
         actions={
-          <Button icon={<RefreshCw className="h-3.5 w-3.5" />} loading={syncing} onClick={sync}>
-            Sync now
-          </Button>
+          canEdit && (
+            <Button icon={<RefreshCw className="h-3.5 w-3.5" />} loading={syncing} onClick={sync}>
+              Sync now
+            </Button>
+          )
         }
       />
 
       {data && !data.guild_name && (
         <div className="mb-5 rounded-xl border border-warn/30 bg-warn/[0.06] px-4 py-3 text-muted">
           <span className="font-medium text-warn">No guild set.</span> Only characters members link themselves are tracked.{" "}
-          <Link to="/settings?group=roster#GUILD_ROSTER_GUILD" className="text-gold hover:underline">
+          <SettingsLink to="/settings?group=roster#GUILD_ROSTER_GUILD" className="text-gold hover:underline">
             Set the guild name
-          </Link>
+          </SettingsLink>
         </div>
       )}
       {data?.last_sync && !data.last_sync.ok && (
@@ -312,16 +319,18 @@ export default function RosterPage() {
                 {data.post.updated ? `, last changed ${timeAgo(new Date(data.post.updated * 1000).toISOString())}` : ", not posted yet"}. It updates by itself
                 when levels or links change.
               </span>
-              <Button size="sm" icon={<Send className="h-3.5 w-3.5" />} loading={posting} onClick={postNow}>
-                Post in Discord
-              </Button>
+              {canEdit && (
+                <Button size="sm" icon={<Send className="h-3.5 w-3.5" />} loading={posting} onClick={postNow}>
+                  Post in Discord
+                </Button>
+              )}
             </>
           ) : (
             <span className="flex-1">
               Not posted in Discord.{" "}
-              <Link to="/settings?group=roster#GUILD_ROSTER_CHANNEL_ID" className="text-gold hover:underline">
+              <SettingsLink to="/settings?group=roster#GUILD_ROSTER_CHANNEL_ID" className="text-gold hover:underline">
                 Pick a roster channel
-              </Link>{" "}
+              </SettingsLink>{" "}
               to keep it posted there for everyone.
             </span>
           )}
@@ -362,7 +371,11 @@ export default function RosterPage() {
               {visible.map((c) => {
                 const specs = [specName(classes, c.main_spec_id), specName(classes, c.off_spec_id)].filter(Boolean).join(" / ");
                 return (
-                  <tr key={c.slug} onClick={() => setOpen(c.slug)} className="cursor-pointer transition hover:bg-raised/60">
+                  <tr
+                    key={c.slug}
+                    onClick={canEdit ? () => setOpen(c.slug) : undefined}
+                    className={canEdit ? "cursor-pointer transition hover:bg-raised/60" : undefined}
+                  >
                     <td className="px-4 py-2.5 md:px-5">
                       <div className="flex items-center gap-1.5">
                         {c.is_main && <Star className="h-3 w-3 shrink-0 fill-gold text-gold" aria-label="Main" />}
@@ -402,6 +415,7 @@ export default function RosterPage() {
         )}
       </section>
 
+      {canEdit && (
       <section className="card mt-5 p-4 md:p-5">
         <h3 className="font-semibold">Add a character that isn't in the guild</h3>
         <p className="mt-0.5 text-muted">Found on Blizzard by name and surname. Characters can be found from level 10, after logging out once.</p>
@@ -412,8 +426,9 @@ export default function RosterPage() {
           </Button>
         </div>
       </section>
+      )}
 
-      {selected && <CharacterDialog c={selected} classes={classes} onClose={() => setOpen(null)} onChanged={replace} />}
+      {canEdit && selected && <CharacterDialog c={selected} classes={classes} onClose={() => setOpen(null)} onChanged={replace} />}
     </>
   );
 }

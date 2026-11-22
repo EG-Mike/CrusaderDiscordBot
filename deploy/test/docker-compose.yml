@@ -34,8 +34,21 @@ services:
       # 127.0.0.1 = NOT reachable from the internet. Open it from your own
       # computer through an SSH tunnel (see README).
       - "127.0.0.1:8081:8081"
+    # Optional: to reach the dashboard from the internet through a Caddy
+    # container on the same server (README, "Opening the dashboard to the
+    # internet"), uncomment these lines and the `networks:` block at the end.
+    # Caddy then reaches the bot as crusader-test:8081.
+    # networks:
+    #   - default
+    #   - crusader-web
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
+
+# The network the bot shares with Caddy (create it once with
+# `docker network create crusader-web`). Uncomment with `networks:` above.
+# networks:
+#   crusader-web:
+#     external: true

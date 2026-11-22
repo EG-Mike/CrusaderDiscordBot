@@ -44,7 +44,7 @@ class AuditApiTests(DatabaseTestCase, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resp.status, 401)
 
     async def test_requires_moderator(self):
-        self.levels = {"approver"}
+        self.levels = {"reviewer"}
         resp = await self.get("/api/audit")
         self.assertEqual(resp.status, 403)
 

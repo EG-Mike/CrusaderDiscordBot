@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import {
   AlertOctagon,
   AlertTriangle,
@@ -20,6 +20,7 @@ import { ApiError, api, type LogLevel, type SystemEntry, type SystemLogMeta, typ
 import { formatDuration, useLive } from "../lib/live";
 import { fullDateTime, shortDateTime, timeAgo, useNow } from "../lib/time";
 import { Badge, Button, EmptyState, SectionHeader, Segmented, Skeleton, StatTile, cx } from "../components/ui";
+import { SettingsLink } from "../components/SettingsLink";
 
 const PAGE_SIZE = 50;
 
@@ -549,9 +550,9 @@ export default function SystemLogPage() {
                 ? "Console output isn't being kept"
                 : `Keeping console ${(meta?.capture_level ?? "WARNING").toLowerCase()}s and above`}
               {meta && meta.retention_days > 0 && ` for ${meta.retention_days} days`}.{" "}
-              <Link to="/settings?group=logging" className="text-gold hover:underline">
+              <SettingsLink to="/settings?group=logging" className="text-gold hover:underline">
                 Change
-              </Link>
+              </SettingsLink>
             </span>
             {hasMore ? (
               <Button size="sm" onClick={loadMore} loading={loadingMore} icon={<ChevronDown className="h-3.5 w-3.5" />}>

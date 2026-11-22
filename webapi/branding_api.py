@@ -29,7 +29,7 @@ import db
 from webapi import auth
 from webapi.common import BOT_KEY, BadRequest, audit, error, forbidden_unless, json_response, read_json
 
-EDIT_LEVEL = "moderator"
+EDIT_LEVEL = "admin"  # on the admin-only Settings page
 PROFILE_LEVEL = "admin"
 MAX_LOGO_BYTES = 1024 * 1024
 MAX_AVATAR_BYTES = 5 * 1024 * 1024  # base64 of it must fit in the 10 MB request limit

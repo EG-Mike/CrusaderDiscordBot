@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
 import { AlertTriangle, Check, ClipboardCopy, ImagePlus, Layers, Loader2, Plus, Recycle, Search, Smile, Sparkles, Trash2 } from "lucide-react";
 import { ApiError, api, type EmojiAddResult, type EmojiOverview, type EmojiSearchResult, type LibraryEmoji, type PlainEmoji } from "../lib/api";
 import { WowLink } from "../lib/wowhead";
@@ -7,6 +6,7 @@ import { loadCustomEmoji } from "../lib/emoji";
 import { useLive } from "../lib/live";
 import { useToast } from "../components/Toast";
 import { Badge, Button, Dialog, EmptyState, SectionHeader, Skeleton, StatTile, cx } from "../components/ui";
+import { SettingsLink } from "../components/SettingsLink";
 
 const kindLabel = (kind: string) => (kind === "item" ? "Item" : "Spell");
 
@@ -250,9 +250,9 @@ export default function EmojiPage() {
         <div className="mb-5 flex flex-wrap items-center gap-3 rounded-xl border border-warn/30 bg-warn/[0.06] px-4 py-3">
           <AlertTriangle className="h-4 w-4 shrink-0 text-warn" />
           <span className="min-w-0 flex-1 text-muted">Adding and deleting emoji is switched off.</span>
-          <Link to="/settings?group=features#FEATURE_EMOJI_ADMIN_ENABLED" className="text-xs text-gold hover:underline">
+          <SettingsLink to="/settings?group=features#FEATURE_EMOJI_ADMIN_ENABLED" className="text-xs text-gold hover:underline">
             Turn it on
-          </Link>
+          </SettingsLink>
         </div>
       )}
 

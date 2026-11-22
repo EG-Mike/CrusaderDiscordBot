@@ -28,7 +28,7 @@ from webapi.common import (
     BOT_KEY, HUB_KEY, BadRequest, actor_label, audit, error, forbidden_unless, json_response, read_json,
 )
 
-LEVEL = "moderator"
+LEVEL = "viewer"  # read-only for viewers; changes need moderator (access.ROUTES)
 MAX_MEMBER_RESULTS = 20
 
 

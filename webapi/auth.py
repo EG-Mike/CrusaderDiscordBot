@@ -4,13 +4,20 @@ scope only) and server-side permission checks.
 
 Who gets in is decided by the person's CURRENT roles in the guild, checked
 on every request (cached for PERMISSION_CACHE_SECONDS), so taking a role
-away in Discord also takes away dashboard access:
+away in Discord also takes away dashboard access. The levels (what each
+one may open is in webapi/access.py):
 
-  - moderator: MOD_ROLE_ID or the Manage Roles permission (same rule as the
-    bot's own moderator commands). Required to use the dashboard at all.
-  - approver:  APPROVER_ROLE_ID (Approve/Deny/Reset applications; moderators may too).
-  - admin:     the server owner, or a user ID listed in WEB_ADMIN_USER_IDS.
-               Admins always get in, even without the moderator role.
+  - admin:     the server owner, a user ID listed in WEB_ADMIN_USER_IDS
+               (.env; always, so nobody can lock themselves out), or one of
+               the admin roles (WEB_ACCESS_ADMIN_ROLE_IDS).
+  - moderator: MOD_ROLE_ID or the Manage Roles permission (the same rule as
+               the bot's own moderator commands, permissions.is_moderator).
+  - reviewer:  APPROVER_ROLE_ID (Approve/Deny/Reset applications).
+  - viewer:    a viewer role (WEB_ACCESS_VIEWER_ROLE_IDS), only while
+               WEB_ACCESS_VIEWER_ENABLED is on.
+
+Higher levels include the lower ones (access.implied). Without any level,
+the login is refused.
 """
 
 import hashlib
@@ -25,6 +32,8 @@ import discord
 
 import config
 import db
+import permissions
+from webapi import access
 from http_utils import basic_auth_header
 
 DISCORD_API = "https://discord.com/api/v10"
@@ -109,6 +118,26 @@ def guild_for(bot):
 _permission_cache = {}  # user_id -> (expires_monotonic, levels)
 
 
+def _role_ids(value) -> set:
+    """A role-ID setting (dict of role ID -> name, or a list) -> its IDs."""
+    return {int(key) for key in (value or ()) if str(key).strip().isdigit()}
+
+
+def levels_from_member(member, guild_owner_id=None) -> set:
+    """The levels a guild member's roles give (without WEB_ADMIN_USER_IDS)."""
+    levels = set()
+    role_ids = {role.id for role in member.roles}
+    if guild_owner_id == member.id or role_ids & _role_ids(config.WEB_ACCESS_ADMIN_ROLE_IDS):
+        levels.add(access.ADMIN)
+    if permissions.is_moderator(member):
+        levels.add(access.MODERATOR)
+    if config.APPROVER_ROLE_ID and int(config.APPROVER_ROLE_ID) in role_ids:
+        levels.add(access.REVIEWER)
+    if config.WEB_ACCESS_VIEWER_ENABLED and role_ids & _role_ids(config.WEB_ACCESS_VIEWER_ROLE_IDS):
+        levels.add(access.VIEWER)
+    return levels
+
+
 async def levels_for(bot, user_id: int, *, fresh: bool = False) -> set:
     cached = _permission_cache.get(user_id)
     if cached and not fresh and cached[0] > time.monotonic():
@@ -116,7 +145,7 @@ async def levels_for(bot, user_id: int, *, fresh: bool = False) -> set:
 
     levels = set()
     if user_id in admin_user_ids():
-        levels.add("admin")
+        levels.add(access.ADMIN)
     guild = guild_for(bot)
     member = None
     if guild is not None:
@@ -127,22 +156,20 @@ async def levels_for(bot, user_id: int, *, fresh: bool = False) -> set:
             except (discord.NotFound, discord.HTTPException):
                 member = None
     if member is not None:
-        role_ids = {role.id for role in member.roles}
-        if member.guild_permissions.manage_roles or (config.MOD_ROLE_ID and config.MOD_ROLE_ID in role_ids):
-            levels.add("moderator")
-        if config.APPROVER_ROLE_ID in role_ids:
-            levels.add("approver")
-        if guild.owner_id == user_id:
-            levels.add("admin")
-    if "admin" in levels:
-        levels.add("moderator")
+        levels |= levels_from_member(member, guild.owner_id)
+    levels = access.implied(levels)
 
     _permission_cache[user_id] = (time.monotonic() + PERMISSION_CACHE_SECONDS, levels)
     return levels
 
 
+def forget_levels():
+    """Drops the cached levels, e.g. after the access settings changed."""
+    _permission_cache.clear()
+
+
 def can_access(levels: set) -> bool:
-    return "moderator" in levels
+    return access.allows(levels, access.ANY)
 
 
 # --- sessions --------------------------------------------------------------------

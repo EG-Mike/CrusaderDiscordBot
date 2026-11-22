@@ -64,7 +64,9 @@ version or raid tier is a configuration change.
   `beta` into `main` releases it to the live bot. Push to `beta`, not to a
   new branch of your own.
 - The dashboard is reached over an SSH tunnel (PuTTY) at
-  http://localhost:8081. It is not exposed to the internet.
+  http://localhost:8081, or, once opened up, through Caddy (in Docker on
+  the same VPS) over HTTPS at an sslip.io address (README, "Opening the
+  dashboard to the internet").
 - **Dev bot (cloud sessions)**: Claude Code cloud sessions for this repo
   have credentials for a third Discord application, "Crusader Dev", which
   is in the same test server, plus WarcraftLogs and Blizzard API keys, as
@@ -270,8 +272,24 @@ version or raid tier is a configuration change.
 - `secret_store.py`: external API keys, Fernet-encrypted in the database
   (key file `secret.key` next to it). Write-only towards the browser.
 - `webapi/`: aiohttp dashboard API inside the bot process: Discord OAuth
-  login, DB-backed sessions, role-based access (moderator/approver/admin),
-  CSRF header check, settings, integrations, setup wizard, restart.
+  login, DB-backed sessions, role-based access, CSRF header check,
+  settings, integrations, setup wizard, restart. Access levels
+  (`webapi/access.py`): admin (owner, `WEB_ADMIN_USER_IDS`,
+  `WEB_ACCESS_ADMIN_ROLE_IDS`: settings, keys, setup, restart, maintenance
+  tools), moderator (`MOD_ROLE_ID`/Manage Roles: guild management pages),
+  reviewer (`APPROVER_ROLE_ID`: Applications, Character lookup), viewer
+  (`WEB_ACCESS_VIEWER_ROLE_IDS` while `WEB_ACCESS_VIEWER_ENABLED`: read-only
+  Overview, roster, leveling, crafting); higher levels include lower ones
+  (`access.implied`). **Every `/api` route needs an entry in
+  `access.ROUTES`** (deny by default; `tests/test_access.py` fails
+  otherwise); the frontend mirrors it in `web/src/lib/nav.ts` (`level`),
+  `RequireLevel` and `can()` (`web/src/lib/access.ts`), only to hide what
+  the server refuses. The dashboard can be public behind Caddy (README,
+  "Opening the dashboard to the internet"): Origin check on writes and the
+  WebSocket, login attempt limit by visitor address (`access.client_ip`,
+  `WEB_TRUSTED_PROXIES`), CSP/HSTS headers (`server.CONTENT_SECURITY_POLICY`:
+  a new external script or API host must be added there). Links to
+  settings use `SettingsLink` (plain text for non-admins).
   `server.py` wires the app; feature APIs live in their own module
   (`announcements_api.py`, `polls_api.py`, `maintenance_api.py`, ...)
   using `common.py`. When a cog feature gets a dashboard page, move its
@@ -373,13 +391,14 @@ set in the dashboard.
   `/raidsummary-refresh-report`). These all depend
   on TBC-era data sources, so plan them together with the WoW Forever data
   model rather than polishing what's there.
-- Phase 5: Public pages. Kept last on purpose: the dashboard is only
-  reachable over an SSH tunnel, so these need a hosting/security decision
-  (exposing part of it to the internet, a Viewer level), and what they'd
-  show is mostly Phase 4 data.
+- Public access (done: groundwork): the dashboard can be reached from the
+  internet behind Caddy, with Discord login required for everything and
+  admin/moderator/reviewer/viewer levels (viewer built, off by default).
+- Phase 5: Public pages. Kept last on purpose: what they'd show is mostly
+  Phase 4 data; they'd build on the viewer level.
 
-Access is moderator-only for now; the permission model (Viewer level,
-public pages) must allow opening it up later.
+Access levels (admin, moderator, reviewer, viewer) are in
+`webapi/access.py`; the viewer level is built but off by default.
 
 ## Decisions already made (don't re-ask)
 

@@ -3,7 +3,6 @@
 // bot keeps them posted in the crafting channel with who can make them and
 // the materials to send.
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
 import { AlertTriangle, ArrowDown, ArrowUp, EyeOff, Hammer, Plus, RotateCcw, Search, Send, Star, Trash2 } from "lucide-react";
 import { ApiError, api, type CraftingOverview, type Crafter, type FeaturedRecipe, type RecipeCatalog } from "../lib/api";
 import { useLive } from "../lib/live";
@@ -12,6 +11,9 @@ import { CLASS_COLORS } from "../lib/wow";
 import { Avatar } from "../components/Audit";
 import { useToast } from "../components/Toast";
 import { Badge, Button, Dialog, EmptyState, SectionHeader, Skeleton, StatTile } from "../components/ui";
+import { SettingsLink } from "../components/SettingsLink";
+import { can } from "../lib/access";
+import { useMe } from "../lib/me";
 
 function CrafterChip({ c }: { c: Crafter }) {
   return (
@@ -27,7 +29,7 @@ function CrafterChip({ c }: { c: Crafter }) {
 }
 
 /** Rogues with maximum Lockpicking: Blizzard doesn't report it, so moderators list them here. */
-function LockpickingCard({ data, onChanged }: { data: CraftingOverview; onChanged: () => void }) {
+function LockpickingCard({ data, onChanged, editable }: { data: CraftingOverview; onChanged: () => void; editable: boolean }) {
   const toast = useToast();
   const [slug, setSlug] = useState("");
   const [busy, setBusy] = useState(false);
@@ -54,9 +56,9 @@ function LockpickingCard({ data, onChanged }: { data: CraftingOverview; onChange
             <>
               {" "}
               Not shown in the channel:{" "}
-              <Link to="/settings?group=crafting#CRAFTING_SHOW_LOCKPICKING" className="text-gold hover:underline">
+              <SettingsLink to="/settings?group=crafting#CRAFTING_SHOW_LOCKPICKING" className="text-gold hover:underline">
                 turn it on
-              </Link>
+              </SettingsLink>
               .
             </>
           )}
@@ -68,6 +70,7 @@ function LockpickingCard({ data, onChanged }: { data: CraftingOverview; onChange
             <li key={c.slug} className="flex items-center gap-2 px-4 py-2 md:px-5">
               <CrafterChip c={c} />
               {!c.in_guild && <Badge tone="warn">Not in the guild</Badge>}
+              {editable && (
               <button
                 type="button"
                 onClick={() => call(() => api.del(`/api/crafting/lockpickers/${encodeURIComponent(c.slug)}`), "Couldn't remove them")}
@@ -77,12 +80,14 @@ function LockpickingCard({ data, onChanged }: { data: CraftingOverview; onChange
               >
                 <Trash2 className="h-3.5 w-3.5" />
               </button>
+              )}
             </li>
           ))}
         </ul>
       ) : (
         <p className="px-4 py-3 text-faint md:px-5">Nobody listed yet.</p>
       )}
+      {editable && (
       <div className="flex flex-wrap items-center gap-2 border-t border-line px-4 py-3 md:px-5">
         <select className="input h-9 min-w-[10rem] flex-1 py-1 text-xs" value={slug} onChange={(e) => setSlug(e.target.value)} aria-label="Rogue">
           <option value="">{data.lockpick_candidates.length ? "A rogue in the guild…" : "No other rogues in the guild"}</option>
@@ -100,6 +105,7 @@ function LockpickingCard({ data, onChanged }: { data: CraftingOverview; onChange
           Add
         </Button>
       </div>
+      )}
     </section>
   );
 }
@@ -121,6 +127,7 @@ function FeaturedCard({
   first,
   last,
   busy,
+  editable,
 }: {
   r: FeaturedRecipe;
   onRemove: () => void;
@@ -128,10 +135,12 @@ function FeaturedCard({
   first: boolean;
   last: boolean;
   busy: boolean;
+  editable: boolean;
 }) {
   const name = r.item_name ?? r.name;
   return (
     <li className="flex items-start gap-3 px-4 py-3 md:px-5">
+      {editable && (
       <div className="flex shrink-0 flex-col">
         <button type="button" onClick={() => onMove(-1)} disabled={busy || first} aria-label={`Move ${name} up`} className="rounded p-0.5 text-faint transition hover:bg-raised hover:text-fg disabled:opacity-30 disabled:hover:bg-transparent">
           <ArrowUp className="h-3.5 w-3.5" />
@@ -140,6 +149,7 @@ function FeaturedCard({
           <ArrowDown className="h-3.5 w-3.5" />
         </button>
       </div>
+      )}
       <RecipeIcon url={r.item_icon_url} />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-baseline gap-x-2">
@@ -179,9 +189,11 @@ function FeaturedCard({
           </p>
         )}
       </div>
-      <Button size="sm" variant="ghost" icon={<Trash2 className="h-3.5 w-3.5" />} onClick={onRemove} disabled={busy} aria-label={`Stop featuring ${name}`}>
-        <span className="hidden sm:inline">Remove</span>
-      </Button>
+      {editable && (
+        <Button size="sm" variant="ghost" icon={<Trash2 className="h-3.5 w-3.5" />} onClick={onRemove} disabled={busy} aria-label={`Stop featuring ${name}`}>
+          <span className="hidden sm:inline">Remove</span>
+        </Button>
+      )}
     </li>
   );
 }
@@ -296,6 +308,8 @@ function RecipeBrowser({ data, onAdded }: { data: CraftingOverview; onAdded: () 
 }
 
 export default function CraftingPage() {
+  // Viewers read who can make what; featuring, ordering and posting are for moderators.
+  const canEdit = can(useMe(), "moderator");
   const toast = useToast();
   const { subscribe } = useLive();
   const [data, setData] = useState<CraftingOverview | null>(null);
@@ -376,7 +390,7 @@ export default function CraftingPage() {
         title="Crafting"
         description="Who in the guild can make what. Featured recipes are posted in the crafting channel with their crafters and the materials to send."
         actions={
-          <Button icon={<Send className="h-3.5 w-3.5" />} onClick={post} loading={busy && !removing} disabled={!data || Boolean(data.channel_problem)} title={data?.channel_problem ?? undefined}>
+          canEdit && <Button icon={<Send className="h-3.5 w-3.5" />} onClick={post} loading={busy && !removing} disabled={!data || Boolean(data.channel_problem)} title={data?.channel_problem ?? undefined}>
             Update channel now
           </Button>
         }
@@ -397,9 +411,9 @@ export default function CraftingPage() {
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warn" />
               <span>
                 {data.channel_problem}{" "}
-                <Link to="/settings?group=crafting#CRAFTING_CHANNEL_ID" className="text-gold hover:underline">
+                <SettingsLink to="/settings?group=crafting#CRAFTING_CHANNEL_ID" className="text-gold hover:underline">
                   Open the Crafting settings
-                </Link>
+                </SettingsLink>
               </span>
             </p>
           )}
@@ -419,9 +433,9 @@ export default function CraftingPage() {
                     {data.hide_unknown_recipes
                       ? "Recipes nobody in the guild knows are left out of the channel."
                       : "Every featured recipe is in the channel, also ones nobody knows yet."}{" "}
-                    <Link to="/settings?group=crafting#CRAFTING_HIDE_UNKNOWN_RECIPES" className="text-gold hover:underline">
+                    <SettingsLink to="/settings?group=crafting#CRAFTING_HIDE_UNKNOWN_RECIPES" className="text-gold hover:underline">
                       Change
-                    </Link>
+                    </SettingsLink>
                   </p>
                 </header>
                 {data.featured.length ? (
@@ -434,7 +448,7 @@ export default function CraftingPage() {
                           {icon && <img src={icon} alt="" className="h-4 w-4 rounded-sm" />}
                           <span className="font-semibold">{g.name}</span>
                           <span className="text-2xs text-faint">{custom ? "Your order" : "Hardest first"}</span>
-                          {custom && g.id != null && (
+                          {canEdit && custom && g.id != null && (
                             <button type="button" onClick={() => saveOrder(g.id!, null)} disabled={busy} className="ml-auto inline-flex items-center gap-1 text-2xs text-gold hover:underline disabled:opacity-50">
                               <RotateCcw className="h-3 w-3" /> Back to hardest first
                             </button>
@@ -446,6 +460,7 @@ export default function CraftingPage() {
                               key={r.recipe_id}
                               r={r}
                               busy={busy}
+                              editable={canEdit}
                               first={i === 0}
                               last={i === g.rows.length - 1}
                               onRemove={() => setRemoving(r)}
@@ -458,15 +473,15 @@ export default function CraftingPage() {
                   })
                 ) : (
                   <EmptyState icon={<Star className="h-6 w-6" />} title="No featured recipes yet">
-                    Add the recipes people should know about, e.g. high-value ones, below.
+                    {canEdit ? "Add the recipes people should know about, e.g. high-value ones, below." : "Moderators haven't featured any recipes yet."}
                   </EmptyState>
                 )}
               </section>
-              <RecipeBrowser data={data} onAdded={load} />
+              {canEdit && <RecipeBrowser data={data} onAdded={load} />}
             </div>
 
             <div className="space-y-5 self-start">
-              <LockpickingCard data={data} onChanged={load} />
+              <LockpickingCard data={data} onChanged={load} editable={canEdit} />
               <section className="card">
                 <header className="border-b border-line px-4 py-3 md:px-5">
                   <div className="label">Professions</div>

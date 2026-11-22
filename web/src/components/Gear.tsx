@@ -4,6 +4,8 @@ import { Gem, Sparkles } from "lucide-react";
 import { Link } from "react-router-dom";
 import type { CardStatistics, CharacterSummary, GearItem, StatGroup } from "../lib/api";
 import { QUALITY_COLORS } from "../lib/wow";
+import { can } from "../lib/access";
+import { useMe } from "../lib/me";
 
 export const COSMETIC_SLOTS = new Set(["SHIRT", "TABARD"]);
 
@@ -142,13 +144,16 @@ export function StatsCard({ groups }: { groups: StatGroup[] }) {
 
 /** The achievement statistics moderators chose for the card (e.g. raid boss kills). */
 export function CardStatisticsCard({ statistics }: { statistics: CardStatistics }) {
+  const canChoose = can(useMe(), "moderator"); // choosing them is for moderators
   return (
     <section className="card">
       <header className="flex items-center justify-between gap-2 border-b border-line px-4 py-3 md:px-5">
         <div className="label">{statistics.title || "Statistics"}</div>
-        <Link to="/applications/statistics" className="text-2xs text-gold hover:underline">
-          Choose
-        </Link>
+        {canChoose && (
+          <Link to="/applications/statistics" className="text-2xs text-gold hover:underline">
+            Choose
+          </Link>
+        )}
       </header>
       {statistics.groups.length === 0 ? (
         <p className="px-4 py-3 text-faint md:px-5">No statistics chosen for the card yet.</p>

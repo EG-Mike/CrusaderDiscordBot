@@ -762,9 +762,8 @@ Check the console for `Synced N command(s): [...]` and
 
 A browser dashboard for managing the bot, running **inside the bot
 process** (so it uses the same live data and Discord connection as the
-slash commands). Log in with Discord; only members with the moderator role
-(`MOD_ROLE_ID` or Manage Roles), the server owner, and `WEB_ADMIN_USER_IDS`
-get in, checked against their current roles on every request.
+slash commands). Log in with Discord; what you can open depends on your
+current roles, checked on every request (see "Dashboard access" below).
 
 Built so far (phases 0 and 1):
 
@@ -796,6 +795,74 @@ Built so far (phases 0 and 1):
 **Nothing changes for an existing deployment** until you opt in: the
 dashboard is off (`FEATURE_WEB_DASHBOARD_ENABLED = False`) and storage
 stays on JSON files (`STORAGE_BACKEND=json`) by default.
+
+### Dashboard access
+
+Everyone logs in with Discord. What they can open depends on their roles
+in the server, re-checked every minute (removing a role in Discord removes
+the access):
+
+| Level | Who | Can use |
+|---|---|---|
+| Admin | The server owner, `WEB_ADMIN_USER_IDS` (.env), and the admin roles | Settings (incl. API keys), setup guide, restart, maintenance tools, console output, the bot's profile and the guild logo |
+| Moderator | The moderator role (`MOD_ROLE_ID`) or the Manage Roles permission | Announcements, bot messages, emoji, polls, roster, leveling, rank sync, crafting, auction prices, audit log, system log, applications |
+| Reviewer | The reviewer role (`APPROVER_ROLE_ID`) | Applications (read and decide) and Character lookup |
+| Viewer | The viewer roles, only while "Viewer access" is on (off by default) | Read-only Overview, Guild roster, Leveling and Crafting |
+
+Higher levels include the lower ones. Anyone else is refused at login.
+The roles are set in Settings, General, **Dashboard access** (admin and
+viewer roles), Moderation (moderator role) and Applications (reviewer
+role); only admins can change settings, so a moderator can't give
+themselves more access. The server enforces all of this
+(`webapi/access.py` lists the level of every API route); the menus only
+hide what you couldn't open anyway.
+
+### Opening the dashboard to the internet
+
+By default the dashboard is only reachable over an SSH tunnel. To open it
+to the internet, put **Caddy** in front of it for HTTPS. These steps assume
+Caddy already runs in Docker on the same server (and the bot in Docker, see
+deploy/). Without a domain, use `<ip-with-dashes>.sslip.io` (e.g.
+`203-0-113-7.sslip.io` for 203.0.113.7): a free name that points at the IP,
+so Caddy can get a normal Let's Encrypt certificate.
+
+1. Make sure the server's public IP is reserved (Oracle Cloud: Instance,
+   Attached VNICs, IPv4 Addresses: "Reserved"), and ports 80 and 443 are
+   open (Security List ingress rules, and the server's own firewall).
+2. Check the bot's port is not public: `sudo ss -tlnp | grep -E '8081|8082'`
+   must show `127.0.0.1:...`. Never change the `127.0.0.1:` in `ports:`.
+3. Create a network for Caddy and the bot: `docker network create crusader-web`.
+4. Add it to Caddy's compose file (under the Caddy service:
+   `networks: [default, crusader-web]`, and at the end
+   `networks: {crusader-web: {external: true}}`), then `docker compose up -d`.
+5. In the bot's `docker-compose.yml`, uncomment the two `networks:` blocks,
+   then `docker compose up -d`.
+6. Add the site to the Caddyfile and reload Caddy
+   (`docker exec -w /etc/caddy <caddy> caddy reload`):
+
+   ```
+   test.203-0-113-7.sslip.io {
+       encode zstd gzip
+       reverse_proxy crusader-test:8081
+   }
+   ```
+
+   (8081 is the port inside the bot's container, also for the live bot,
+   `crusader-live:8081`.) The dashboard sends its own security headers
+   (HSTS, Content-Security-Policy, ...).
+7. In the Discord Developer Portal (OAuth2, Redirects), add
+   `https://<that address>/auth/callback`.
+8. In the bot's `.env`, set `WEB_BASE_URL=https://<that address>`, then
+   `docker compose up -d --force-recreate`. Login cookies are then
+   HTTPS-only, and requests from other websites are refused.
+9. As an admin, pick the roles in Settings, General, Dashboard access.
+
+Logins are limited per address (about 15 per 10 minutes). The visitor's
+address comes from Caddy's `X-Forwarded-For`, which is only believed from
+the server itself and Docker's private networks (`WEB_TRUSTED_PROXIES`).
+To close it again, remove the site from the Caddyfile and reload Caddy;
+the SSH tunnel keeps working once `WEB_BASE_URL` is back on
+`http://localhost:808x`.
 
 ### How settings are layered
 

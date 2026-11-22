@@ -28,14 +28,18 @@ import config
 import gear
 import roster
 from applications import ApplicationError, Reviewer
-from webapi import auth
+from webapi import access, auth
 from webapi.common import BOT_KEY, HUB_KEY, BadRequest, audit, error, forbidden_unless, json_response, read_json
 
-LEVEL = "moderator"
+LEVEL = access.REVIEWER  # the page; archiving and card statistics need moderator (access.ROUTES)
 DECIDE = "decide"  # see DECIDE_LEVELS
 MAX_CARD_STATISTICS = 60  # far more than fit nicely; the card gives the gear what's left
-DECIDE_LEVELS = {"moderator", "approver"}  # any of these may approve, deny and reset
+DECIDE_LEVELS = {access.REVIEWER}  # moderators are reviewers too (access.implied)
 WHAT = "applications"
+
+
+def _can_decide(request) -> bool:
+    return any(access.allows(request["levels"], level) for level in DECIDE_LEVELS)
 
 
 def _cog(request):
@@ -44,8 +48,8 @@ def _cog(request):
 
 def _guard(request, level: str = LEVEL):
     denied = forbidden_unless(request, LEVEL, WHAT)
-    if denied is None and level == DECIDE and not DECIDE_LEVELS & set(request["levels"]):
-        denied = error("Only moderators and approvers can approve, deny or reset applications.", 403)
+    if denied is None and level == DECIDE and not _can_decide(request):
+        denied = error("Only moderators and reviewers can approve, deny or reset applications.", 403)
     if denied:
         return denied, None
     cog = _cog(request)
@@ -86,7 +90,8 @@ async def list_applications(request):
         "applications": rows,
         "counts": counts,
         "running": cog is not None,
-        "can_decide": bool(DECIDE_LEVELS & set(request["levels"])),
+        "can_decide": _can_decide(request),
+        "can_manage": access.allows(request["levels"], access.MODERATOR),  # archive, card statistics
         "archive_problem": cog.archive_problem() if cog else None,
     })
 

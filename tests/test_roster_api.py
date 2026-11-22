@@ -82,10 +82,15 @@ class RosterApiTests(DatabaseTestCase, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data["leaderboard"][0]["level"], 20)
         self.assertEqual((data["events"][0]["old_level"], data["events"][0]["milestone"]), (15, 20))
 
-    async def test_moderators_only(self):
+    async def test_viewers_read_moderators_change(self):
         self.levels = {"viewer"}
-        resp = await self.client.get("/api/roster")
+        self.assertEqual((await self.client.get("/api/roster")).status, 200)
+        self.assertEqual((await self.client.get("/api/leveling")).status, 200)
+        self.assertEqual((await self.client.get("/api/roster/members")).status, 403)
+        resp = await self.client.post("/api/roster/sync", json={}, headers={server.CSRF_HEADER: "1"})
         self.assertEqual(resp.status, 403)
+        self.levels = {"reviewer"}  # reviewers see applications, not the roster page
+        self.assertEqual((await self.client.get("/api/roster")).status, 403)
 
 
 if __name__ == "__main__":

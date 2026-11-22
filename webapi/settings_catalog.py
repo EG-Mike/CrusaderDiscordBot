@@ -41,6 +41,8 @@ COMBINED_TABS: Dict[str, Tuple[str, str, List[str]]] = {
 GROUPS: List[Tuple[str, str, str, str]] = [
     ("guild", "general", "Guild & bot", "Your guild's name and logo, and how the bot appears in Discord."),
     ("discord", "general", "Moderation", "Who counts as a moderator, and where moderators talk."),
+    ("access", "general", "Dashboard access", "Who can open which parts of this dashboard. Only admins can "
+                                              "change these."),
     ("features", "features", "On / off", "Switch whole features on or off. Takes effect after a restart."),
     ("announcements", "features", "Announcements", "Writing and publishing announcements."),
     ("applications", "features", "Applications", "Applying to the guild, reviewing applications and archiving them."),
@@ -126,6 +128,23 @@ CATALOG: Dict[str, Entry] = {
         "Where moderators talk. Notifications go here unless they have their own channel, and attendance "
         "updates are mirrored here."),
 
+    # --- Dashboard access ------------------------------------------------------------------
+    "WEB_ACCESS_ADMIN_ROLE_IDS": Entry(
+        "access", "Admin roles",
+        "Members with one of these roles are dashboard admins: they can change settings and API keys, run the "
+        "setup guide and maintenance tools, restart the bot and read the console output. The server owner and "
+        "the admins named in the bot's startup file always are. Moderators manage the guild pages (moderator "
+        "role: Moderation tab); reviewers open applications (reviewer role: Applications tab).",
+        widget="role_set"),
+    "WEB_ACCESS_VIEWER_ENABLED": Entry(
+        "access", "Viewer access",
+        "Lets members with a viewer role open the general pages (Overview, Guild roster, Leveling, Crafting) "
+        "without changing anything. Off: only admins, moderators and reviewers can log in."),
+    "WEB_ACCESS_VIEWER_ROLE_IDS": Entry(
+        "access", "Viewer roles",
+        "Members with one of these roles can read the general pages while viewer access is on.",
+        widget="role_set"),
+
     # --- Features: on / off ------------------------------------------------------------
     "FEATURE_ANNOUNCEMENTS_ENABLED": Entry("features", "Announcements", "/announce and the Announcements page."),
     "FEATURE_EMOJI_ADMIN_ENABLED": Entry("features", "Emoji", "Adding item and spell icons as emoji on the "
@@ -168,9 +187,10 @@ CATALOG: Dict[str, Entry] = {
         "applications", "Review channel",
         "Where applications are posted for approval. They're also on the dashboard's Applications page."),
     "APPROVER_ROLE_ID": Entry(
-        "applications", "Approver role",
-        "Members with this role can approve, deny or reset applications, in Discord and on the dashboard, even "
-        "without being moderators. Moderators always can. Others can read the review channel without acting on it."),
+        "applications", "Reviewer role",
+        "Members with this role can approve, deny or reset applications, in Discord and on the dashboard's "
+        "Applications page, even without being moderators. Moderators always can. Others can read the review "
+        "channel without acting on it."),
     "FRESH_ROLE_ID": Entry("applications", "Role for approved applicants", "Given when an application is approved."),
     "FRESH_EXEMPT_ROLE_IDS": Entry(
         "applications", "Roles that skip the approval role",
