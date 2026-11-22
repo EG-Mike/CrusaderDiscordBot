@@ -831,14 +831,22 @@ so Caddy can get a normal Let's Encrypt certificate.
    open (Security List ingress rules, and the server's own firewall).
 2. Check the bot's port is not public: `sudo ss -tlnp | grep -E '8081|8082'`
    must show `127.0.0.1:...`. Never change the `127.0.0.1:` in `ports:`.
-3. Create a network for Caddy and the bot: `docker network create crusader-web`.
-4. Add it to Caddy's compose file (under the Caddy service:
-   `networks: [default, crusader-web]`, and at the end
-   `networks: {crusader-web: {external: true}}`), then `docker compose up -d`.
-5. In the bot's `docker-compose.yml`, uncomment the two `networks:` blocks,
-   then `docker compose up -d`.
-6. Add the site to the Caddyfile and reload Caddy
-   (`docker exec -w /etc/caddy <caddy> caddy reload`):
+3. Find Caddy's Docker network:
+   `docker inspect caddy --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}'`.
+   The bot joins that network so Caddy can reach it by container name. The
+   compose files in deploy/ assume it's called `proxy-net` (a network
+   shared by the sites Caddy serves). If Caddy has none of its own (only
+   `caddy_default`), create one (`docker network create proxy-net`), add it
+   to Caddy's compose file (`networks: [proxy-net]` under the service,
+   `networks: {proxy-net: {external: true}}` at the end) and run
+   `docker compose up -d` there. If yours has another name, use that name
+   in the next step.
+4. In the bot's `docker-compose.yml`, uncomment the two `networks:` blocks
+   (indented exactly like `ports:`), check it with
+   `docker compose config --quiet && echo OK`, then `docker compose up -d`.
+   Check: `docker exec caddy wget -qO- http://crusader-test:8081/api/me`
+   answers "401 Unauthorized" (= reachable, not logged in).
+5. Add the site to the Caddyfile:
 
    ```
    test.203-0-113-7.sslip.io {
@@ -847,15 +855,30 @@ so Caddy can get a normal Let's Encrypt certificate.
    }
    ```
 
-   (8081 is the port inside the bot's container, also for the live bot,
-   `crusader-live:8081`.) The dashboard sends its own security headers
-   (HSTS, Content-Security-Policy, ...).
+   Use the container name, not `127.0.0.1` (inside Caddy's container that
+   is Caddy itself), and port 8081, the port inside the bot's container:
+   also for the live bot, `crusader-live:8081`. The dashboard sends its own
+   security headers (HSTS, Content-Security-Policy, ...).
+6. Check it with `docker exec -w /etc/caddy caddy caddy validate`, then
+   load it with `docker exec -w /etc/caddy caddy caddy reload`. When the
+   Caddyfile is mounted as a single file (`./Caddyfile:/etc/caddy/Caddyfile`)
+   and was saved by an editor that replaces the file, the container keeps
+   the old one, even after a restart: `docker exec caddy cat
+   /etc/caddy/Caddyfile` shows what it sees, and `docker compose up -d
+   --force-recreate caddy` (in Caddy's folder) makes it read the current
+   file. `docker logs --since 5m caddy` should then show
+   "certificate obtained successfully" for the address. A browser error
+   `ERR_SSL_PROTOCOL_ERROR` means Caddy has no certificate for it yet.
 7. In the Discord Developer Portal (OAuth2, Redirects), add
    `https://<that address>/auth/callback`.
 8. In the bot's `.env`, set `WEB_BASE_URL=https://<that address>`, then
    `docker compose up -d --force-recreate`. Login cookies are then
-   HTTPS-only, and requests from other websites are refused.
+   HTTPS-only, and requests from other websites are refused. Logins then
+   go to the new address; the SSH tunnel no longer works for them.
 9. As an admin, pick the roles in Settings, General, Dashboard access.
+
+Never open the bot's own port (8081/8082) in Oracle's Security List or the
+firewall: visitors only reach Caddy on 443.
 
 Logins are limited per address (about 15 per 10 minutes). The visitor's
 address comes from Caddy's `X-Forwarded-For`, which is only believed from

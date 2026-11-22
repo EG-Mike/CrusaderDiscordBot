@@ -40,19 +40,21 @@ services:
       - "127.0.0.1:8082:8081"
     # Optional: to reach the dashboard from the internet through a Caddy
     # container on the same server (README, "Opening the dashboard to the
-    # internet"), uncomment these lines and the `networks:` block at the end.
-    # Caddy then reaches the bot as crusader-live:8081.
+    # internet"), uncomment these lines (indented like `ports:`) and the
+    # `networks:` block at the end. Caddy then reaches the bot as
+    # crusader-live:8081.
     # networks:
     #   - default
-    #   - crusader-web
+    #   - proxy-net
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
 
-# The network the bot shares with Caddy (create it once with
-# `docker network create crusader-web`). Uncomment with `networks:` above.
+# Caddy's Docker network, which the bot joins so Caddy can reach it (see
+# `docker inspect caddy`; use its name if it isn't proxy-net). Uncomment
+# with `networks:` above.
 # networks:
-#   crusader-web:
+#   proxy-net:
 #     external: true

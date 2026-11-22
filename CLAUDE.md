@@ -65,8 +65,9 @@ version or raid tier is a configuration change.
   new branch of your own.
 - The dashboard is reached over an SSH tunnel (PuTTY) at
   http://localhost:8081, or, once opened up, through Caddy (in Docker on
-  the same VPS) over HTTPS at an sslip.io address (README, "Opening the
-  dashboard to the internet").
+  the same VPS, `/root/docker/caddy`, network `proxy-net`) over HTTPS at an
+  sslip.io address (README, "Opening the dashboard to the internet"). The
+  test bot is open this way; the bot's own ports stay on 127.0.0.1.
 - **Dev bot (cloud sessions)**: Claude Code cloud sessions for this repo
   have credentials for a third Discord application, "Crusader Dev", which
   is in the same test server, plus WarcraftLogs and Blizzard API keys, as
@@ -122,8 +123,8 @@ version or raid tier is a configuration change.
   as `applications.changed`). The decisions themselves (`approve`, `deny`,
   `reset`, `refresh_gear`, `archive_decided`) are interaction-free methods
   on the apply cog, called by the card's buttons and the dashboard alike;
-  moderators and approvers (`APPROVER_ROLE_ID`, dashboard level
-  "approver") decide (`ApplyCog.can_decide`, `DECIDE_LEVELS`).
+  moderators and reviewers (`APPROVER_ROLE_ID`, dashboard level
+  "reviewer") decide (`ApplyCog.can_decide`, `DECIDE_LEVELS`).
   The applicant enters "First Surname" in one field; the rest happens in
   the apply channel in a message only they see (no DMs): the main spec is
   suggested from talent points, plus an optional offspec, and a form for a
